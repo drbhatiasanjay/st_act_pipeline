@@ -72,6 +72,18 @@ just "a pipeline that runs."
   development.zip` (81.6GB, unextracted) — 199 train samples (`.zarr`+`.geff` pairs across two
   source embryos `44b6`/`6bba`), 4 test samples, `sample_submission.csv`. Staging a small subset
   first (agreed) is the next concrete step (plan Step 1) once this GSD scaffolding is in place.
+- **Small real-data subset already staged** (parallel session, 2026-07-03): `data/staging/` — 4
+  embryos (both `44b6`/`6bba` lineages), train+test copies, 3.55GB/901 files. See
+  `data/staging/README.md` for exact `.geff` schema confirmed from real files (not guessed) and a
+  significant finding: ground-truth annotation coverage is far sparser and more variable than the
+  PRD's prose suggested (0.16%–13.5% of `estimated_number_of_nodes` actually labeled across the 4
+  staged samples) — affects Phase 2 training strategy (positive-unlabeled-style supervision needed,
+  not dense heatmap regression) and confirms why FR-5 must not naively count unmatched predictions
+  as false positives.
+- **Host reference metric implementation found** (parallel session, 2026-07-03): full writeup and
+  vendored source in `REFERENCE_IMPLEMENTATION.md` at repo root — see STATE.md's resolved
+  "Confirm reference metric implementation" todo for the summary. Read this before planning
+  Phase 0's EVAL-01..04 tasks.
 - **No local GPU** (torch is CPU-only). Kaggle Notebooks (free GPU, competition data pre-mounted)
   is the intended training environment for Phase 2, not Google AI Studio (no training compute).
 
@@ -92,6 +104,7 @@ just "a pipeline that runs."
 | Stage a small real-data subset (8 train + 4 test) before extracting all 199 train samples | Fast iteration loop; validate the pipeline against real data/format before paying the full 81GB extraction cost | — Pending |
 | Classical (non-learned) detection baseline before CNN training | Establishes a real, scoreable submission fast without GPU dependency; floor to clear either way is 0.763 | — Pending |
 | Use `geff` (reference reader), `traccuracy` (CTC-metric cross-check), `napari`+`napari-geff` (visual QC) | Verified real, MIT-licensed, same publisher as the GEFF format itself — reduces hand-rolled parsing/metric risk | — Pending |
+| **Superseding update:** for FR-5 specifically, vendor/wrap `tracksdata` (not `traccuracy`) as primary | `tracksdata` is what the host's own `royerlab/kaggle-cell-tracking-competition` reference repo is built on — it implements this competition's *exact bespoke* `adjusted_edge_jaccard`/`division_jaccard` formula, confirmed from source (see `REFERENCE_IMPLEMENTATION.md`). `traccuracy` computes generic CTC metrics (TRA/DET), a *different* formula — demote it to an optional secondary cross-check, not the primary FR-5 dependency | ✓ Good |
 | GSD for cross-session phase execution against PRD.md §8's roadmap | Multi-week effort; GSD already enabled with pre-approved permissions in this environment | — Pending |
 | Ported a corrected version of the AI Studio tracker.py fix (drop `b_n+d_n<=1`, keep the flow equalities) rather than either the original bug or the AI Studio version verbatim | Empirically verified: AI Studio's fix reintroduces the "always zero edges" bug; the corrected version is feasible AND has a strictly better ILP objective value (995 vs. 1941) on the same test data | ✓ Good |
 

@@ -343,12 +343,22 @@ as-is (§4.3); everything else on the critical path (§4.1) is rebuilt or rewire
 
 ## 11. Open Questions / Follow-ups
 
+- **RESOLVED 2026-07-03:** the host *does* publish a reference implementation — linked directly
+  from `/overview/evaluation`: `github.com/royerlab/kaggle-cell-tracking-competition`
+  (`src/tracking_cellmot/metrics.py`, `division_metrics.py`, `io.py`, built on a real `tracksdata`
+  library with `.from_geff()`/`.to_geff()`/`DistanceMatching`). Full writeup, exact formulas, and
+  vendored source in **`REFERENCE_IMPLEMENTATION.md`**. This resolves the over-prediction penalty
+  formula (`adjusted_jaccard = max(0, jaccard · (1 − 0.1·(T_pred−T_true)/T_true))`) and the sparse-GT
+  handling question exactly — see that file. **FR-1 and FR-5 should depend on/vendor this rather
+  than reimplementing from prose** (updated FR-1/FR-5 intent, not yet reflected in §6 text above).
 - Full `/rules` page (timeline detail beyond the entry deadline, team size limits, external-data
-  policy, compute/runtime caps) did not fully render during research for this PRD and should be
-  re-confirmed directly on Kaggle before committing to Phase 2+ compute investment.
+  policy, compute/runtime caps) still did not fully render on retry — still needs a manual pass
+  directly on Kaggle before committing to Phase 2+ compute investment. Also worth checking the
+  `royerlab/kaggle-cell-tracking-competition` repo's own README/license for any competition-specific
+  usage constraints on its code.
 - Discussion board content wasn't retrievable at authoring time — worth a manual pass for any
-  host-clarified metric edge cases (e.g. exact over-prediction penalty formula, tie-breaking in
-  bipartite matching) before FR-5 implementation is finalized against real host code if/when
-  released.
-- Confirm whether the host provides a reference metric implementation (common in Kaggle bio
-  competitions) to validate FR-5 against, rather than reimplementing purely from prose.
+  host-clarified metric edge cases, though `REFERENCE_IMPLEMENTATION.md` now covers the important
+  ones (division double-crediting prevention, sparse-region FP exclusion) directly from source.
+- Not yet fetched from the reference repo: `scripts/train_unet_transformer.py` /
+  `predict_unet_transformer.py` (host's own reference model architecture — relevant to Phase 2) and
+  `src/tracking_cellmot/img_proc.py` / `models/`.

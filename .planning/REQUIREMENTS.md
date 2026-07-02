@@ -17,10 +17,18 @@ document already fully scopes this from a real competition-spec audit.
       real competition path (removed, or gated behind an explicit `--simulate` flag)
 - [ ] **DATA-03**: Anisotropy ratio is `(4.0, 1.0, 1.0)` everywhere it's used (was hardcoded to
       the wrong `(5.0, 1.0, 1.0)`)
-- [ ] **DATA-04**: `.geff` ground-truth reader loads `nodes/ids`, `nodes/props/{t,z,y,x}/values`,
-      `edges/ids` into the same in-memory representation the tracker already consumes
+- [ ] **DATA-04**: `.geff` ground truth loaded via `tracksdata`'s `IndexedRXGraph.from_geff()` —
+      the host's own reference reader (confirmed real, pip-installable, same library the
+      competition's official scorer is built on; see `REFERENCE_IMPLEMENTATION.md`) — not a
+      hand-rolled parser, into the same in-memory representation the tracker already consumes
 - [ ] **DATA-05**: Pipeline iterates over all dataset folders present at inference time (not a
       single hardcoded path), emitting one `dataset` block per folder in the submission
+- [ ] **DATA-06**: Raw `uint16` intensities normalized via each sample's own
+      `image_statistics.quantiles` (zarr attrs) before any thresholding — matches the host's own
+      `open_dataset()` pattern (`(tensor - q_low) / (q_high - q_low)`, clamped). Confirmed necessary:
+      current placeholder thresholds (`0.4`, `0.45` in `extract_peaks_from_volume`) assume a `[0,1]`
+      range but real data ranges ~15–4319 raw — without this fix even Phase 1's placeholder detector
+      produces meaningless output on real data, not just Phase 2's trained model
 
 ### Detection Model (PRD FR-2)
 
@@ -46,7 +54,12 @@ document already fully scopes this from a real competition-spec audit.
 ### Submission Generation (PRD FR-4)
 
 - [ ] **SUB-01**: Export emits `id,dataset,row_type,node_id,t,z,y,x,source_id,target_id` exactly,
-      separate `node`/`edge` rows, integer voxel coords, `-1` sentinels
+      separate `node`/`edge` rows, integer voxel coords, `-1` sentinels. **Confirmed from the real
+      `sample_submission.csv` (2026-07-03) — non-obvious, easy to get wrong:** `id` is a single
+      global sequential integer across the *entire file* (0,1,2,...), while `node_id` is
+      **per-`dataset`-local** — starts at 1 and *resets to 1* for each new `dataset` block. `node_id`
+      is only used to link `source_id`/`target_id` in edge rows; it is not, and must not be treated
+      as, globally unique like `id`.
 - [ ] **SUB-02**: One `dataset` block per test folder actually processed, matching real test
       basenames exactly
 - [ ] **SUB-03**: Generated file validated against `sample_submission.csv`'s structure before a
@@ -54,14 +67,28 @@ document already fully scopes this from a real competition-spec audit.
 
 ### Local Evaluation Harness (PRD FR-5)
 
-- [ ] **EVAL-01**: `edge_jaccard` implemented exactly per spec (7.0µm gating, bipartite matching,
-      TP/(TP+FP+FN) with over-prediction penalty, sample-weighted averaging)
-- [ ] **EVAL-02**: `division_jaccard` implemented exactly per spec (out-degree ≥2, connected-
-      component check spanning both daughter lineages, micro-averaged)
-- [ ] **EVAL-03**: Combined score `edge_jaccard + 0.1 × division_jaccard` computed against
-      held-out **train** embryos with real `.geff` ground truth
-- [ ] **EVAL-04**: Harness cross-checked against `traccuracy`'s CTC-standard metrics on the same
-      graphs (won't match Kaggle's exact formula, but catches hand-rolled-harness bugs)
+**Scope change (2026-07-03):** the host publishes and links a full reference implementation
+(`royerlab/kaggle-cell-tracking-competition`, built on `tracksdata`) directly from the
+competition's evaluation page — vendored/documented in `REFERENCE_IMPLEMENTATION.md`. EVAL-01..03
+below are now "integrate the real `metrics.py`/`division_metrics.py`" tasks, not "reimplement a
+bespoke spec from prose" — materially lower risk than originally scoped.
+
+- [ ] **EVAL-01**: `edge_jaccard` computed via `tracksdata`'s `evaluate()`/`evaluate_datasets()`
+      (7.0µm gated `DistanceMatching`, TP/(TP+FP+FN), micro-averaged across samples — counts summed
+      before the ratio, not a mean of per-sample ratios)
+- [ ] **EVAL-02**: `division_jaccard` computed via the vendored `division_metrics.evaluate_divisions()`
+      — NOT a simple out-degree≥2 check; it does GT-division subgraph extraction, stage-coverage
+      matching, and global bipartite max-matching between predicted/GT divisions (see
+      `REFERENCE_IMPLEMENTATION.md` §3 — do not approximate this, the edge cases are the whole point)
+- [ ] **EVAL-03**: Combined score `adjusted_edge_jaccard + 0.1 × division_jaccard` where
+      `adjusted_edge_jaccard = max(0, jaccard · (1 − 0.1·(T_pred−T_true)/T_true))`, `T_true` = the
+      `.geff`'s `estimated_number_of_nodes`; division term dropped entirely (not `+0`) when a split
+      has zero GT divisions. Confirmed: unmatched predicted nodes are structurally excluded from FP
+      (sparse-GT-safe by construction, not a fudge factor) — resolves the sparse-annotation concern
+      in `data/staging/README.md`
+- [ ] **EVAL-04**: `traccuracy` kept only as an optional secondary sanity check (generic CTC
+      TRA/DET, a *different* formula from this competition's bespoke score) — `tracksdata` is
+      primary per the Key Decision in `PROJECT.md`
 
 ## v2 Requirements
 
@@ -104,6 +131,7 @@ is solid.
 | DATA-03 | Phase 0 | Pending |
 | DATA-04 | Phase 0 | Pending |
 | DATA-05 | Phase 0 | Pending |
+| DATA-06 | Phase 0 | Pending |
 | SUB-01 | Phase 0 | Pending |
 | SUB-02 | Phase 0 | Pending |
 | SUB-03 | Phase 0 | Pending |
@@ -120,8 +148,9 @@ is solid.
 | TRACK-03 | Phase 3 | Pending |
 
 **Coverage:**
-- v1 requirements: 19 total
-- Mapped to phases: 19
+- v1 requirements: 20 total (added DATA-06 2026-07-03 — real-data intensity normalization gap
+  found via the host's reference `io.py`)
+- Mapped to phases: 20
 - Unmapped: 0 ✓
 
 Phase 1 (Baseline parity, per PRD §8) has no dedicated new requirements of its own — it's the
