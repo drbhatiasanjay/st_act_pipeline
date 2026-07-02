@@ -1,0 +1,18 @@
+# ST-ACT Pipeline Configuration (Best Practices)
+data:
+  zarr_store_path: "data/cell_tracking_volume.zarr"
+  anisotropy_ratio: [5.0, 1.0, 1.0]
+  dtype: "float32"
+
+model:
+  in_channels: 1
+  base_features: 16
+  learning_rate: 0.001
+  batch_size: 2
+  epochs: 50
+
+tracker:
+  birth_cost: 15.0
+  death_cost: 15.0
+  division_reward: -8.0
+  max_search_radius: 40.0

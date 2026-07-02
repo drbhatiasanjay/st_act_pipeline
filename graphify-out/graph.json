@@ -1,0 +1,1209 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "label": "run_pipeline.py",
+      "file_type": "code",
+      "source_file": "run_pipeline.py",
+      "source_location": "L1",
+      "id": "run_pipeline_py",
+      "community": 3,
+      "norm_label": "run_pipeline.py"
+    },
+    {
+      "label": "ensemble_consensus_centroids()",
+      "file_type": "code",
+      "source_file": "run_pipeline.py",
+      "source_location": "L11",
+      "id": "st_act_pipeline_run_pipeline_ensemble_consensus_centroids",
+      "community": 3,
+      "norm_label": "ensemble_consensus_centroids()"
+    },
+    {
+      "label": "extract_peaks_from_volume()",
+      "file_type": "code",
+      "source_file": "run_pipeline.py",
+      "source_location": "L56",
+      "id": "st_act_pipeline_run_pipeline_extract_peaks_from_volume",
+      "community": 3,
+      "norm_label": "extract_peaks_from_volume()"
+    },
+    {
+      "label": "run_st_act_pipeline()",
+      "file_type": "code",
+      "source_file": "run_pipeline.py",
+      "source_location": "L70",
+      "id": "st_act_pipeline_run_pipeline_run_st_act_pipeline",
+      "community": 3,
+      "norm_label": "run_st_act_pipeline()"
+    },
+    {
+      "label": "Ensemble Consensus Centroid Clustering (DBSCAN):     Applies spatial density-ba",
+      "file_type": "rationale",
+      "source_file": "run_pipeline.py",
+      "source_location": "L12",
+      "id": "st_act_pipeline_run_pipeline_rationale_12",
+      "community": 3,
+      "norm_label": "ensemble consensus centroid clustering (dbscan):     applies spatial density-ba"
+    },
+    {
+      "label": "Simulates CNN/U-Net heatmap thresholding and peak local max finding.     Return",
+      "file_type": "rationale",
+      "source_file": "run_pipeline.py",
+      "source_location": "L57",
+      "id": "st_act_pipeline_run_pipeline_rationale_57",
+      "community": 3,
+      "norm_label": "simulates cnn/u-net heatmap thresholding and peak local max finding.     return"
+    },
+    {
+      "label": "system_diagnostics.py",
+      "file_type": "code",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L1",
+      "id": "system_diagnostics_py",
+      "community": 5,
+      "norm_label": "system_diagnostics.py"
+    },
+    {
+      "label": "Colors",
+      "file_type": "code",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L15",
+      "id": "st_act_pipeline_system_diagnostics_colors",
+      "community": 5,
+      "norm_label": "colors"
+    },
+    {
+      "label": "get_ram_info()",
+      "file_type": "code",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L26",
+      "id": "st_act_pipeline_system_diagnostics_get_ram_info",
+      "community": 5,
+      "norm_label": "get_ram_info()"
+    },
+    {
+      "label": "run_diagnostics()",
+      "file_type": "code",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L108",
+      "id": "st_act_pipeline_system_diagnostics_run_diagnostics",
+      "community": 5,
+      "norm_label": "run_diagnostics()"
+    },
+    {
+      "label": "Retrieves system RAM size in GB. Uses psutil if installed,     falls back to Wi",
+      "file_type": "rationale",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L27",
+      "id": "st_act_pipeline_system_diagnostics_rationale_27",
+      "community": 5,
+      "norm_label": "retrieves system ram size in gb. uses psutil if installed,     falls back to wi"
+    },
+    {
+      "label": "data_loader.py",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L1",
+      "id": "src_data_loader_py",
+      "community": 4,
+      "norm_label": "data_loader.py"
+    },
+    {
+      "label": "AnisotropicZarrLoader",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L14",
+      "id": "src_data_loader_anisotropiczarrloader",
+      "community": 4,
+      "norm_label": "anisotropiczarrloader"
+    },
+    {
+      "label": ".__init__()",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L20",
+      "id": "src_data_loader_anisotropiczarrloader_init",
+      "community": 6,
+      "norm_label": ".__init__()"
+    },
+    {
+      "label": "._init_store()",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L34",
+      "id": "src_data_loader_anisotropiczarrloader_init_store",
+      "community": 6,
+      "norm_label": "._init_store()"
+    },
+    {
+      "label": ".get_shape()",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L99",
+      "id": "src_data_loader_anisotropiczarrloader_get_shape",
+      "community": 8,
+      "norm_label": ".get_shape()"
+    },
+    {
+      "label": "._create_simulated_store()",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L108",
+      "id": "src_data_loader_anisotropiczarrloader_create_simulated_store",
+      "community": 7,
+      "norm_label": "._create_simulated_store()"
+    },
+    {
+      "label": "._draw_cell()",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L192",
+      "id": "src_data_loader_anisotropiczarrloader_draw_cell",
+      "community": 7,
+      "norm_label": "._draw_cell()"
+    },
+    {
+      "label": ".load_timepoint_block()",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L207",
+      "id": "src_data_loader_anisotropiczarrloader_load_timepoint_block",
+      "community": 4,
+      "norm_label": ".load_timepoint_block()"
+    },
+    {
+      "label": ".stream_chunks_3d()",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": "L237",
+      "id": "src_data_loader_anisotropiczarrloader_stream_chunks_3d",
+      "community": 9,
+      "norm_label": ".stream_chunks_3d()"
+    },
+    {
+      "label": "ST-ACT Memory-Safe 4D Anisotropic Zarr v3 Ingestor.     Loads and decompresses",
+      "file_type": "rationale",
+      "source_file": "src/data_loader.py",
+      "source_location": "L15",
+      "id": "src_data_loader_rationale_15",
+      "community": 4,
+      "norm_label": "st-act memory-safe 4d anisotropic zarr v3 ingestor.     loads and decompresses"
+    },
+    {
+      "label": "Initialize the Anisotropic Zarr Loader.          Args:             store_path",
+      "file_type": "rationale",
+      "source_file": "src/data_loader.py",
+      "source_location": "L21",
+      "id": "src_data_loader_rationale_21",
+      "community": 6,
+      "norm_label": "initialize the anisotropic zarr loader.          args:             store_path"
+    },
+    {
+      "label": "Initializes connection to the Zarr v3 store.         If the store does not exis",
+      "file_type": "rationale",
+      "source_file": "src/data_loader.py",
+      "source_location": "L35",
+      "id": "src_data_loader_rationale_35",
+      "community": 6,
+      "norm_label": "initializes connection to the zarr v3 store.         if the store does not exis"
+    },
+    {
+      "label": "Returns the (T, Z, Y, X) dimensions of the 4D dataset.          Returns:",
+      "file_type": "rationale",
+      "source_file": "src/data_loader.py",
+      "source_location": "L100",
+      "id": "src_data_loader_rationale_100",
+      "community": 8,
+      "norm_label": "returns the (t, z, y, x) dimensions of the 4d dataset.          returns:"
+    },
+    {
+      "label": "Generates a mock Zarr store mimicking a 4D anisotropic microscopy volume.",
+      "file_type": "rationale",
+      "source_file": "src/data_loader.py",
+      "source_location": "L109",
+      "id": "src_data_loader_rationale_109",
+      "community": 7,
+      "norm_label": "generates a mock zarr store mimicking a 4d anisotropic microscopy volume."
+    },
+    {
+      "label": "Helper method to render a Gaussian cellular signal in anisotropic space.",
+      "file_type": "rationale",
+      "source_file": "src/data_loader.py",
+      "source_location": "L193",
+      "id": "src_data_loader_rationale_193",
+      "community": 7,
+      "norm_label": "helper method to render a gaussian cellular signal in anisotropic space."
+    },
+    {
+      "label": "Loads and decompresses a single 3D timepoint volume (Z, Y, X) into memory.",
+      "file_type": "rationale",
+      "source_file": "src/data_loader.py",
+      "source_location": "L208",
+      "id": "src_data_loader_rationale_208",
+      "community": 4,
+      "norm_label": "loads and decompresses a single 3d timepoint volume (z, y, x) into memory."
+    },
+    {
+      "label": "A memory-efficient generator yielding spatial sub-chunks (Z, Y, X) of a single t",
+      "file_type": "rationale",
+      "source_file": "src/data_loader.py",
+      "source_location": "L238",
+      "id": "src_data_loader_rationale_238",
+      "community": 9,
+      "norm_label": "a memory-efficient generator yielding spatial sub-chunks (z, y, x) of a single t"
+    },
+    {
+      "label": "model.py",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": "L1",
+      "id": "src_model_py",
+      "community": 0,
+      "norm_label": "model.py"
+    },
+    {
+      "label": "AnisotropicCoordinateTransformer",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": "L5",
+      "id": "src_model_anisotropiccoordinatetransformer",
+      "community": 0,
+      "norm_label": "anisotropiccoordinatetransformer"
+    },
+    {
+      "label": ".__init__()",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": "L10",
+      "id": "src_model_anisotropiccoordinatetransformer_init",
+      "community": 0,
+      "norm_label": ".__init__()"
+    },
+    {
+      "label": ".forward()",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": "L15",
+      "id": "src_model_anisotropiccoordinatetransformer_forward",
+      "community": 0,
+      "norm_label": ".forward()"
+    },
+    {
+      "label": "STACTCentroidPredictor",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": "L25",
+      "id": "src_model_stactcentroidpredictor",
+      "community": 0,
+      "norm_label": "stactcentroidpredictor"
+    },
+    {
+      "label": ".__init__()",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": "L32",
+      "id": "src_model_stactcentroidpredictor_init",
+      "community": 0,
+      "norm_label": ".__init__()"
+    },
+    {
+      "label": ".forward()",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": "L58",
+      "id": "src_model_stactcentroidpredictor_forward",
+      "community": 0,
+      "norm_label": ".forward()"
+    },
+    {
+      "label": "Natively maps 3D coordinate tensors from anisotropic voxel space (Z, Y, X)",
+      "file_type": "rationale",
+      "source_file": "src/model.py",
+      "source_location": "L6",
+      "id": "src_model_rationale_6",
+      "community": 0,
+      "norm_label": "natively maps 3d coordinate tensors from anisotropic voxel space (z, y, x)"
+    },
+    {
+      "label": "Args:             voxel_coords (torch.Tensor): Shape (B, N, 3) representing (Z,",
+      "file_type": "rationale",
+      "source_file": "src/model.py",
+      "source_location": "L16",
+      "id": "src_model_rationale_16",
+      "community": 0,
+      "norm_label": "args:             voxel_coords (torch.tensor): shape (b, n, 3) representing (z,"
+    },
+    {
+      "label": "Fully Convolutional 3D Network that inputs anisotropic timepoint blocks      an",
+      "file_type": "rationale",
+      "source_file": "src/model.py",
+      "source_location": "L26",
+      "id": "src_model_rationale_26",
+      "community": 0,
+      "norm_label": "fully convolutional 3d network that inputs anisotropic timepoint blocks      an"
+    },
+    {
+      "label": "Args:             x (torch.Tensor): Volume tensor of shape (B, 1, Z, Y, X)",
+      "file_type": "rationale",
+      "source_file": "src/model.py",
+      "source_location": "L59",
+      "id": "src_model_rationale_59",
+      "community": 0,
+      "norm_label": "args:             x (torch.tensor): volume tensor of shape (b, 1, z, y, x)"
+    },
+    {
+      "label": "tracker.py",
+      "file_type": "code",
+      "source_file": "src/tracker.py",
+      "source_location": "L1",
+      "id": "src_tracker_py",
+      "community": 1,
+      "norm_label": "tracker.py"
+    },
+    {
+      "label": "STHypergraphTracker",
+      "file_type": "code",
+      "source_file": "src/tracker.py",
+      "source_location": "L5",
+      "id": "src_tracker_sthypergraphtracker",
+      "community": 1,
+      "norm_label": "sthypergraphtracker"
+    },
+    {
+      "label": ".__init__()",
+      "file_type": "code",
+      "source_file": "src/tracker.py",
+      "source_location": "L15",
+      "id": "src_tracker_sthypergraphtracker_init",
+      "community": 1,
+      "norm_label": ".__init__()"
+    },
+    {
+      "label": ".prune_unphysical_edges()",
+      "file_type": "code",
+      "source_file": "src/tracker.py",
+      "source_location": "L20",
+      "id": "src_tracker_sthypergraphtracker_prune_unphysical_edges",
+      "community": 1,
+      "norm_label": ".prune_unphysical_edges()"
+    },
+    {
+      "label": ".solve_lineage()",
+      "file_type": "code",
+      "source_file": "src/tracker.py",
+      "source_location": "L38",
+      "id": "src_tracker_sthypergraphtracker_solve_lineage",
+      "community": 1,
+      "norm_label": ".solve_lineage()"
+    },
+    {
+      "label": ".smooth_mitosis_edges()",
+      "file_type": "code",
+      "source_file": "src/tracker.py",
+      "source_location": "L172",
+      "id": "src_tracker_sthypergraphtracker_smooth_mitosis_edges",
+      "community": 1,
+      "norm_label": ".smooth_mitosis_edges()"
+    },
+    {
+      "label": "Spatio-Temporal Hypergraph Lineage Solver (Grandmaster Tier).     Models tracki",
+      "file_type": "rationale",
+      "source_file": "src/tracker.py",
+      "source_location": "L6",
+      "id": "src_tracker_rationale_6",
+      "community": 1,
+      "norm_label": "spatio-temporal hypergraph lineage solver (grandmaster tier).     models tracki"
+    },
+    {
+      "label": "Anisotropic Velocity Edge Pruning: Inspects coordinates and discards          c",
+      "file_type": "rationale",
+      "source_file": "src/tracker.py",
+      "source_location": "L21",
+      "id": "src_tracker_rationale_21",
+      "community": 1,
+      "norm_label": "anisotropic velocity edge pruning: inspects coordinates and discards          c"
+    },
+    {
+      "label": "Constructs and solves ILP for cell centroids.         Supports multi-frame look",
+      "file_type": "rationale",
+      "source_file": "src/tracker.py",
+      "source_location": "L39",
+      "id": "src_tracker_rationale_39",
+      "community": 1,
+      "norm_label": "constructs and solves ilp for cell centroids.         supports multi-frame look"
+    },
+    {
+      "label": "Mitosis Backward-Smoothing (Temporal Window Align):         Backtracks division",
+      "file_type": "rationale",
+      "source_file": "src/tracker.py",
+      "source_location": "L173",
+      "id": "src_tracker_rationale_173",
+      "community": 1,
+      "norm_label": "mitosis backward-smoothing (temporal window align):         backtracks division"
+    },
+    {
+      "label": "Ensemble Consensus Centroids",
+      "file_type": "code",
+      "source_file": "run_pipeline.py",
+      "source_location": 10,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "run_pipeline_ensemble_consensus_centroids",
+      "community": 2,
+      "norm_label": "ensemble consensus centroids"
+    },
+    {
+      "label": "Extract Peaks From Volume",
+      "file_type": "code",
+      "source_file": "run_pipeline.py",
+      "source_location": 54,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "run_pipeline_extract_peaks_from_volume",
+      "community": 2,
+      "norm_label": "extract peaks from volume"
+    },
+    {
+      "label": "Run ST-ACT Pipeline",
+      "file_type": "code",
+      "source_file": "run_pipeline.py",
+      "source_location": 69,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "run_pipeline_run_st_act_pipeline",
+      "community": 2,
+      "norm_label": "run st-act pipeline"
+    },
+    {
+      "label": "Anisotropic Zarr Loader",
+      "file_type": "code",
+      "source_file": "src/data_loader.py",
+      "source_location": 13,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "data_loader_anisotropiczarrloader",
+      "community": 2,
+      "norm_label": "anisotropic zarr loader"
+    },
+    {
+      "label": "ST-Hypergraph Tracker",
+      "file_type": "code",
+      "source_file": "src/tracker.py",
+      "source_location": 5,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "tracker_sthypergraphtracker",
+      "community": 2,
+      "norm_label": "st-hypergraph tracker"
+    },
+    {
+      "label": "ST-ACT Centroid Predictor",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": 26,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "model_stactcentroidpredictor",
+      "community": 2,
+      "norm_label": "st-act centroid predictor"
+    },
+    {
+      "label": "Anisotropic Coordinate Transformer",
+      "file_type": "code",
+      "source_file": "src/model.py",
+      "source_location": 5,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "model_anisotropiccoordinatetransformer",
+      "community": 2,
+      "norm_label": "anisotropic coordinate transformer"
+    },
+    {
+      "label": "Run System Diagnostics",
+      "file_type": "code",
+      "source_file": "system_diagnostics.py",
+      "source_location": 101,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "system_diagnostics_run_diagnostics",
+      "community": 2,
+      "norm_label": "run system diagnostics"
+    },
+    {
+      "label": "Hyperparameters Configuration",
+      "file_type": "document",
+      "source_file": "config/hyperparams.yaml",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null,
+      "id": "hyperparams_yaml",
+      "community": 2,
+      "norm_label": "hyperparameters configuration"
+    }
+  ],
+  "links": [
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "run_pipeline.py",
+      "source_location": "L11",
+      "weight": 1.0,
+      "source": "run_pipeline_py",
+      "target": "st_act_pipeline_run_pipeline_ensemble_consensus_centroids",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "run_pipeline.py",
+      "source_location": "L56",
+      "weight": 1.0,
+      "source": "run_pipeline_py",
+      "target": "st_act_pipeline_run_pipeline_extract_peaks_from_volume",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "run_pipeline.py",
+      "source_location": "L70",
+      "weight": 1.0,
+      "source": "run_pipeline_py",
+      "target": "st_act_pipeline_run_pipeline_run_st_act_pipeline",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "run_pipeline.py",
+      "source_location": "L96",
+      "weight": 1.0,
+      "source": "st_act_pipeline_run_pipeline_run_st_act_pipeline",
+      "target": "st_act_pipeline_run_pipeline_ensemble_consensus_centroids",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "run_pipeline.py",
+      "source_location": "L12",
+      "weight": 1.0,
+      "source": "st_act_pipeline_run_pipeline_rationale_12",
+      "target": "st_act_pipeline_run_pipeline_ensemble_consensus_centroids",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "run_pipeline.py",
+      "source_location": "L90",
+      "weight": 1.0,
+      "source": "st_act_pipeline_run_pipeline_run_st_act_pipeline",
+      "target": "st_act_pipeline_run_pipeline_extract_peaks_from_volume",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "run_pipeline.py",
+      "source_location": "L57",
+      "weight": 1.0,
+      "source": "st_act_pipeline_run_pipeline_rationale_57",
+      "target": "st_act_pipeline_run_pipeline_extract_peaks_from_volume",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "run_pipeline.py",
+      "source_location": "L75",
+      "weight": 1.0,
+      "source": "st_act_pipeline_run_pipeline_run_st_act_pipeline",
+      "target": "src_data_loader_anisotropiczarrloader"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "run_pipeline.py",
+      "source_location": "L109",
+      "weight": 1.0,
+      "source": "st_act_pipeline_run_pipeline_run_st_act_pipeline",
+      "target": "src_tracker_sthypergraphtracker"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L15",
+      "weight": 1.0,
+      "source": "system_diagnostics_py",
+      "target": "st_act_pipeline_system_diagnostics_colors",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L26",
+      "weight": 1.0,
+      "source": "system_diagnostics_py",
+      "target": "st_act_pipeline_system_diagnostics_get_ram_info",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L108",
+      "weight": 1.0,
+      "source": "system_diagnostics_py",
+      "target": "st_act_pipeline_system_diagnostics_run_diagnostics",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L155",
+      "weight": 1.0,
+      "source": "st_act_pipeline_system_diagnostics_run_diagnostics",
+      "target": "st_act_pipeline_system_diagnostics_get_ram_info",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "system_diagnostics.py",
+      "source_location": "L27",
+      "weight": 1.0,
+      "source": "st_act_pipeline_system_diagnostics_rationale_27",
+      "target": "st_act_pipeline_system_diagnostics_get_ram_info",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L14",
+      "weight": 1.0,
+      "source": "src_data_loader_py",
+      "target": "src_data_loader_anisotropiczarrloader",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L20",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader",
+      "target": "src_data_loader_anisotropiczarrloader_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L34",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader",
+      "target": "src_data_loader_anisotropiczarrloader_init_store",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L99",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader",
+      "target": "src_data_loader_anisotropiczarrloader_get_shape",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L108",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader",
+      "target": "src_data_loader_anisotropiczarrloader_create_simulated_store",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L192",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader",
+      "target": "src_data_loader_anisotropiczarrloader_draw_cell",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L207",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader",
+      "target": "src_data_loader_anisotropiczarrloader_load_timepoint_block",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L237",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader",
+      "target": "src_data_loader_anisotropiczarrloader_stream_chunks_3d",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L15",
+      "weight": 1.0,
+      "source": "src_data_loader_rationale_15",
+      "target": "src_data_loader_anisotropiczarrloader",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L32",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader_init",
+      "target": "src_data_loader_anisotropiczarrloader_init_store",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L21",
+      "weight": 1.0,
+      "source": "src_data_loader_rationale_21",
+      "target": "src_data_loader_anisotropiczarrloader_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L44",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader_init_store",
+      "target": "src_data_loader_anisotropiczarrloader_create_simulated_store",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L35",
+      "weight": 1.0,
+      "source": "src_data_loader_rationale_35",
+      "target": "src_data_loader_anisotropiczarrloader_init_store",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L100",
+      "weight": 1.0,
+      "source": "src_data_loader_rationale_100",
+      "target": "src_data_loader_anisotropiczarrloader_get_shape",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L183",
+      "weight": 1.0,
+      "source": "src_data_loader_anisotropiczarrloader_create_simulated_store",
+      "target": "src_data_loader_anisotropiczarrloader_draw_cell",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L109",
+      "weight": 1.0,
+      "source": "src_data_loader_rationale_109",
+      "target": "src_data_loader_anisotropiczarrloader_create_simulated_store",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L193",
+      "weight": 1.0,
+      "source": "src_data_loader_rationale_193",
+      "target": "src_data_loader_anisotropiczarrloader_draw_cell",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L208",
+      "weight": 1.0,
+      "source": "src_data_loader_rationale_208",
+      "target": "src_data_loader_anisotropiczarrloader_load_timepoint_block",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/data_loader.py",
+      "source_location": "L238",
+      "weight": 1.0,
+      "source": "src_data_loader_rationale_238",
+      "target": "src_data_loader_anisotropiczarrloader_stream_chunks_3d",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L5",
+      "weight": 1.0,
+      "source": "src_model_py",
+      "target": "src_model_anisotropiccoordinatetransformer",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L25",
+      "weight": 1.0,
+      "source": "src_model_py",
+      "target": "src_model_stactcentroidpredictor",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L10",
+      "weight": 1.0,
+      "source": "src_model_anisotropiccoordinatetransformer",
+      "target": "src_model_anisotropiccoordinatetransformer_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L15",
+      "weight": 1.0,
+      "source": "src_model_anisotropiccoordinatetransformer",
+      "target": "src_model_anisotropiccoordinatetransformer_forward",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L41",
+      "weight": 1.0,
+      "source": "src_model_stactcentroidpredictor_init",
+      "target": "src_model_anisotropiccoordinatetransformer",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L6",
+      "weight": 1.0,
+      "source": "src_model_rationale_6",
+      "target": "src_model_anisotropiccoordinatetransformer",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L11",
+      "weight": 1.0,
+      "source": "src_model_anisotropiccoordinatetransformer_init",
+      "target": "src_model_stactcentroidpredictor_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L16",
+      "weight": 1.0,
+      "source": "src_model_rationale_16",
+      "target": "src_model_anisotropiccoordinatetransformer_forward",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L32",
+      "weight": 1.0,
+      "source": "src_model_stactcentroidpredictor",
+      "target": "src_model_stactcentroidpredictor_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L58",
+      "weight": 1.0,
+      "source": "src_model_stactcentroidpredictor",
+      "target": "src_model_stactcentroidpredictor_forward",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L26",
+      "weight": 1.0,
+      "source": "src_model_rationale_26",
+      "target": "src_model_stactcentroidpredictor",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/model.py",
+      "source_location": "L59",
+      "weight": 1.0,
+      "source": "src_model_rationale_59",
+      "target": "src_model_stactcentroidpredictor_forward",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L5",
+      "weight": 1.0,
+      "source": "src_tracker_py",
+      "target": "src_tracker_sthypergraphtracker",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L15",
+      "weight": 1.0,
+      "source": "src_tracker_sthypergraphtracker",
+      "target": "src_tracker_sthypergraphtracker_init",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L20",
+      "weight": 1.0,
+      "source": "src_tracker_sthypergraphtracker",
+      "target": "src_tracker_sthypergraphtracker_prune_unphysical_edges",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L38",
+      "weight": 1.0,
+      "source": "src_tracker_sthypergraphtracker",
+      "target": "src_tracker_sthypergraphtracker_solve_lineage",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L172",
+      "weight": 1.0,
+      "source": "src_tracker_sthypergraphtracker",
+      "target": "src_tracker_sthypergraphtracker_smooth_mitosis_edges",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L6",
+      "weight": 1.0,
+      "source": "src_tracker_rationale_6",
+      "target": "src_tracker_sthypergraphtracker",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L106",
+      "weight": 1.0,
+      "source": "src_tracker_sthypergraphtracker_solve_lineage",
+      "target": "src_tracker_sthypergraphtracker_prune_unphysical_edges",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L21",
+      "weight": 1.0,
+      "source": "src_tracker_rationale_21",
+      "target": "src_tracker_sthypergraphtracker_prune_unphysical_edges",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L39",
+      "weight": 1.0,
+      "source": "src_tracker_rationale_39",
+      "target": "src_tracker_sthypergraphtracker_solve_lineage",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tracker.py",
+      "source_location": "L173",
+      "weight": 1.0,
+      "source": "src_tracker_rationale_173",
+      "target": "src_tracker_sthypergraphtracker_smooth_mitosis_edges",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "run_pipeline.py",
+      "source_location": 96,
+      "weight": 1.0,
+      "source": "run_pipeline_run_st_act_pipeline",
+      "target": "run_pipeline_ensemble_consensus_centroids"
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "run_pipeline.py",
+      "source_location": 90,
+      "weight": 1.0,
+      "source": "run_pipeline_run_st_act_pipeline",
+      "target": "run_pipeline_extract_peaks_from_volume"
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "run_pipeline.py",
+      "source_location": 74,
+      "weight": 1.0,
+      "source": "run_pipeline_run_st_act_pipeline",
+      "target": "data_loader_anisotropiczarrloader"
+    },
+    {
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "run_pipeline.py",
+      "source_location": 108,
+      "weight": 1.0,
+      "source": "run_pipeline_run_st_act_pipeline",
+      "target": "tracker_sthypergraphtracker"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "run_pipeline.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "run_pipeline_run_st_act_pipeline",
+      "target": "model_stactcentroidpredictor"
+    },
+    {
+      "relation": "references",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": "run_pipeline.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "run_pipeline_run_st_act_pipeline",
+      "target": "hyperparams_yaml"
+    },
+    {
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.7,
+      "source_file": "system_diagnostics.py",
+      "source_location": null,
+      "weight": 1.0,
+      "source": "system_diagnostics_run_diagnostics",
+      "target": "data_loader_anisotropiczarrloader"
+    },
+    {
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/model.py",
+      "source_location": 42,
+      "weight": 1.0,
+      "source": "model_stactcentroidpredictor",
+      "target": "model_anisotropiccoordinatetransformer"
+    }
+  ],
+  "hyperedges": []
+}

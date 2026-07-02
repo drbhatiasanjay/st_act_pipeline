@@ -1,0 +1,30 @@
+# Competition data - large, downloaded separately, never belongs in git
+/data/
+*.zarr/
+*.geff/
+
+# Trained model weights
+/models/*.pth
+/models/*.pt
+/models/*.ckpt
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Output artifacts
+/output/*.csv
+
+# Env / secrets
+.env
+*.env.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Tool-generated caches
+.memsearch/
+graphify-out/cache/

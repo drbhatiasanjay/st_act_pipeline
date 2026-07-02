@@ -1,0 +1,33 @@
+# Core scientific python stack
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+
+# Zarr v3 and fast compression
+zarr>=3.0.0
+numcodecs>=0.11.0
+blosc2>=2.0.0
+
+# Deep learning stack with native anisotropic transformers
+torch>=2.1.0
+torchvision>=0.16.0
+
+# Linear Programming solver for tracking (ILP)
+pulp>=2.7.0
+networkx>=3.1
+
+# Evaluation and visualization
+scikit-image>=0.21.0
+scikit-learn>=1.2.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Ground-truth format (GEFF) and tracking-metric tooling — same publisher
+# (live-image-tracking-tools), geff reads directly into networkx
+geff>=1.0.0
+traccuracy>=0.1.0
+
+# Visual QC: napari + a plugin that reads/writes .geff graphs directly
+# over the zarr volumes, for eyeballing predicted vs. ground-truth tracks
+napari>=0.5.0
+napari-geff>=0.1.0
