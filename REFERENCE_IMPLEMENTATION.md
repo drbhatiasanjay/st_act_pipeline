@@ -321,6 +321,18 @@ hand-tuned distance metric once trained on real motion patterns, while still kee
 global flow-conservation/division-consistency guarantees `STHypergraphTracker` already provides.
 Option (b) is worth prototyping early in Phase 2 rather than assumed away.
 
+**Sharper motivation for (b), from real data (2026-07-03):** measured actual inter-frame cell
+displacement from all 4 staged `.geff` files — median 0.91-2.88µm/frame, but a real (if narrow)
+tail: ~3.1% of true links exceed the current squared-distance cost's break-even point against
+birth+death (see `.planning/STATE.md` Blockers/Concerns #5). A hand-tuned `distance²` cost can't
+represent this well — it either penalizes the common case correctly (small movements, current
+setup) or has to loosen globally to rescue the fast tail, degrading precision everywhere else. A
+*learned* cost naturally handles this: rare-but-real fast movement (plausibly correlated with
+mitosis, where daughter cells can move/deform quickly right around the split) gets modeled
+directly from data instead of forced into one global distance-cost curve. This is a concrete,
+data-grounded reason to prioritize option (b), not just a general "learned should beat hand-tuned"
+argument.
+
 Not yet fetched: `predict_unet_transformer.py` (inference/NMS details), `src/tracking_cellmot/img_proc.py`, `models/`.
 
 ## 6. Action items this unblocks

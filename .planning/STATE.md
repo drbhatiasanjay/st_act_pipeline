@@ -148,6 +148,19 @@ Phase 0 (Unblock)
    earlier than Phase 4. Consider moving cost calibration (currently v2 ITER-01/Phase 4) earlier
    if Phase 1 numbers look off for no other explainable reason.
 
+   **REFINED 2026-07-03 — measured against real ground truth, not just theoretical.** Computed
+   actual inter-frame displacement from all 4 staged `.geff` files (2127 real consecutive-frame
+   edges, physical units via the real anisotropy `(1.625,0.40625,0.40625)`): median 0.91–2.88µm,
+   mean 1.33–3.12µm per sample, **only 3.1% of real edges overall exceed the 5.48µm break-even**
+   (per-sample range 0%–8%). So this is a real but *narrow* risk, not a systemic one — most true
+   links are well inside the safe zone where current costs correctly favor linking. Revised
+   guidance: don't preemptively recalibrate costs before Phase 1 (the earlier "consider moving
+   this earlier" suggestion is downgraded) — but if division recall specifically underperforms in
+   Phase 4, check whether the affected cells are disproportionately in that fast-moving tail
+   first, since rapid movement plausibly correlates with mitosis (dividing cells can move/deform
+   quickly right around the split), which would make this a real, if secondary, driver of the
+   division_jaccard gap rather than the mitosis-smoothing logic itself.
+
 ---
 
 ## Session Continuity
