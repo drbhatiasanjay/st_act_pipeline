@@ -18,6 +18,7 @@ from typing import Dict, Tuple
 from pathlib import Path
 import numpy as np
 import networkx as nx
+import polars as pl
 import tracksdata as td
 
 from src.data_loader import AnisotropicZarrLoader
@@ -170,29 +171,37 @@ def convert_nx_to_tracksdata(nx_graph: nx.DiGraph, dataset_id: str) -> td.graph.
     Returns:
         tracksdata BaseGraph with proper node/edge structure
     """
-    # Create a new tracksdata graph
-    td_g = td.RXGraph()
+    # Create a new tracksdata graph (IndexedRXGraph)
+    td_g = td.graph.IndexedRXGraph()
 
-    # Add nodes
+    # Register attribute keys
+    for key in ('z', 'y', 'x'):
+        try:
+            td_g.add_node_attr_key(key, pl.Int64, 0)
+        except ValueError:
+            pass  # Key already exists
+
+    # Map networkx node ids to tracksdata node ids
+    node_mapping = {}
     for node, attrs in nx_graph.nodes(data=True):
-        t, node_id = node
+        t, node_idx = node
         coords = attrs.get('coords', [0, 0, 0])
 
-        td_g.add_node(
-            node_id=node_id,
-            attrs={
-                't': int(t),
-                'z': int(coords[0]),
-                'y': int(coords[1]),
-                'x': int(coords[2])
-            }
-        )
+        # Add node and track the returned node_id
+        attrs_dict = {
+            't': int(t),
+            'z': int(coords[0]),
+            'y': int(coords[1]),
+            'x': int(coords[2])
+        }
+        td_node_id = td_g.add_node(attrs_dict)
+        node_mapping[(t, node_idx)] = td_node_id
 
-    # Add edges
+    # Add edges using the mapped node ids
     for source, target in nx_graph.edges():
-        source_t, source_node_id = source
-        target_t, target_node_id = target
-        td_g.add_edge(source_node_id, target_node_id)
+        source_td_id = node_mapping[source]
+        target_td_id = node_mapping[target]
+        td_g.add_edge(source_td_id, target_td_id, {})
 
     return td_g
 
