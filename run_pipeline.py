@@ -85,8 +85,8 @@ def run_st_act_pipeline():
     
     t_dim, z_dim, y_dim, x_dim = loader.get_shape()
     logger.info(f"Loaded microscopy volume shape: (T={t_dim}, Z={z_dim}, Y={y_dim}, X={x_dim})")
-    
-    anisotropy = np.array([5.0, 1.0, 1.0])
+
+    anisotropy = np.array([4.0, 1.0, 1.0])
     
     # 2. Sequential Timepoint Ingestion, model inference & DBSCAN Ensembling
     centroids_by_t = {}

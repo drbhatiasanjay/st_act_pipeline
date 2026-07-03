@@ -7,7 +7,7 @@ class AnisotropicCoordinateTransformer(nn.Module):
     Natively maps 3D coordinate tensors from anisotropic voxel space (Z, Y, X)
     to physical spatial metric space (Z_phys, Y_phys, X_phys) without raw image interpolation.
     """
-    def __init__(self, anisotropy_ratio=(5.0, 1.0, 1.0)):
+    def __init__(self, anisotropy_ratio=(4.0, 1.0, 1.0)):
         super().__init__()
         # Register voxel ratios as non-trainable buffers
         self.register_buffer("anisotropy", torch.tensor(anisotropy_ratio, dtype=torch.float32))

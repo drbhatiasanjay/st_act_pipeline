@@ -1,7 +1,7 @@
 # ST-ACT Pipeline Configuration (Best Practices)
 data:
   zarr_store_path: "data/cell_tracking_volume.zarr"
-  anisotropy_ratio: [5.0, 1.0, 1.0]
+  anisotropy_ratio: [4.0, 1.0, 1.0]
   dtype: "float32"
 
 model:
