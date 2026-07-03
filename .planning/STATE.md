@@ -123,6 +123,24 @@ Phase 0 (Unblock)
 
 4. **Hidden test set will reveal different patterns (Phase 5).** Leaderboard is ~29% public; final ranking uses full hidden set. Weekly cycle in Phase 5 monitors for overfitting; if local-vs-public divergence > 0.05, revert to last best submission and investigate.
 
+5. **NEW 2026-07-03 — ILP cost-scale caps realistic per-frame movement, confirmed via a new
+   positive/negative test suite (`tests/test_tracker.py`, 14 tests, all passing against current
+   `src/tracker.py`).** The edge cost is `distance² × gap_penalty`; linking only beats paying two
+   isolated birth+death costs when `distance² < birth_cost + death_cost`. With the actual
+   production costs (`birth_cost=15, death_cost=15` in `run_pipeline.py`), that break-even is
+   **~5.48 microns of movement per frame** — verified with an exact test asserting a link forms
+   just under that threshold and doesn't just over it. If real embryonic nuclei move faster than
+   that between frames (plausible during active development), the ILP will systematically prefer
+   birth+death singletons over correct links regardless of detection quality, silently capping
+   `edge_jaccard` recall. **Also confirmed:** `prune_unphysical_edges` gates on raw (unwarped)
+   coordinates, not motion-compensated ones — a genuinely fast-moving cell whose raw per-frame
+   jump exceeds the prune gate (`max_xy_micron=30`/`max_z_micron=15`, scaled by frame-gap) can
+   never be rescued by an accurate motion vector, no matter how good MODEL-04's prediction is.
+   **Action:** if Phase 1's baseline-parity score comes in surprisingly low, check this before
+   assuming detection/data is broken — it may just be birth/death costs needing recalibration
+   earlier than Phase 4. Consider moving cost calibration (currently v2 ITER-01/Phase 4) earlier
+   if Phase 1 numbers look off for no other explainable reason.
+
 ---
 
 ## Session Continuity
