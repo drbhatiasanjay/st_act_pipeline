@@ -31,7 +31,7 @@ traccuracy>=0.1.0  # secondary cross-check only; tracksdata is primary for FR-5,
 # is built on this) — vendor/wrap its metrics.py + division_metrics.py for FR-5, and its
 # IndexedRXGraph.from_geff() for FR-1, instead of hand-rolling either. Still 0.x/rc — pin
 # loosely and re-check on updates.
-tracksdata>=0.1.0rc6
+tracksdata==0.1.0rc6
 
 # Visual QC: napari + a plugin that reads/writes .geff graphs directly
 # over the zarr volumes, for eyeballing predicted vs. ground-truth tracks

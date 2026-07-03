@@ -284,13 +284,44 @@ hand-rolled `.geff` reader and FR-4's planned submission writer's node/edge seri
 checking whether `to_geff()` output can be reshaped into the competition's CSV schema directly,
 before writing a CSV serializer from scratch.
 
-## 5. Also worth following up (not yet fetched, lower priority)
+## 5. Host's own reference model — architecturally different from our current approach (fetched 2026-07-03)
 
-- `scripts/train_unet_transformer.py` / `predict_unet_transformer.py` — the host's own reference
-  *model* (a U-Net + Transformer, not a plain CNN). Directly relevant to PRD Phase 2's model
-  architecture decision — our current `STACTCentroidPredictor` is a 2-conv-layer shallow FCN;
-  worth comparing against what the host itself considers a reasonable baseline architecture.
-- `src/tracking_cellmot/img_proc.py` and `models/` — not yet pulled.
+`scripts/train_unet_transformer.py`: the host does **not** use a detect-then-ILP-track two-stage
+pipeline like ours. It trains a single model that predicts edges (links) directly:
+
+1. **`UNetNodeTransformer`**: stack frames `t` and `t+1` → 3D UNet (`[32,64,128]` channels) →
+   per-voxel detection logits (`detect_head`, a 1x1 Conv3d) **and** dense feature maps.
+2. At each detected/GT node coordinate, gather the UNet feature vector + an 8-per-axis (32 total)
+   sinusoidal positional embedding.
+3. Feed all nodes from both frames into a **cross-attention Transformer**
+   (`SimpleNodeTransformer`, hidden_dim 128, 4 heads, 4 blocks, dropout 0.3) → pairwise **edge
+   logits** — i.e. the model directly outputs "does node A in frame t link to node B in frame
+   t+1", learned end-to-end, not derived from a hand-tuned distance-cost ILP.
+
+**Loss:** `edge_loss + det_loss_weight(1.0) * det_loss`. Detection loss is BCE with
+inverse-frequency pos/neg weighting (`weight_pos=1/n_pos`, `weight_neg=0.01/n_neg` — heavily
+downweights the (mostly-background) negative class, sensible given the sparse-annotation finding
+in `data/staging/README.md`). Edge loss is **focal-weighted BCE** (`(1-p_t)^2 * bce`), applied only
+to annotated rows/columns.
+
+**Key hyperparameters:** lr `1e-4` (AdamW), batch 16, 50 epochs, downsample strides `(1,4,4)`
+(Z untouched, Y/X downsampled 4x — consistent with Z already being the coarse axis), quantile
+normalization at **0.1%/99.9%** (slightly different percentiles than the `0/1.0` guess implied
+elsewhere — use these exact ones), NMS-style pool kernel `5.0 µm`, 2-frame windows, grad clip 1.0.
+
+**Why this matters for Phase 2 planning:** this is a materially different paradigm from
+`STHypergraphTracker`'s squared-Euclidean-distance ILP edge costs. Two live options, not
+mutually exclusive:
+(a) deepen `STACTCentroidPredictor` (heatmap+motion, current design) and keep the ILP as the
+linker, treating the host's architecture as inspiration rather than a mandate; or
+(b) train a node-transformer edge-predictor like the host's and **feed its learned edge
+probabilities into the ILP's objective as the cost term**, replacing the naive squared-distance
+cost — plausibly a real, above-baseline improvement, since a *learned* affinity should beat a
+hand-tuned distance metric once trained on real motion patterns, while still keeping the ILP's
+global flow-conservation/division-consistency guarantees `STHypergraphTracker` already provides.
+Option (b) is worth prototyping early in Phase 2 rather than assumed away.
+
+Not yet fetched: `predict_unet_transformer.py` (inference/NMS details), `src/tracking_cellmot/img_proc.py`, `models/`.
 
 ## 6. Action items this unblocks
 
@@ -300,6 +331,9 @@ before writing a CSV serializer from scratch.
 - **FR-5 (local metric):** vendor/import `metrics.py` + `division_metrics.py` directly rather than
   reimplementing from prose — this removes most of the risk in that task.
 - **FR-2 (training) / Phase 2:** revisit model architecture against the host's own
-  U-Net+Transformer reference before committing to deepening the current 2-conv-layer FCN.
-- Check whether `tracksdata` is pip-installable (`pip install tracksdata`) and add it to
-  `requirements.txt` once confirmed.
+  U-Net+Transformer reference before committing to deepening the current 2-conv-layer FCN;
+  specifically evaluate feeding a learned edge-affinity model into the ILP's cost term (§5 option b)
+  as a concrete above-baseline target, not just "deepen the CNN."
+- **CONFIRMED 2026-07-03:** `tracksdata` is real and pip-installable (PyPI, currently
+  `0.1.0rc6` — pre-1.0 release candidate, **pin the exact version** in `requirements.txt` rather
+  than a loose spec, since the API may still shift before 1.0).
