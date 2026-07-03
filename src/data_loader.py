@@ -17,84 +17,107 @@ class AnisotropicZarrLoader:
     Loads and decompresses 3D blocks/timepoints from a 4D Zarr v3 store
     using fast blosc2/blosclz compression codecs in a memory-efficient manner.
     """
-    def __init__(self, store_path: str, anisotropy_ratio: Tuple[float, float, float] = (5.0, 1.0, 1.0)):
+    def __init__(self, store_path: str, anisotropy_ratio: Tuple[float, float, float] = (4.0, 1.0, 1.0), simulate: bool = False):
         """
         Initialize the Anisotropic Zarr Loader.
 
         Args:
             store_path (str): File system path to the Zarr v3 store directory or zip container.
             anisotropy_ratio (Tuple[float, float, float]): Voxel size ratios for (Z, Y, X) axes.
-                Defaults to (5.0, 1.0, 1.0) for anisotropic fluorescent microscopy.
+                Defaults to (4.0, 1.0, 1.0) for anisotropic fluorescent microscopy.
+            simulate (bool): If True, creates a simulated store when path doesn't exist.
+                Defaults to False (real data required).
         """
         self.store_path = store_path
         self.anisotropy_ratio = np.array(anisotropy_ratio, dtype=np.float32)
         self.dataset: Optional[zarr.Array] = None
+        self.simulate = simulate
+        self._quantile_normalization_params: Optional[Tuple[float, float]] = None
         self._init_store()
 
     def _init_store(self) -> None:
         """
         Initializes connection to the Zarr v3 store.
-        If the store does not exist on disk, or is corrupt/empty, a simulated 4D Zarr store is generated
-        with high-efficiency blosc2 compression for demonstration purposes.
+        For real competition data: reads Zarr v3 OME-NGFF stores at array path "0/".
+        For testing: optionally creates a simulated store if simulate=True.
         """
         try:
-            # Check if store exists; if not, create a mock store for demonstration/testing
+            # Check if store exists
             if not os.path.exists(self.store_path):
-                logger.warning(f"Path '{self.store_path}' not found. Creating simulated cellular Zarr store.")
-                self._create_simulated_store()
-            else:
-                # Even if path exists, check if it's openable or empty. If corrupt, clean & recreate!
-                try:
-                    try:
-                        test_ds = zarr.open_array(self.store_path, mode='r')
-                    except Exception:
-                        test_root = zarr.open(self.store_path, mode='r')
-                        if hasattr(test_root, 'shape'):
-                            pass
-                        elif hasattr(test_root, 'array_keys') and len(list(test_root.array_keys())) > 0:
-                            pass
-                        else:
-                            raise ValueError("Zarr store contains no openable arrays or groups.")
-                except Exception as test_err:
-                    logger.warning(f"Zarr store at '{self.store_path}' is empty, invalid or corrupt ({str(test_err)}). Re-generating simulated store.")
-                    import shutil
-                    try:
-                        if os.path.isdir(self.store_path):
-                            shutil.rmtree(self.store_path)
-                        elif os.path.isfile(self.store_path):
-                            os.remove(self.store_path)
-                    except Exception as clean_err:
-                        logger.warning(f"Could not clean existing corrupt path: {str(clean_err)}")
+                if self.simulate:
+                    logger.warning(f"Path '{self.store_path}' not found. Creating simulated cellular Zarr store.")
                     self._create_simulated_store()
-            
-            # Open Zarr array (Zarr v3 compliant opening)
+                else:
+                    raise FileNotFoundError(f"Real data path '{self.store_path}' not found. Use simulate=True for testing.")
+            else:
+                # Real data exists: attempt to open it
+                logger.info(f"Opening real Zarr v3 store at '{self.store_path}'")
+
+            # Open Zarr array (Zarr v3 OME-NGFF compliant)
             try:
-                # 1. Try opening specifically as a Zarr array (common for Zarr v2 & v3 single-array stores like Kaggle)
-                self.dataset = zarr.open_array(self.store_path, mode='r')
-            except Exception as array_err:
-                logger.warning(f"Could not open directly as array: {str(array_err)}. Retrying with general open...")
-                try:
-                    # 2. Try standard open
-                    root = zarr.open(self.store_path, mode='r')
-                    if hasattr(root, 'shape'):
-                        self.dataset = root
-                    else:
-                        # If a group, locate and load the first array key
-                        array_keys = list(root.array_keys())
+                # First, try opening as a group (root) to access nested array at "0/"
+                root = zarr.open(self.store_path, mode='r')
+
+                # Check if root is itself an array (legacy single-array store)
+                if hasattr(root, 'shape') and hasattr(root, 'chunks'):
+                    self.dataset = root
+                    logger.info("Opened Zarr store as direct array.")
+                # Check if it's a group with nested array at "0/" (OME-NGFF standard)
+                elif hasattr(root, '__getitem__'):
+                    try:
+                        self.dataset = root['0']
+                        logger.info("Resolved nested OME-NGFF array at path '0/' in Zarr group.")
+                    except (KeyError, TypeError):
+                        # If no "0/", try first available array key
+                        array_keys = list(root.array_keys()) if hasattr(root, 'array_keys') else []
                         if array_keys:
                             self.dataset = root[array_keys[0]]
-                            logger.info(f"Resolved nested array '{array_keys[0]}' in Zarr group.")
+                            logger.info(f"Resolved array '{array_keys[0]}' in Zarr group.")
                         else:
-                            raise ValueError("Zarr store group contains no arrays.")
-                except Exception as group_err:
-                    logger.error(f"Failed standard open: {str(group_err)}")
-                    raise ValueError(f"Could not resolve openable Zarr array at '{self.store_path}'")
-            
+                            raise ValueError("Zarr store group contains no openable arrays.")
+                else:
+                    raise ValueError("Zarr store is neither an array nor a readable group.")
+
+                # Extract quantile normalization parameters if present in metadata
+                self._extract_quantile_params(root)
+
+            except Exception as open_err:
+                logger.error(f"Failed to open Zarr store: {str(open_err)}")
+                raise ValueError(f"Could not resolve openable Zarr array at '{self.store_path}': {str(open_err)}")
+
             logger.info(f"Successfully opened Zarr volume: {self.store_path}")
             logger.info(f"Volume Shape: {self.dataset.shape} | Chunks: {self.dataset.chunks} | Dtype: {self.dataset.dtype}")
+            if self._quantile_normalization_params:
+                logger.info(f"Quantile normalization parameters found: q_low={self._quantile_normalization_params[0]}, q_high={self._quantile_normalization_params[1]}")
         except Exception as e:
-            logger.error(f"Failed to open Zarr Store at '{self.store_path}': {str(e)}")
+            logger.error(f"Failed to initialize Zarr Store at '{self.store_path}': {str(e)}")
             raise
+
+    def _extract_quantile_params(self, root) -> None:
+        """
+        Extract quantile normalization parameters from Zarr metadata.
+        Looks for image_statistics.quantiles in zarr attributes.
+
+        Args:
+            root: Zarr group or array object with attributes
+        """
+        try:
+            # Try to get attributes from the root
+            attrs = root.attrs if hasattr(root, 'attrs') else {}
+
+            if 'image_statistics' in attrs:
+                image_stats = attrs['image_statistics']
+                if 'quantiles' in image_stats:
+                    quantiles = image_stats['quantiles']
+                    # Use 0.1 and 0.9 quantiles for normalization (10th and 90th percentile)
+                    q_low = quantiles.get('0.1', None)
+                    q_high = quantiles.get('0.9', None)
+
+                    if q_low is not None and q_high is not None:
+                        self._quantile_normalization_params = (float(q_low), float(q_high))
+                        logger.info(f"Extracted quantile params: 0.1={q_low}, 0.9={q_high}")
+        except Exception as e:
+            logger.debug(f"Could not extract quantile parameters: {str(e)}")
 
     def get_shape(self) -> Tuple[int, int, int, int]:
         """
@@ -204,29 +227,61 @@ class AnisotropicZarrLoader:
                         val = np.exp(-dist_sq / 12.0)
                         grid[cz, cy, cx] = max(grid[cz, cy, cx], val)
 
-    def load_timepoint_block(self, t: int) -> np.ndarray:
+    def _apply_quantile_normalization(self, data: np.ndarray) -> np.ndarray:
+        """
+        Apply quantile normalization to raw data if normalization parameters are available.
+        Normalizes to [0, 1] range using: (data - q_low) / (q_high - q_low)
+
+        Args:
+            data (np.ndarray): Raw data to normalize
+
+        Returns:
+            np.ndarray: Normalized data (float32, [0,1] range) or original data if no quantiles
+        """
+        if self._quantile_normalization_params is None:
+            return data
+
+        q_low, q_high = self._quantile_normalization_params
+        if q_high <= q_low:
+            logger.warning(f"Invalid quantile range: {q_low} >= {q_high}. Skipping normalization.")
+            return data
+
+        # Apply quantile normalization
+        normalized = (data.astype(np.float32) - q_low) / (q_high - q_low)
+        # Clamp to [0, 1]
+        normalized = np.clip(normalized, 0.0, 1.0)
+        return normalized
+
+    def load_timepoint_block(self, t: int, normalize: bool = True) -> np.ndarray:
         """
         Loads and decompresses a single 3D timepoint volume (Z, Y, X) into memory.
+        Optionally applies quantile normalization.
         Bypasses full-file loading, loading only the specific sliced block.
 
         Args:
             t (int): Timepoint index to extract.
+            normalize (bool): If True and quantile params available, applies normalization.
 
         Returns:
-            np.ndarray: A decompressed 3D NumPy array of shape (Z, Y, X).
+            np.ndarray: A decompressed 3D NumPy array of shape (Z, Y, X) (uint16 raw or float32 normalized).
         """
         if self.dataset is None:
             raise RuntimeError("Zarr store connection has not been initialized.")
-        
+
         num_t = self.dataset.shape[0]
         if t < 0 or t >= num_t:
             raise IndexError(f"Timepoint index {t} is out of bounds for a dataset containing {num_t} frames.")
-            
+
         logger.info(f"Loading and decompressing 3D block for timepoint T={t}...")
         try:
             # Query slice: Zarr's smart indexing decompresses only the blosc2 blocks
             # overlapping with index 't'.
             timepoint_vol = self.dataset[t, :, :, :]
+
+            # Apply normalization if requested
+            if normalize and self._quantile_normalization_params is not None:
+                timepoint_vol = self._apply_quantile_normalization(timepoint_vol)
+
             return timepoint_vol
         except MemoryError:
             logger.critical("Memory threshold exceeded during Zarr slice loading! Calling garbage collection...")
