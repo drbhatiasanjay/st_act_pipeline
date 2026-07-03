@@ -27,7 +27,7 @@
 
 ## Current Position
 
-**Roadmap Status:** Phase 0 (Unblock) — In Progress (Plans 00-02 complete, Plans 03-04 pending)
+**Roadmap Status:** Phase 0 (Unblock) — In Progress (Plans 00-03 complete, Plans 04 pending)
 
 **Phase Structure:**
 ```
@@ -35,8 +35,8 @@ Phase 0 (Unblock)
   ├─ ✓ Plan 00: Vendor Scoring Code (COMPLETE)
   ├─ ✓ Plan 01: Data Loading Pipeline (COMPLETE)
   ├─ ✓ Plan 02: Evaluation Harness (COMPLETE)
-  ├─ Plan 03: Submission Writer
-  └─ Plan 04: Hyperparameter Config
+  ├─ ✓ Plan 03: Submission Exporter (COMPLETE)
+  └─ Plan 04: Pipeline Wiring
   └─ Phase 1 (Baseline parity)
        └─ Phase 2 (Learned detection)
             └─ Phase 3 (Scale & correctness)
@@ -44,7 +44,7 @@ Phase 0 (Unblock)
                       └─ Phase 5 (Competitive iteration loop)
 ```
 
-**Current Sprint:** Phase 0, Plan 02 (Evaluation Harness) executed and completed successfully
+**Current Sprint:** Phase 0, Plan 03 (Submission Exporter) executed and completed successfully
 
 **v1 Requirement Coverage:**
 - Total v1 requirements: 19
@@ -101,7 +101,8 @@ Phase 0 (Unblock)
 - [x] **Phase 0, Plan 00 (Vendor Scoring Code) — COMPLETE 2026-07-03:** Executed all tasks; vendored metrics/division_metrics/io; __init__.py created; baseline test written. SUMMARY.md and commit artifacts created.
 - [x] **Phase 0, Plan 01 (Data Loading Pipeline) — COMPLETE 2026-07-03:** Fixed AnisotropicZarrLoader for Zarr v3 OME-NGFF with correct anisotropy (4.0, 1.0, 1.0). Real data tests pass on staged .zarr files.
 - [x] **Phase 0, Plan 02 (Evaluation Harness) — COMPLETE 2026-07-03:** Implemented `evaluate_submission()` API with `load_geff_ground_truth()` and `load_gt_for_dataset()` helpers. Unit tests written for real staged .geff data. Adjustment formula and division-term handling verified.
-- [ ] **Phase 0, Plans 03–04:** Submission writer, hyperparameter config
+- [x] **Phase 0, Plan 03 (Submission Exporter) — COMPLETE 2026-07-03:** Implemented `export_submission()` and `validate_submission()` with 9 schema validation checks. 18 unit tests pass. Schema verified exact match with Kaggle sample_submission.csv. Per-dataset node_id reset (critical requirement) implemented correctly.
+- [ ] **Phase 0, Plan 04:** Pipeline wiring
 - [ ] **Phase 1 setup:** Reserve 2–3 held-out train embryos for validation (never touched during Phase 2 training)
 - [ ] **Confirm Kaggle rules:** Full `/rules` page (team size, external-data policy, compute/runtime caps) not fully retrievable at PRD time; re-verify before Phase 2 investment
 - [x] **Confirm reference metric implementation — RESOLVED 2026-07-03:** host publishes a full
@@ -152,7 +153,7 @@ Phase 0 (Unblock)
 ## Session Continuity
 
 **Session Start:** 2026-07-03 (roadmap creation)  
-**Session Update:** 2026-07-03 (Phase 0, Plan 00 execution complete)
+**Session Update:** 2026-07-03 (Phase 0, Plans 00-03 execution complete)
 
 **Completed This Session:**
 - Roadmap initialized (6-phase structure)
@@ -161,15 +162,19 @@ Phase 0 (Unblock)
   - 3 atomic commits (1e3fabd, c6249bb, b710b1d)
   - SUMMARY.md written (.planning/phases/00-unblock/PLAN-00-VENDOR-SCORING-CODE-SUMMARY.md)
   - Test file created (tests/test_scoring_baseline.py)
+- Phase 0, Plan 01 executed: data loading pipeline for Zarr v3 + GEFF
+- Phase 0, Plan 02 executed: evaluation harness with micro-averaged metrics
+- Phase 0, Plan 03 executed: submission exporter (export_submission + validate_submission)
+  - 4 atomic commits (9d57f63, 196e649, 3ad4ce0 + docs)
+  - SUMMARY.md written (.planning/phases/00-unblock/PLAN-03-IMPLEMENT-SUBMISSION-EXPORTER-SUMMARY.md)
+  - 18 unit tests (all passing)
+  - Schema verified against real sample_submission.csv
 - STATE.md updated (Phase 0 progress tracked)
 
 **What Happens Next:**
-1. Execute Phase 0, Plan 01 (data loading pipeline)
-2. Execute Phase 0, Plan 02 (evaluation harness) — depends on Plan 00 ✓
-3. Execute Phase 0, Plan 03 (submission writer)
-4. Execute Phase 0, Plan 04 (hyperparameter config)
-5. Validate Phase 1 execution (no new work; just wiring/testing Phase 0's infrastructure)
-6. Depending on Phase 1 outcome: proceed to Phase 2 planning or loop back to debug Phase 0
+1. Execute Phase 0, Plan 04 (pipeline wiring) — depends on Plan 03 ✓
+2. Validate Phase 1 execution (no new work; just wiring/testing Phase 0's infrastructure)
+3. Depending on Phase 1 outcome: proceed to Phase 2 planning or loop back to debug Phase 0
 
 **Risk Status:**
 - ✓ Scoring code parity risk RESOLVED: reference implementation vendored exactly
@@ -179,5 +184,5 @@ Phase 0 (Unblock)
 
 ---
 
-**Last update:** 2026-07-03 (18:15 UTC) — Phase 0, Plan 00 complete  
-**Next step:** Execute Phase 0, Plan 01 (data loading pipeline)
+**Last update:** 2026-07-03 (19:30 UTC) — Phase 0, Plan 03 (Submission Exporter) complete  
+**Next step:** Execute Phase 0, Plan 04 (Pipeline Wiring)
