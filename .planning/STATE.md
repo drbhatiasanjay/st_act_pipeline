@@ -27,11 +27,16 @@
 
 ## Current Position
 
-**Roadmap Status:** Phase 0 (Unblock) — awaiting approval and planning
+**Roadmap Status:** Phase 0 (Unblock) — In Progress (Plan 00 complete, Plans 01-04 pending)
 
 **Phase Structure:**
 ```
 Phase 0 (Unblock)
+  ├─ ✓ Plan 00: Vendor Scoring Code (COMPLETE)
+  ├─ Plan 01: Data Loading Pipeline
+  ├─ Plan 02: Evaluation Harness
+  ├─ Plan 03: Submission Writer
+  └─ Plan 04: Hyperparameter Config
   └─ Phase 1 (Baseline parity)
        └─ Phase 2 (Learned detection)
             └─ Phase 3 (Scale & correctness)
@@ -39,7 +44,7 @@ Phase 0 (Unblock)
                       └─ Phase 5 (Competitive iteration loop)
 ```
 
-**Current Sprint:** Roadmap review; awaiting approval to begin Phase 0 planning
+**Current Sprint:** Phase 0, Plan 00 (Vendor Scoring Code) executed and completed successfully
 
 **v1 Requirement Coverage:**
 - Total v1 requirements: 19
@@ -85,9 +90,12 @@ Phase 0 (Unblock)
 
 5. **Kaggle setup (API + GPU kernel) is parallel work.** Phase 0 and Phase 1 do NOT depend on this (local development). Phase 2 (model training) DOES depend on it being complete. This is tracked separately in `../st_act_pipeline-kaggle-setup` branch; no blocking dependency for immediate Phase 0 work.
 
+6. **Phase 0, Plan 00 executed 2026-07-03 (COMPLETE).** Successfully vendored `metrics.py`, `division_metrics.py`, and `io.py` from `royerlab/kaggle-cell-tracking-competition` via raw GitHub URLs (git clone unavailable in execution environment; fallback to HTTP fetch). Three commits created (1e3fabd, c6249bb, b710b1d); SUMMARY.md written. Scoring code now trusted dependency, ready for downstream plans (02, 04, 05).
+
 ### Pending Todos
 
-- [ ] **Phase 0 planning:** Decompose Phase 0 into executable tasks (data loading, `.geff` reader, submission writer, local metric)
+- [x] **Phase 0, Plan 00 (Vendor Scoring Code) — COMPLETE 2026-07-03:** Executed all tasks; vendored metrics/division_metrics/io; __init__.py created; baseline test written. SUMMARY.md and commit artifacts created.
+- [ ] **Phase 0, Plans 01–04:** Data loading pipeline, evaluation harness, submission writer, hyperparameter config
 - [ ] **Phase 1 setup:** Reserve 2–3 held-out train embryos for validation (never touched during Phase 2 training)
 - [ ] **Confirm Kaggle rules:** Full `/rules` page (team size, external-data policy, compute/runtime caps) not fully retrievable at PRD time; re-verify before Phase 2 investment
 - [x] **Confirm reference metric implementation — RESOLVED 2026-07-03:** host publishes a full
@@ -100,9 +108,9 @@ Phase 0 (Unblock)
   `adjusted_edge_jaccard` penalty formula is `max(0, jaccard·(1 − 0.1·(T_pred−T_true)/T_true))`
   where `T_true` = the `.geff`'s `estimated_number_of_nodes` field, and unmatched predicted nodes
   are structurally excluded from the FP count (sparse-GT fairness confirmed, not just implied).
-  **Reconcile with this session's separate `geff`/`traccuracy` decision below:** `tracksdata` wraps
-  `geff` and is the same-family tool that implements this competition's *exact bespoke* score;
-  `traccuracy` computes generic CTC metrics (TRA/DET) which are a *different* formula — treat
+  **Reconcile with this session's separate geff/traccuracy decision below:** `tracksdata` wraps
+  `geff` and is the same-family tool that implements this competition's **exact bespoke** score;
+  `traccuracy` computes generic CTC metrics (TRA/DET) which are a **different** formula — treat
   `tracksdata` as primary for FR-5, keep `traccuracy` only as an optional secondary sanity check.
 
 ### Blockers/Concerns
@@ -119,28 +127,33 @@ Phase 0 (Unblock)
 
 ## Session Continuity
 
-**Session Start:** 2026-07-03 (roadmap creation)
+**Session Start:** 2026-07-03 (roadmap creation)  
+**Session Update:** 2026-07-03 (Phase 0, Plan 00 execution complete)
 
-**What We Know:**
-- Project structure validated against PRD § 6 (Functional Requirements)
-- v1 requirements extracted and categorized (19 total: 12 Data/Submission/Eval, 5 Model/Tracking, 2 Tracking scale)
-- 6-phase roadmap derived from PRD § 8, mapped to requirements, success criteria defined
+**Completed This Session:**
+- Roadmap initialized (6-phase structure)
+- REFERENCE_IMPLEMENTATION.md created (host reference analysis)
+- Phase 0, Plan 00 executed: vendored metrics.py, division_metrics.py, io.py
+  - 3 atomic commits (1e3fabd, c6249bb, b710b1d)
+  - SUMMARY.md written (.planning/phases/00-unblock/PLAN-00-VENDOR-SCORING-CODE-SUMMARY.md)
+  - Test file created (tests/test_scoring_baseline.py)
+- STATE.md updated (Phase 0 progress tracked)
 
 **What Happens Next:**
-1. User reviews and approves ROADMAP.md
-2. Roadmap locked; STATE.md initialized (this file)
-3. REQUIREMENTS.md traceability section verified/updated
-4. Run `/gsd:plan-phase 0` to break Phase 0 into executable plans (data loader, `.geff` reader, submission writer, local metric)
-5. Execute Phase 0 plans
-6. Validate Phase 1 execution (no new work; just wiring/testing Phase 0's infrastructure)
-7. Depending on Phase 1 outcome: proceed to Phase 2 planning or loop back to debug Phase 0
+1. Execute Phase 0, Plan 01 (data loading pipeline)
+2. Execute Phase 0, Plan 02 (evaluation harness) — depends on Plan 00 ✓
+3. Execute Phase 0, Plan 03 (submission writer)
+4. Execute Phase 0, Plan 04 (hyperparameter config)
+5. Validate Phase 1 execution (no new work; just wiring/testing Phase 0's infrastructure)
+6. Depending on Phase 1 outcome: proceed to Phase 2 planning or loop back to debug Phase 0
 
-**Risk to Track:**
-- Kaggle setup (parallel work) must complete before Phase 2 starts
-- Local metric implementation must exactly match Kaggle's scoring formula (Phase 0 EVAL-01..04) — RESOLVED: host reference implementation found and vendored, see `REFERENCE_IMPLEMENTATION.md`; remaining risk is just correct integration, not formula uncertainty
+**Risk Status:**
+- ✓ Scoring code parity risk RESOLVED: reference implementation vendored exactly
+- Remaining Phase 0 work (Plans 01–04) unblocked by Plan 00 completion
+- Kaggle setup (parallel work) still needed before Phase 2 training starts
 - ILP scale-up must be validated early (Phase 2/Phase 3 boundary)
 
 ---
 
-**State initialized:** 2026-07-03  
-**Next step:** Approve ROADMAP.md and proceed to `/gsd:plan-phase 0`
+**Last update:** 2026-07-03 (18:15 UTC) — Phase 0, Plan 00 complete  
+**Next step:** Execute Phase 0, Plan 01 (data loading pipeline)
