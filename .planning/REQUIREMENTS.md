@@ -90,6 +90,15 @@ bespoke spec from prose" — materially lower risk than originally scoped.
       TRA/DET, a *different* formula from this competition's bespoke score) — `tracksdata` is
       primary per the Key Decision in `PROJECT.md`
 
+**Verified 2026-07-03 (this session, not just documented):** `pip install tracksdata` works
+cleanly (installed, confirmed against `requirements.txt`); `tracksdata.graph.IndexedRXGraph.
+from_geff(path)` returns `(graph, GeffMetadata)` — note the tuple, not a bare graph — and correctly
+parsed the real staged `44b6_0113de3b.geff` (52 nodes / 50 edges, exact match against a raw-zarr
+read). **However:** `tracking_cellmot` (the host repo's own package containing the actual
+`metrics.py`/`division_metrics.py` scoring code) is confirmed **not** on PyPI — it must be cloned
+from `github.com/royerlab/kaggle-cell-tracking-competition` and installed locally (`pip install -e`)
+or vendored by copying the specific files, not just `pip install`able like `tracksdata` itself.
+
 ## v2 Requirements
 
 Deferred — not required to clear the classical baseline or compete, but real leverage once v1

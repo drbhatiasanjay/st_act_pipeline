@@ -36,4 +36,4 @@ tracksdata>=0.1.0rc6
 # Visual QC: napari + a plugin that reads/writes .geff graphs directly
 # over the zarr volumes, for eyeballing predicted vs. ground-truth tracks
 napari>=0.5.0
-napari-geff>=0.1.0
+napari-geff>=0.0.4
