@@ -31,7 +31,12 @@ autonomous: true
 <task id="02-01" title="Create src/evaluation.py with evaluate_submission() and helpers">
   <description>
     Implement a clean evaluation API:
-    1. Function signature: evaluate_submission(pred_graphs, gt_graphs, scale=(4.0, 1.0, 1.0), max_distance=7.0)
+    1. Function signature: evaluate_submission(pred_graphs, gt_graphs, scale=(1.625, 0.40625, 0.40625), max_distance=7.0)
+       CORRECTED 2026-07-03: original draft used (4.0,1.0,1.0), the anisotropy RATIO, as the
+       default scale. That's wrong for a physical-distance gate -- it inflates every computed
+       distance by ~2.46x (1/0.40625), corrupting the 7.0um matching threshold. The real physical
+       voxel scale in micrometers is (1.625, 0.40625, 0.40625), confirmed against io.py's own
+       DEFAULT_SCALE (vendored in Plan 00) and the .geff/zarr metadata read directly this session.
        - pred_graphs: list of tracksdata graphs (or dict of dataset_id -> graph)
        - gt_graphs: list of .geff-loaded ground-truth graphs (same structure)
        - Returns: dict with keys: edge_jaccard, adjusted_edge_jaccard, division_jaccard, score, num_pred_nodes_total

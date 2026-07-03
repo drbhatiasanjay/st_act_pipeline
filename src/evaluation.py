@@ -6,7 +6,7 @@ scorer using the vendored tracksdata metrics (edge Jaccard, division Jaccard) an
 the adjustment formula for predicted node count.
 
 Main entry point:
-    evaluate_submission(pred_graphs, gt_graphs, scale=(4.0, 1.0, 1.0), max_distance=7.0)
+    evaluate_submission(pred_graphs, gt_graphs, scale=(1.625, 0.40625, 0.40625), max_distance=7.0)
         -> dict with edge_jaccard, adjusted_edge_jaccard, division_jaccard, score, etc.
 
 The module handles:
@@ -28,8 +28,13 @@ from src.tracking_cellmot import (
 )
 
 
-# Default physical voxel scale (z, y, x) — 4.0 µm in Z, 0.40625 µm in Y/X
-DEFAULT_SCALE: Tuple[float, float, float] = (4.0, 1.0, 1.0)
+# Real physical voxel scale (z, y, x) in micrometers — z=1.625um, y=x=0.40625um.
+# NOT the anisotropy RATIO (4.0,1.0,1.0) -- that ratio describes Z:Y:X relative
+# coarseness but the 7.0um gating threshold needs real physical distances, and
+# using the ratio instead of real microns inflates every distance by ~2.46x
+# (1/0.40625), silently corrupting node matching. Confirmed against io.py's own
+# DEFAULT_SCALE (vendored from the host's reference implementation, Plan 00).
+DEFAULT_SCALE: Tuple[float, float, float] = (1.625, 0.40625, 0.40625)
 DEFAULT_MAX_DISTANCE: float = 7.0
 
 
@@ -127,7 +132,8 @@ def evaluate_submission(
         Ground-truth graphs. Same structure as pred_graphs.
     scale : tuple[float, ...], optional
         Physical voxel scale (e.g., (z, y, x)) for anisotropy correction.
-        Default: (4.0, 1.0, 1.0) for typical light-sheet microscopy.
+        Default: (1.625, 0.40625, 0.40625) micrometers -- this competition's real physical
+        voxel scale, NOT the (4.0,1.0,1.0) anisotropy ratio.
     max_distance : float, optional
         Maximum centroid distance for node matching (µm). Default: 7.0.
     gt_metadata : list[GeffMetadata] or dict[str, GeffMetadata], optional

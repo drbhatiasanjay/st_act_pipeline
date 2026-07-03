@@ -102,10 +102,11 @@ class TestEvaluateSubmission:
         geff_path = os.path.join(DATA_STAGING_TRAIN, f"{SAMPLE_DATASETS[0]}.geff")
         gt_graph, metadata = load_geff_ground_truth(geff_path)
 
-        # Use the same graph as both pred and GT (need to clone to avoid mutation issues)
-        # For now, we'll just create a single-element list
+        # Use an independent copy as pred so tracksdata's in-place graph.match() during
+        # evaluate_datasets() doesn't mutate the same object being used as GT.
+        pred_graph = gt_graph.copy()
         result = evaluate_submission(
-            [gt_graph],
+            [pred_graph],
             [gt_graph],
             gt_metadata=[metadata],
         )
@@ -130,11 +131,21 @@ class TestEvaluateSubmission:
         assert result['edge_jaccard'] == 1.0, \
             f"Edge Jaccard for identical graphs should be 1.0, got {result['edge_jaccard']}"
 
-        # Verify adjusted_edge_jaccard is 1.0 (same nodes, no penalty)
-        assert result['adjusted_edge_jaccard'] == 1.0, \
-            f"Adjusted edge Jaccard should be 1.0 when pred == gt, got {result['adjusted_edge_jaccard']}"
+        # NOTE: adjusted_edge_jaccard is NOT expected to equal edge_jaccard here, even for a
+        # perfect match. T_true is the GEFF's `estimated_number_of_nodes` (the full-embryo cell
+        # count estimate, e.g. 25755) not the sparse labeled node count (52) -- ground truth in
+        # this competition is deliberately sparse (see data/staging/README.md). Since
+        # T_pred == T_true == 52 (both sides are the same sparse graph here) is nowhere near the
+        # full 25755 estimate, the adjustment formula's node_ratio is strongly negative and boosts
+        # the score above 1.0. This is correct behavior of the real formula, not a bug -- verified
+        # directly against the formula: adjusted = edge_jaccard * (1 - 0.1*(T_pred-T_true)/T_true).
+        expected_node_ratio = (result['num_pred_nodes_total'] - metadata.extra['estimated_number_of_nodes']) / metadata.extra['estimated_number_of_nodes']
+        expected_adjusted = max(0.0, result['edge_jaccard'] * (1.0 - 0.1 * expected_node_ratio))
+        assert abs(result['adjusted_edge_jaccard'] - expected_adjusted) < 1e-9, \
+            f"adjusted_edge_jaccard should match the documented formula exactly: expected {expected_adjusted}, got {result['adjusted_edge_jaccard']}"
 
-        # Verify score is at least edge_jaccard (it may include division_jaccard)
+        # Verify score is at least edge_jaccard (it may include division_jaccard, or the
+        # node-count bonus described above)
         assert result['score'] >= 1.0, \
             f"Score should be >= 1.0 for perfect edge match, got {result['score']}"
 
@@ -149,13 +160,22 @@ class TestEvaluateSubmission:
         Expected: edge_jaccard should be 0.0, score >= 0.
         """
         import tracksdata as td
+        import polars as pl
 
         # Load real GT
         geff_path = os.path.join(DATA_STAGING_TRAIN, f"{SAMPLE_DATASETS[0]}.geff")
         gt_graph, metadata = load_geff_ground_truth(geff_path)
 
-        # Create empty prediction graph
+        # Create empty prediction graph. A bare IndexedRXGraph() only registers 't' as a node
+        # attribute key by default -- 'x','y','z' schemas are established lazily when nodes are
+        # first added. Passing a schema-less empty graph into evaluate_datasets() crashes deep in
+        # tracksdata's node-matching internals with KeyError('z'), since it looks up the schema
+        # for all four keys unconditionally. Pre-registering the keys (with zero actual nodes)
+        # avoids this -- this is the correct way to represent "detector found nothing", a
+        # realistic scenario once Phase 1's placeholder detector runs against real embryos.
         empty_pred = td.graph.IndexedRXGraph()
+        for key in ('z', 'y', 'x'):
+            empty_pred.add_node_attr_key(key, pl.Float64, 0.0)
 
         result = evaluate_submission(
             [empty_pred],
@@ -249,28 +269,41 @@ class TestAdjustmentFormula:
 
     def test_adjustment_with_excess_prediction(self):
         """
-        Test: predict more nodes than GT.
-        Expected: adjusted_edge_jaccard < edge_jaccard (penalty applied).
-        """
-        import tracksdata as td
+        Test: predict more nodes than a baseline prediction, holding GT fixed.
+        Expected: adjusted_edge_jaccard strictly decreases as T_pred grows (more of the
+        node-count penalty applies), while edge_jaccard itself is unaffected (the extra
+        nodes are spurious/unmatched, and unmatched predicted nodes are structurally excluded
+        from the edge FP count -- see REFERENCE_IMPLEMENTATION.md).
 
+        Note: T_true here is metadata.extra['estimated_number_of_nodes'] (~25755, the
+        full-embryo estimate), not the sparse label count (52) -- see the comment in
+        test_evaluate_identical_pred_and_gt. Actually exceeding T_true would need tens of
+        thousands of extra nodes, which isn't a practical unit test; instead this verifies the
+        monotonic direction of the penalty (more excess nodes -> lower adjusted score), which is
+        what the docstring's original intent was checking for.
+        """
         geff_path = os.path.join(DATA_STAGING_TRAIN, f"{SAMPLE_DATASETS[0]}.geff")
         gt_graph, metadata = load_geff_ground_truth(geff_path)
 
-        # Create pred graph with same edges but add extra nodes
-        pred_graph = gt_graph
-        # Note: In a real scenario, we'd add nodes. For this test, we assume
-        # that identical graphs give us the baseline.
+        baseline_pred = gt_graph.copy()
+        baseline = evaluate_submission([baseline_pred], [gt_graph], gt_metadata=[metadata])
 
-        result = evaluate_submission(
-            [pred_graph],
-            [gt_graph],
-            gt_metadata=[metadata],
-        )
+        # Add spurious extra nodes far from any real cell (won't match anything in GT within
+        # the 7um gate) -- coordinates must be int to match the real geff schema (voxel-space
+        # int64 per data/staging/README.md).
+        excess_pred = gt_graph.copy()
+        for i in range(500):
+            excess_pred.add_node({'t': 0, 'z': 1000 + i, 'y': 1000, 'x': 1000})
+        excess = evaluate_submission([excess_pred], [gt_graph], gt_metadata=[metadata])
 
-        # When pred == gt, adjusted should equal unadjusted
-        assert result['adjusted_edge_jaccard'] == result['edge_jaccard'], \
-            f"Adjustment should have no effect when pred == gt"
+        assert excess['num_pred_nodes_total'] == baseline['num_pred_nodes_total'] + 500
+
+        assert excess['edge_jaccard'] == baseline['edge_jaccard'], \
+            "Spurious unmatched nodes must not change edge_jaccard (they're excluded from FP)"
+
+        assert excess['adjusted_edge_jaccard'] < baseline['adjusted_edge_jaccard'], \
+            (f"More excess predicted nodes should strictly lower the adjusted score: "
+             f"baseline={baseline['adjusted_edge_jaccard']}, excess={excess['adjusted_edge_jaccard']}")
 
 
 if __name__ == "__main__":
