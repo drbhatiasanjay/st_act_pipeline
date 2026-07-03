@@ -60,17 +60,18 @@ def export_submission(
         per_dataset_node_id = 0
 
         # Process nodes first
-        for node in graph.nodes():
+        # Use node_ids() to get the list of node identifiers (integers in tracksdata)
+        for node in graph.node_ids():
             per_dataset_node_id += 1
             node_id_map[node] = per_dataset_node_id
 
             # Extract node attributes (t, z, y, x)
-            # tracksdata stores these as node attributes
+            # tracksdata stores these as node attributes (accessible via dict-like interface)
             node_attrs = graph.nodes[node]
-            t = int(node_attrs.get('t', 0))
-            z = int(node_attrs.get('z', 0))
-            y = int(node_attrs.get('y', 0))
-            x = int(node_attrs.get('x', 0))
+            t = int(node_attrs['t'])
+            z = int(node_attrs['z'])
+            y = int(node_attrs['y'])
+            x = int(node_attrs['x'])
 
             # Create node row: [id, dataset, row_type, node_id, t, z, y, x, source_id=-1, target_id=-1]
             row = {
@@ -89,7 +90,8 @@ def export_submission(
             global_id += 1
 
         # Process edges
-        for source, target in graph.edges():
+        # Use edge_list() to get the list of (source, target) tuples
+        for source, target in graph.edge_list():
             # Validate that both nodes are in the node_id_map
             if source not in node_id_map or target not in node_id_map:
                 raise ValueError(
