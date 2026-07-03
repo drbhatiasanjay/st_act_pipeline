@@ -95,9 +95,9 @@ def ensemble_consensus_centroids(cnn_centroids, unet_centroids, anisotropy, eps_
     return consensus_centroids
 
 
-def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> nx.DiGraph:
+def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> Tuple[nx.DiGraph, Dict[str, float]]:
     """
-    Load a single Zarr dataset, run detector+tracker, return lineage graph.
+    Load a single Zarr dataset, run detector+tracker, return lineage graph + timing info.
 
     Args:
         zarr_path: Path to the Zarr store
@@ -105,8 +105,13 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> nx.D
         anisotropy: Physical voxel scale (Z, Y, X)
 
     Returns:
-        nx.DiGraph: Tracked lineage graph with nodes and edges
+        (nx.DiGraph, dict): Tracked lineage graph with nodes and edges, plus timing info
     """
+    timings = {}
+    start_dataset = time.time()
+
+    # Load phase
+    start_load = time.time()
     logger.info(f"[Dataset {dataset_id}] Loading Zarr data...")
 
     try:
@@ -117,8 +122,10 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> nx.D
 
     t_dim, z_dim, y_dim, x_dim = loader.get_shape()
     logger.info(f"[Dataset {dataset_id}] Volume shape: (T={t_dim}, Z={z_dim}, Y={y_dim}, X={x_dim})")
+    timings['load'] = time.time() - start_load
 
-    # Run detector on each timepoint
+    # Detection phase
+    start_detect = time.time()
     logger.info(f"[Dataset {dataset_id}] Running detection...")
     centroids_by_t = {}
     motion_vectors_by_t = {}
@@ -135,9 +142,13 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> nx.D
         motion_vectors = [[0.05, 0.2, 0.3] for _ in consensus_centroids]
         motion_vectors_by_t[t] = motion_vectors
 
-        logger.info(f"[Dataset {dataset_id}] Timepoint {t:02d}: Detected {len(consensus_centroids)} centroids")
+        logger.debug(f"[Dataset {dataset_id}] Timepoint {t:02d}: Detected {len(consensus_centroids)} centroids")
 
-    # Run tracker
+    timings['detection'] = time.time() - start_detect
+    logger.info(f"[Dataset {dataset_id}] Detection complete ({timings['detection']:.1f}s)")
+
+    # Tracking phase
+    start_track = time.time()
     logger.info(f"[Dataset {dataset_id}] Running tracker...")
     tracker = STHypergraphTracker(birth_cost=15.0, death_cost=15.0, division_reward=-8.0)
     lineage_graph = tracker.solve_lineage(
@@ -151,13 +162,27 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> nx.D
     logger.info(f"[Dataset {dataset_id}] Smoothing mitosis edges...")
     lineage_graph = tracker.smooth_mitosis_edges(lineage_graph, centroids_by_t, window_size=2)
 
-    logger.info(f"[Dataset {dataset_id}] Tracker complete: {lineage_graph.number_of_nodes()} nodes, {lineage_graph.number_of_edges()} edges")
+    timings['tracking'] = time.time() - start_track
+    logger.info(f"[Dataset {dataset_id}] Tracking complete ({timings['tracking']:.1f}s): {lineage_graph.number_of_nodes()} nodes, {lineage_graph.number_of_edges()} edges")
 
-    # Convert to tracksdata graph (networkx -> tracksdata)
+    # Conversion phase
+    start_convert = time.time()
     logger.info(f"[Dataset {dataset_id}] Converting to tracksdata format...")
     td_graph = convert_nx_to_tracksdata(lineage_graph, dataset_id)
+    timings['conversion'] = time.time() - start_convert
 
-    return td_graph
+    # Total time for this dataset
+    timings['total'] = time.time() - start_dataset
+
+    logger.info(f"[Dataset {dataset_id}] TIMING SUMMARY:")
+    logger.info(f"  Load:       {timings['load']:7.2f}s")
+    logger.info(f"  Detection:  {timings['detection']:7.2f}s")
+    logger.info(f"  Tracking:   {timings['tracking']:7.2f}s")
+    logger.info(f"  Conversion: {timings['conversion']:7.2f}s")
+    logger.info(f"  ---")
+    logger.info(f"  TOTAL:      {timings['total']:7.2f}s")
+
+    return td_graph, timings
 
 
 def convert_nx_to_tracksdata(nx_graph: nx.DiGraph, dataset_id: str) -> td.graph.BaseGraph:
@@ -244,22 +269,26 @@ def main():
 
     test_dir_path = Path(args.test_dir)
     submission_graphs = {}
+    submission_timings = {}
 
     # Glob all .zarr directories in test/
     zarr_stores = sorted(test_dir_path.glob("*.zarr"))
     logger.info(f"Found {len(zarr_stores)} Zarr stores in {args.test_dir}")
 
+    pass1_start = time.time()
     for zarr_path in zarr_stores:
         dataset_id = zarr_path.stem  # e.g., "44b6_0113de3b"
         try:
-            graph = run_dataset(str(zarr_path), dataset_id, anisotropy)
+            graph, timings = run_dataset(str(zarr_path), dataset_id, anisotropy)
             submission_graphs[dataset_id] = graph
+            submission_timings[dataset_id] = timings
             logger.info(f"✓ Dataset {dataset_id} processed successfully\n")
         except Exception as e:
             logger.error(f"✗ Dataset {dataset_id} failed: {e}\n")
             continue
 
-    logger.info(f"[PASS 1 COMPLETE] Processed {len(submission_graphs)} datasets")
+    pass1_duration = time.time() - pass1_start
+    logger.info(f"[PASS 1 COMPLETE] Processed {len(submission_graphs)} datasets in {pass1_duration:.1f}s")
 
     # Export submission CSV
     logger.info(f"\n[EXPORT] Generating submission CSV at {args.output_path}")
@@ -294,16 +323,19 @@ def main():
     scoring_graphs = {}
     gt_graphs = {}
     gt_metadata = {}
+    scoring_timings = {}
 
     zarr_stores = sorted(train_dir_path.glob("*.zarr"))
     logger.info(f"Found {len(zarr_stores)} Zarr stores in {args.train_dir}")
 
+    pass2_start = time.time()
     for zarr_path in zarr_stores:
         dataset_id = zarr_path.stem
         try:
             # Run tracker on train data
-            graph = run_dataset(str(zarr_path), dataset_id, anisotropy)
+            graph, timings = run_dataset(str(zarr_path), dataset_id, anisotropy)
             scoring_graphs[dataset_id] = graph
+            scoring_timings[dataset_id] = timings
 
             # Load ground truth
             geff_path = train_dir_path / f"{dataset_id}.geff"
@@ -319,7 +351,8 @@ def main():
             logger.error(f"✗ Dataset {dataset_id} failed: {e}\n")
             continue
 
-    logger.info(f"[PASS 2 COMPLETE] Processed {len(scoring_graphs)} datasets")
+    pass2_duration = time.time() - pass2_start
+    logger.info(f"[PASS 2 COMPLETE] Processed {len(scoring_graphs)} datasets in {pass2_duration:.1f}s")
 
     # Evaluate
     logger.info(f"\n[EVALUATION] Computing scores")
@@ -348,6 +381,51 @@ def main():
             raise
     else:
         logger.warning("No ground truth available for evaluation")
+
+    # Final timing report
+    logger.info("\n" + "=" * 80)
+    logger.info("TIMING ANALYSIS")
+    logger.info("=" * 80)
+
+    if submission_timings:
+        logger.info("\n[PASS 1 - SUBMISSION PASS]")
+        total_load = sum(t.get('load', 0) for t in submission_timings.values())
+        total_detect = sum(t.get('detection', 0) for t in submission_timings.values())
+        total_track = sum(t.get('tracking', 0) for t in submission_timings.values())
+        total_convert = sum(t.get('conversion', 0) for t in submission_timings.values())
+
+        for dataset_id, timings in sorted(submission_timings.items()):
+            logger.info(f"  {dataset_id}: {timings['total']:7.2f}s (load={timings['load']:.1f}s, detect={timings['detection']:.1f}s, track={timings['tracking']:.1f}s)")
+
+        logger.info(f"\n  Subtotals (across all {len(submission_timings)} datasets):")
+        logger.info(f"    Load:       {total_load:7.2f}s")
+        logger.info(f"    Detection:  {total_detect:7.2f}s")
+        logger.info(f"    Tracking:   {total_track:7.2f}s ({total_track / len(submission_timings):.1f}s per dataset avg)")
+        logger.info(f"    Conversion: {total_convert:7.2f}s")
+        logger.info(f"    ---")
+        logger.info(f"    Pass Total: {pass1_duration:7.2f}s")
+
+    if scoring_timings:
+        logger.info("\n[PASS 2 - SCORING PASS]")
+        total_track = sum(t.get('tracking', 0) for t in scoring_timings.values())
+
+        for dataset_id, timings in sorted(scoring_timings.items()):
+            logger.info(f"  {dataset_id}: {timings['total']:7.2f}s (track={timings['tracking']:.1f}s)")
+
+        logger.info(f"\n  Tracking time (which dominates): {total_track:7.2f}s ({total_track / len(scoring_timings):.1f}s per dataset avg)")
+        logger.info(f"  Pass Total: {pass2_duration:7.2f}s")
+
+    # Bottleneck analysis
+    logger.info("\n[BOTTLENECK ANALYSIS]")
+    if submission_timings:
+        total_track = sum(t.get('tracking', 0) for t in submission_timings.values())
+        total_time = sum(t.get('total', 0) for t in submission_timings.values())
+        if total_time > 0:
+            track_pct = 100 * total_track / total_time
+            logger.info(f"  ILP Solving (Tracking): {track_pct:.1f}% of total time")
+            if track_pct > 50:
+                logger.info(f"  -> PRIMARY BOTTLENECK: ILP solver dominates execution time")
+                logger.info(f"  -> Optimization: Consider ILP solver parameters, gap closing strategy, or approximation algorithms for Phase 2/3")
 
     logger.info("\n" + "=" * 80)
     logger.info("Phase 0 Pipeline Complete")
