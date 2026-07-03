@@ -27,14 +27,14 @@
 
 ## Current Position
 
-**Roadmap Status:** Phase 0 (Unblock) — In Progress (Plan 00 complete, Plans 01-04 pending)
+**Roadmap Status:** Phase 0 (Unblock) — In Progress (Plans 00-02 complete, Plans 03-04 pending)
 
 **Phase Structure:**
 ```
 Phase 0 (Unblock)
   ├─ ✓ Plan 00: Vendor Scoring Code (COMPLETE)
-  ├─ Plan 01: Data Loading Pipeline
-  ├─ Plan 02: Evaluation Harness
+  ├─ ✓ Plan 01: Data Loading Pipeline (COMPLETE)
+  ├─ ✓ Plan 02: Evaluation Harness (COMPLETE)
   ├─ Plan 03: Submission Writer
   └─ Plan 04: Hyperparameter Config
   └─ Phase 1 (Baseline parity)
@@ -44,7 +44,7 @@ Phase 0 (Unblock)
                       └─ Phase 5 (Competitive iteration loop)
 ```
 
-**Current Sprint:** Phase 0, Plan 00 (Vendor Scoring Code) executed and completed successfully
+**Current Sprint:** Phase 0, Plan 02 (Evaluation Harness) executed and completed successfully
 
 **v1 Requirement Coverage:**
 - Total v1 requirements: 19
@@ -92,10 +92,16 @@ Phase 0 (Unblock)
 
 6. **Phase 0, Plan 00 executed 2026-07-03 (COMPLETE).** Successfully vendored `metrics.py`, `division_metrics.py`, and `io.py` from `royerlab/kaggle-cell-tracking-competition` via raw GitHub URLs (git clone unavailable in execution environment; fallback to HTTP fetch). Three commits created (1e3fabd, c6249bb, b710b1d); SUMMARY.md written. Scoring code now trusted dependency, ready for downstream plans (02, 04, 05).
 
+7. **Phase 0, Plan 01 executed 2026-07-03 (COMPLETE).** Fixed AnisotropicZarrLoader to correctly load Zarr v3 OME-NGFF format and apply correct physical anisotropy (4.0, 1.0, 1.0) Z:Y:X (not hardcoded 5.0). This bug affected both real data paths and simulated fallback. Real data tests now pass on staged training data (44b6_0113de3b.zarr and siblings). Data loader ready for tracker and model pipeline in Phase 1.
+
+8. **Phase 0, Plan 02 executed 2026-07-03 (COMPLETE).** Implemented local evaluation harness (`src/evaluation.py`, 226 lines) with clean API: `evaluate_submission(pred_graphs, gt_graphs, scale, max_distance, gt_metadata)`. Provides: micro-averaged edge Jaccard (via `tracksdata.evaluate_datasets()`), division Jaccard (via vendored `evaluate_divisions()`), node-count adjustment formula (`J_adj = max(0, J * (1 - 0.1 * (T_pred - T_true) / T_true))`), and combined score. Correctly drops division term when no GT divisions exist (not `+0`). Helpers: `load_geff_ground_truth()` and `load_gt_for_dataset()`. Unit tests (pytest + standalone runner) created; use real staged .geff data (52+ nodes per sample). Ready for Plan 04 (pipeline wiring) and all downstream submission validation.
+
 ### Pending Todos
 
 - [x] **Phase 0, Plan 00 (Vendor Scoring Code) — COMPLETE 2026-07-03:** Executed all tasks; vendored metrics/division_metrics/io; __init__.py created; baseline test written. SUMMARY.md and commit artifacts created.
-- [ ] **Phase 0, Plans 01–04:** Data loading pipeline, evaluation harness, submission writer, hyperparameter config
+- [x] **Phase 0, Plan 01 (Data Loading Pipeline) — COMPLETE 2026-07-03:** Fixed AnisotropicZarrLoader for Zarr v3 OME-NGFF with correct anisotropy (4.0, 1.0, 1.0). Real data tests pass on staged .zarr files.
+- [x] **Phase 0, Plan 02 (Evaluation Harness) — COMPLETE 2026-07-03:** Implemented `evaluate_submission()` API with `load_geff_ground_truth()` and `load_gt_for_dataset()` helpers. Unit tests written for real staged .geff data. Adjustment formula and division-term handling verified.
+- [ ] **Phase 0, Plans 03–04:** Submission writer, hyperparameter config
 - [ ] **Phase 1 setup:** Reserve 2–3 held-out train embryos for validation (never touched during Phase 2 training)
 - [ ] **Confirm Kaggle rules:** Full `/rules` page (team size, external-data policy, compute/runtime caps) not fully retrievable at PRD time; re-verify before Phase 2 investment
 - [x] **Confirm reference metric implementation — RESOLVED 2026-07-03:** host publishes a full
