@@ -1,6 +1,6 @@
 # Project State: ST-ACT — Spatio-Temporal Anisotropic Cell Tracker
 
-**Last Updated:** 2026-07-03
+**Last Updated:** 2026-07-04
 
 ---
 
@@ -27,28 +27,29 @@
 
 ## Current Position
 
-**Roadmap Status:** Phase 0 (Unblock) — In Progress (Plans 00-03 complete, Plans 04 pending)
+**Roadmap Status:** Phase 0 (Unblock) — ✓ COMPLETE (2026-07-04, verified by gsd-verifier, 5/5
+must-haves, 60/60 tests passing). Ready to plan Phase 1.
 
 **Phase Structure:**
 ```
-Phase 0 (Unblock)
+Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
   ├─ ✓ Plan 00: Vendor Scoring Code (COMPLETE)
   ├─ ✓ Plan 01: Data Loading Pipeline (COMPLETE)
   ├─ ✓ Plan 02: Evaluation Harness (COMPLETE)
   ├─ ✓ Plan 03: Submission Exporter (COMPLETE)
-  └─ Plan 04: Pipeline Wiring
-  └─ Phase 1 (Baseline parity)
+  └─ ✓ Plan 04: Pipeline Wiring + real E2E run (COMPLETE -- 8.3min, score 0.0092)
+  └─ Phase 1 (Baseline parity) -- READY TO PLAN
        └─ Phase 2 (Learned detection)
             └─ Phase 3 (Scale & correctness)
                  └─ Phase 4 (Metric-directed tuning)
                       └─ Phase 5 (Competitive iteration loop)
 ```
 
-**Current Sprint:** Phase 0, Plan 03 (Submission Exporter) executed and completed successfully
+**Current Sprint:** Phase 0 complete. Next: `/gsd:plan-phase 1` (or `/gsd:discuss-phase 1` first).
 
 **v1 Requirement Coverage:**
-- Total v1 requirements: 19
-- Phase 0: 12 requirements (DATA-01..05, SUB-01..03, EVAL-01..04)
+- Total v1 requirements: 20
+- Phase 0: 13 requirements (DATA-01..06, SUB-01..03, EVAL-01..04) -- ALL COMPLETE
 - Phase 1: 0 requirements (validation only)
 - Phase 2: 5 requirements (MODEL-01..04, TRACK-01)
 - Phase 3: 2 requirements (TRACK-02, TRACK-03)
@@ -130,6 +131,25 @@ Phase 0 (Unblock)
 
 4. **Hidden test set will reveal different patterns (Phase 5).** Leaderboard is ~29% public; final ranking uses full hidden set. Weekly cycle in Phase 5 monitors for overfitting; if local-vs-public divergence > 0.05, revert to last best submission and investigate.
 
+5. **NEW 2026-07-04 -- Phase 0's real E2E run confirms the placeholder detector cannot realistically
+   reach 0.763 with wiring alone (Phase 1 risk, upgraded from theoretical to confirmed).** Real run:
+   score 0.0092. Root cause verified directly (not assumed): submission coordinates fall on a rigid
+   stride-8 grid (e.g. x=52,60,68,...), exactly matching `extract_peaks_from_volume`'s sampling --
+   there's no peak-finding/NMS step, so "detections" are raw thresholded grid points, not centroids.
+   Real ground truth is sparse; the odds of a grid point landing within the 7um match tolerance of a
+   true labeled cell are near-zero regardless of threshold value. **Action for Phase 1 planning:**
+   budget for at least a real peak-finding step (local maxima / non-max suppression) -- the host's
+   own NMS approach is already documented in `REFERENCE_IMPLEMENTATION.md` Sec5 (`max_pool3d`-based,
+   kernel sized from physical um) and can be adopted without training a model. Without this, Phase 1
+   cannot succeed regardless of threshold tuning effort.
+
+6. **NEW 2026-07-04 -- ILP is confirmed (not just flagged) as the dominant runtime cost.** Real run:
+   70.2% of total pipeline time even at a hard-capped 30 candidates/timepoint (down from an
+   unbounded original that caused a 2.5+ hour stuck run at higher candidate density). This is
+   Blocker #1 above, now with direct empirical grounding from real data rather than only synthetic
+   profiling -- raises confidence that Phase 3's windowed/min-cost-flow mitigation is necessary, not
+   precautionary.
+
 5. **NEW 2026-07-03 — ILP cost-scale caps realistic per-frame movement, confirmed via a new
    positive/negative test suite (`tests/test_tracker.py`, 14 tests, all passing against current
    `src/tracker.py`).** The edge cost is `distance² × gap_penalty`; linking only beats paying two
@@ -166,32 +186,43 @@ Phase 0 (Unblock)
 ## Session Continuity
 
 **Session Start:** 2026-07-03 (roadmap creation)  
-**Session Update:** 2026-07-03 (Phase 0, Plans 00-03 execution complete)
+**Session Update:** 2026-07-04 (Phase 0 fully complete, verified, ready for Phase 1)
 
-**Completed This Session:**
-- Roadmap initialized (6-phase structure)
-- REFERENCE_IMPLEMENTATION.md created (host reference analysis)
-- Phase 0, Plan 00 executed: vendored metrics.py, division_metrics.py, io.py
-  - 3 atomic commits (1e3fabd, c6249bb, b710b1d)
-  - SUMMARY.md written (.planning/phases/00-unblock/PLAN-00-VENDOR-SCORING-CODE-SUMMARY.md)
-  - Test file created (tests/test_scoring_baseline.py)
-- Phase 0, Plan 01 executed: data loading pipeline for Zarr v3 + GEFF
-- Phase 0, Plan 02 executed: evaluation harness with micro-averaged metrics
-- Phase 0, Plan 03 executed: submission exporter (export_submission + validate_submission)
-  - 4 atomic commits (9d57f63, 196e649, 3ad4ce0 + docs)
-  - SUMMARY.md written (.planning/phases/00-unblock/PLAN-03-IMPLEMENT-SUBMISSION-EXPORTER-SUMMARY.md)
-  - 18 unit tests (all passing)
-  - Schema verified against real sample_submission.csv
-- STATE.md updated (Phase 0 progress tracked)
+**Completed This Session (2026-07-03 to 2026-07-04):**
+- Roadmap initialized (6-phase structure); REFERENCE_IMPLEMENTATION.md created and extended
+  multiple times with real host-repo findings (metrics.py/division_metrics.py/io.py source,
+  quantile_normalize exact percentiles, NMS peak detector, greedy-vs-ILP edge assignment)
+- Phase 0, Plans 00-03 executed and independently verified (each caught real bugs post-execution
+  rather than trusting "PLAN COMPLETE" claims -- see individual SUMMARY.md files for detail)
+- Phase 0, Plan 04 executed: `run_pipeline.py` wired end-to-end (two-pass design: submission from
+  test/, scoring from train/), plus:
+  - Root-caused and fixed a 2.5+ hour stuck run (detector threshold miscalibration against real
+    quantile-normalized data -> ~18,000 false candidates/timepoint -> ILP combinatorial blowup)
+  - Built `src/run_tracker.py`: JSONL run logging, live progress/ETA, detection-result caching,
+    per-dataset checkpointing; `scripts/compare_runs.py` for cross-run comparison
+  - Fixed a real `tracksdata` API bug in the submission exporter (`.nodes()`/`.edges()` aren't
+    callable on this version; `.node_ids()`/`.edge_list()` are)
+  - **Real end-to-end run completed**: 8.3 minutes, schema-valid submission (18,735 rows), local
+    score 0.0092 (expected given the detector-quality finding, not a defect)
+- `gsd-verifier` confirmed Phase 0 PASSED: 5/5 must-haves, 60/60 tests passing (verified directly,
+  not from agent self-report) -- see `.planning/phases/00-unblock/00-UNBLOCK-VERIFICATION.md`
+- ROADMAP.md/REQUIREMENTS.md/STATE.md updated to reflect Phase 0 completion (this update)
 
 **What Happens Next:**
-1. Execute Phase 0, Plan 04 (pipeline wiring) — depends on Plan 03 ✓
-2. Validate Phase 1 execution (no new work; just wiring/testing Phase 0's infrastructure)
-3. Depending on Phase 1 outcome: proceed to Phase 2 planning or loop back to debug Phase 0
+1. `/gsd:discuss-phase 1` (or `/gsd:plan-phase 1` directly) -- Baseline Parity
+2. Phase 1 planning must account for the carry-forward risk: the placeholder detector needs real
+   peak-finding (local maxima/NMS), not just wiring, to have a realistic shot at reaching 0.763 --
+   see Blockers/Concerns #5 above and `PLAN-04-WIRE-PIPELINE-AND-TEST-SUMMARY.md`'s Key Finding
+3. Depending on Phase 1 outcome: proceed to Phase 2 planning or loop back if baseline isn't reachable
 
 **Risk Status:**
 - ✓ Scoring code parity risk RESOLVED: reference implementation vendored exactly
-- Remaining Phase 0 work (Plans 01–04) unblocked by Plan 00 completion
+- ✓ Phase 0 fully complete and verified
+- ⚠ Phase 1 risk UPGRADED from theoretical to confirmed: placeholder detector's raw grid-point
+  output (no NMS) makes 0.763 very unlikely without at least basic peak-finding -- budget for this
+  in Phase 1 planning, not just "wire the existing detector"
+- ⚠ ILP scaling (Phase 3) risk UPGRADED from theoretical to confirmed: 70.2% of runtime even at
+  30 candidates/timepoint, on real data
 - Kaggle setup (parallel work) still needed before Phase 2 training starts
 - ILP scale-up must be validated early (Phase 2/Phase 3 boundary)
 

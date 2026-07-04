@@ -135,19 +135,19 @@ is solid.
 
 | Requirement | Phase | Status |
 |---|---|---|
-| DATA-01 | Phase 0 | In Progress |
-| DATA-02 | Phase 0 | Pending |
-| DATA-03 | Phase 0 | Pending |
-| DATA-04 | Phase 0 | Pending |
-| DATA-05 | Phase 0 | Pending |
-| DATA-06 | Phase 0 | Pending |
-| SUB-01 | Phase 0 | Pending |
-| SUB-02 | Phase 0 | Pending |
-| SUB-03 | Phase 0 | Pending |
-| EVAL-01 | Phase 0 | Pending |
-| EVAL-02 | Phase 0 | Pending |
-| EVAL-03 | Phase 0 | Pending |
-| EVAL-04 | Phase 0 | Pending |
+| DATA-01 | Phase 0 | Complete |
+| DATA-02 | Phase 0 | Complete |
+| DATA-03 | Phase 0 | Complete |
+| DATA-04 | Phase 0 | Complete |
+| DATA-05 | Phase 0 | Complete |
+| DATA-06 | Phase 0 | Complete |
+| SUB-01 | Phase 0 | Complete |
+| SUB-02 | Phase 0 | Complete |
+| SUB-03 | Phase 0 | Complete |
+| EVAL-01 | Phase 0 | Complete |
+| EVAL-02 | Phase 0 | Complete |
+| EVAL-03 | Phase 0 | Complete |
+| EVAL-04 | Phase 0 | Complete |
 | MODEL-01 | Phase 2 | Pending |
 | MODEL-02 | Phase 2 | Pending |
 | MODEL-03 | Phase 2 | Pending |

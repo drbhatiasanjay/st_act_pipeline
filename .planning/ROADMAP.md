@@ -19,9 +19,24 @@ The phases are derived from the PRD's § 8 phased roadmap, with v1 requirements 
 
 ### Phase 0: Unblock
 
+**Status: ✓ COMPLETE (2026-07-04)** — verified by gsd-verifier, 5/5 must-haves, 60/60 tests
+passing. See `.planning/phases/00-unblock/00-UNBLOCK-VERIFICATION.md` for the full report.
+
 **Goal:** Generate a schema-valid submission end-to-end from real competition data, scored locally.
 
 **Exit Criterion:** A submission CSV with correct schema (`id,dataset,row_type,node_id,t,z,y,x,source_id,target_id`), separate node/edge rows, generated from real Zarr stores and ground-truth `.geff` annotations, scored locally using the exact competition metric (edge Jaccard + 0.1 × division Jaccard).
+
+**Real result (2026-07-04):** Full 8-dataset run completed in ~8.3 minutes.
+`output/phase0_submission.csv` — 18,735 rows, schema-valid, all 4 real test datasets present.
+Local score: `edge_jaccard=0.0084, division_jaccard=0.0, combined=0.0092` (vs. 0.763 baseline —
+**expected, not a defect**: the placeholder detector emits raw stride-8 grid points, not real
+peaks, so near-zero node matches within the 7µm gate is the mathematically expected outcome, not
+a pipeline bug. Carried forward as Phase 1's central risk — see its entry in the Progress table
+above and `PLAN-04-WIRE-PIPELINE-AND-TEST-SUMMARY.md`'s "Key Finding" section.
+
+Also confirmed empirically this phase: the ILP tracker is **70.2% of total runtime** even at a
+heavily-capped 30 candidates/timepoint — direct, current evidence for Phase 3's scaling concern
+below, not just a theoretical risk.
 
 **Dependencies:** None (first phase, greenfield)
 
@@ -184,8 +199,8 @@ README) — Phase 0 work can start against real data immediately, no extraction 
 
 | Phase | Status | Goal | Exit Criterion |
 |---|---|---|---|
-| **0 — Unblock** | Not started | Schema-valid submission from real data, scored locally | Submission CSV + local score computed |
-| **1 — Baseline parity** | Blocked by Phase 0 | Prove pipeline is sound | Local score ≥ 0.763 (classical baseline) |
+| **0 — Unblock** | ✓ Complete (2026-07-04) | Schema-valid submission from real data, scored locally | Submission CSV + local score computed -- MET (18,735-row valid submission, score 0.0092) |
+| **1 — Baseline parity** | Ready to plan | Prove pipeline is sound | Local score ≥ 0.763 (classical baseline) -- **carry-forward risk**: Phase 0's real run shows the placeholder detector produces raw stride-8 grid points, not real peaks; likely needs actual peak-finding/NMS (not training) before 0.763 is reachable, see PLAN-04 SUMMARY.md |
 | **2 — Learned detection** | Blocked by Phase 1 | Train model, beat baseline, submit to Kaggle | Local score ≥ 0.80, Kaggle submission live |
 | **3 — Scale & correctness** | Blocked by Phase 2 | Make ILP tractable, real-intensity mitosis | Full volumes in <12 hours, no truncation |
 | **4 — Metric-directed tuning** | Blocked by Phase 3 | Systematic parameter calibration | Local score ≥ 0.875 (leaderboard #1) |
@@ -197,18 +212,19 @@ README) — Phase 0 work can start against real data immediately, no extraction 
 
 | Requirement | Phase | Status |
 |---|---|---|
-| DATA-01 | Phase 0 | Pending |
-| DATA-02 | Phase 0 | Pending |
-| DATA-03 | Phase 0 | Pending |
-| DATA-04 | Phase 0 | Pending |
-| DATA-05 | Phase 0 | Pending |
-| SUB-01 | Phase 0 | Pending |
-| SUB-02 | Phase 0 | Pending |
-| SUB-03 | Phase 0 | Pending |
-| EVAL-01 | Phase 0 | Pending |
-| EVAL-02 | Phase 0 | Pending |
-| EVAL-03 | Phase 0 | Pending |
-| EVAL-04 | Phase 0 | Pending |
+| DATA-01 | Phase 0 | Complete |
+| DATA-02 | Phase 0 | Complete |
+| DATA-03 | Phase 0 | Complete |
+| DATA-04 | Phase 0 | Complete |
+| DATA-05 | Phase 0 | Complete |
+| DATA-06 | Phase 0 | Complete |
+| SUB-01 | Phase 0 | Complete |
+| SUB-02 | Phase 0 | Complete |
+| SUB-03 | Phase 0 | Complete |
+| EVAL-01 | Phase 0 | Complete |
+| EVAL-02 | Phase 0 | Complete |
+| EVAL-03 | Phase 0 | Complete |
+| EVAL-04 | Phase 0 | Complete |
 | MODEL-01 | Phase 2 | Pending |
 | MODEL-02 | Phase 2 | Pending |
 | MODEL-03 | Phase 2 | Pending |
@@ -217,7 +233,10 @@ README) — Phase 0 work can start against real data immediately, no extraction 
 | TRACK-02 | Phase 3 | Pending |
 | TRACK-03 | Phase 3 | Pending |
 
-**Coverage:** 19/19 v1 requirements mapped, 0 orphaned. Phase 1 (Baseline parity) has no dedicated new requirements—it validates Phase 0's infrastructure with the existing placeholder detector.
+**Coverage:** 20/20 v1 requirements mapped, 0 orphaned. Phase 0 complete (2026-07-04). Phase 1
+(Baseline parity) has no dedicated new requirements—it validates Phase 0's infrastructure with
+the existing placeholder detector, but carries a real risk from Phase 0's finding: that detector
+needs real peak-finding (not just wiring) to have a realistic shot at the 0.763 baseline.
 
 ---
 
