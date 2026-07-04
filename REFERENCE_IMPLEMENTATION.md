@@ -333,7 +333,76 @@ directly from data instead of forced into one global distance-cost curve. This i
 data-grounded reason to prioritize option (b), not just a general "learned should beat hand-tuned"
 argument.
 
-Not yet fetched: `predict_unet_transformer.py` (inference/NMS details), `src/tracking_cellmot/img_proc.py`, `models/`.
+**Fetched 2026-07-03 — `predict_unet_transformer.py` and `img_proc.py`:**
+
+**Exact normalization function (directly answers DATA-06's "which quantiles exactly"):**
+```python
+def quantile_normalize(image, gamma=1.0, subsample_factor=50, q_min=0.001, q_max=0.999,
+                        clip_min=0.0, clip_max=4.0) -> np.ndarray:
+    image = image.astype(np.float32)
+    q1, q2 = np.quantile(image.ravel()[::subsample_factor], [q_min, q_max])
+    image_normalized = (image - q1) / (q2 - q1 + 1e-6)
+    image_normalized = np.clip(image_normalized, 0.0, None)
+    image_normalized = image_normalized ** gamma
+    image_normalized = np.clip(image_normalized, clip_min, clip_max)
+    return image_normalized
+```
+`q_min=0.1%`, `q_max=99.9%` (not `0.0/1.0` — use these exact percentiles), clipped to `[0, 4.0]`
+**after** gamma, not `[0,1]` — thresholds calibrated against this codomain must account for that
+`4.0` ceiling, not assume a plain `[0,1]` range. `img_proc.py` also has `min_max_normalize`
+(simple, unused by the main pipeline) and isotropic-rescale helpers (GPU trilinear, matching
+`io.py`'s `_process_on_gpu`).
+
+**Peak detection (NMS) — max-pool based, kernel sized from real physical µm, not a fixed voxel size:**
+```python
+def pool_kernel_from_um(um: float, voxel_size: tuple[float, ...]) -> tuple[int, ...]:
+    kernel = []
+    for s in voxel_size:
+        k = max(1, round(um / s))
+        if k % 2 == 0: k += 1
+        kernel.append(k)
+    return tuple(kernel)
+
+def _detect_cells_pooled(det_logits, t, det_threshold=0.5, pool_kernel=(3,3,3)):
+    pooled = F.max_pool3d(det_logits.unsqueeze(0), pool_kernel, stride=1, padding=[k//2 for k in pool_kernel])
+    is_peak = (det_logits == pooled) & (torch.sigmoid(det_logits) > det_threshold)
+    # ... torch.nonzero(is_peak) -> centroid coordinates
+```
+Test-time augmentation: detection logits averaged across the original + 3 flips (Y, X, Y+X) before
+peak extraction — a real accuracy lever worth adopting in Phase 2, not just architecture.
+
+**IMPORTANT architectural correction — the host's DEFAULT edge assignment is greedy, not a global
+ILP** (contrary to what I'd have assumed from the Transformer's sophistication):
+```python
+candidates = sorted(
+    [(probs[i, j], i, j) for i in range(n_src) for j in range(n_tgt) if probs[i, j] > cfg.threshold],
+    reverse=True,
+)
+children_count, parents_count = {}, {}
+for prob, i, j in candidates:
+    if cfg.max_children_per_node is not None and children_count.get(i, 0) >= cfg.max_children_per_node:
+        continue
+    if cfg.max_parents_per_node is not None and parents_count.get(j, 0) >= cfg.max_parents_per_node:
+        continue
+    # accept edge i->j, increment counts
+```
+Default cardinality caps: **1 parent, 2 children per node** (exactly matching binary cell
+division — no more than one fork). This is a simple greedy per-frame-pair assignment over
+*learned* edge probabilities — **"Optional ILP solver post-processes the graph for global
+consistency before saving as `.geff`"** (their words; ILP is a secondary refinement step, not the
+primary mechanism). Output graph is built via `tracksdata.graph.InMemoryGraph` +
+`bulk_add_nodes`/`bulk_add_edges`, with `edge_prob`/`edge_dist` stored as edge attributes.
+
+**Why this changes the Phase 2 framing again:** the host's real edge is in the *learned
+detection+edge-probability model*, not assignment sophistication — a simple greedy assignment over
+good learned probabilities apparently suffices as their default. This reframes REFERENCE_
+IMPLEMENTATION.md's earlier "option (b)" from §5 above: it's not "replace greedy with our
+existing sophisticated ILP," it's "feed learned edge probabilities into whatever assignment
+mechanism — greedy or ILP — and expect the learned signal, not the assignment algorithm, to be
+where the score actually comes from." `STHypergraphTracker`'s global ILP with gap-closing and
+division-consistency constraints may still be a genuine edge *if* fed real learned probabilities
+as costs instead of raw squared-distance (see the cost-scale finding in `.planning/STATE.md`
+Blockers/Concerns #5 — raw distance costs already show real friction at production scale).
 
 ## 6. Action items this unblocks
 

@@ -25,6 +25,15 @@ from src.data_loader import AnisotropicZarrLoader
 from src.tracker import STHypergraphTracker
 from src.submission_exporter import export_submission, validate_submission
 from src.evaluation import evaluate_submission, load_geff_ground_truth
+from src.run_tracker import (
+    RunTracker,
+    detection_cache_key,
+    load_detection_cache,
+    save_detection_cache,
+    dataset_checkpoint_key,
+    load_dataset_checkpoint,
+    save_dataset_checkpoint,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -95,18 +104,73 @@ def ensemble_consensus_centroids(cnn_centroids, unet_centroids, anisotropy, eps_
     return consensus_centroids
 
 
-def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> Tuple[nx.DiGraph, Dict[str, float]]:
+# Detection thresholds and tracker costs live here (module level) so cache keys computed
+# in run_dataset() and the main loop always agree on what "the same config" means.
+CNN_THRESHOLD = 0.92
+UNET_THRESHOLD = 0.94
+CNN_OFFSET = 0.0
+UNET_OFFSET = 0.2
+# Safety cap: prevents pathological ILP blowup regardless of detector quality (a real
+# trained detector in Phase 2 could also occasionally over-predict, this isn't just a
+# placeholder-threshold patch). Value chosen from direct profiling of
+# STHypergraphTracker.solve_lineage on synthetic data at this density: ILP solve time
+# scales super-linearly with candidates/timepoint (50->100->150->200 measured at
+# 0.85s->3.68s->6.94s->17.72s for a 10-timepoint slice) -- 500/timepoint (the original,
+# unbounded value) took 112.7s for just 10 timepoints and was the direct cause of a
+# 2.5+ hour stuck run with no output. 100 keeps a full 100-timepoint dataset in the
+# tens-of-seconds range. This is the SAME risk already flagged in STATE.md as a Phase 3
+# "ILP solve time at scale" concern -- it's just materializing in Phase 0 at much lower
+# candidate density than expected, via the detector's over-prediction, not real cell count.
+MAX_CANDIDATES_PER_TIMEPOINT = 100
+BIRTH_COST = 15.0
+DEATH_COST = 15.0
+DIVISION_REWARD = -8.0
+MAX_GAP_FRAMES = 2
+
+
+def _dataset_full_config() -> dict:
+    """Everything that affects a dataset's output -- feeds both cache-key functions.
+    Bump nothing here for code-only changes (e.g. an ILP formulation fix); use
+    --force-rerun for those, since they aren't captured by a config hash."""
+    return {
+        "cnn_threshold": CNN_THRESHOLD, "unet_threshold": UNET_THRESHOLD,
+        "cnn_offset": CNN_OFFSET, "unet_offset": UNET_OFFSET,
+        "max_candidates": MAX_CANDIDATES_PER_TIMEPOINT,
+        "birth_cost": BIRTH_COST, "death_cost": DEATH_COST,
+        "division_reward": DIVISION_REWARD, "max_gap_frames": MAX_GAP_FRAMES,
+    }
+
+
+def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
+                 force_rerun: bool = False) -> Tuple[nx.DiGraph, Dict[str, float], bool]:
     """
     Load a single Zarr dataset, run detector+tracker, return lineage graph + timing info.
+
+    Checkpointed: if a prior run completed this exact dataset under the exact same
+    config (thresholds, costs, gap frames -- see _dataset_full_config), returns the
+    cached result immediately. Detection is ALSO cached separately from the full
+    dataset result, since tracker-cost-only changes (the common case during Phase 4
+    tuning) don't need to re-run detection at all.
 
     Args:
         zarr_path: Path to the Zarr store
         dataset_id: Dataset identifier (for logging)
         anisotropy: Physical voxel scale (Z, Y, X)
+        force_rerun: bypass both caches (e.g. after a code change the config hash can't see)
 
     Returns:
-        (nx.DiGraph, dict): Tracked lineage graph with nodes and edges, plus timing info
+        (nx.DiGraph, dict, bool): lineage graph, timing info, whether the full-dataset
+        checkpoint was used (if True, `timings` is the ORIGINAL run's timings, not this call's)
     """
+    full_config = _dataset_full_config()
+    ckpt_key = dataset_checkpoint_key(dataset_id, zarr_path, full_config)
+
+    if not force_rerun:
+        cached = load_dataset_checkpoint(ckpt_key)
+        if cached is not None:
+            logger.info(f"[Dataset {dataset_id}] Using cached checkpoint (config unchanged) -- skipping detection+tracking entirely")
+            return cached["lineage_graph"], cached["timings"], True
+
     timings = {}
     start_dataset = time.time()
 
@@ -124,25 +188,54 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> Tupl
     logger.info(f"[Dataset {dataset_id}] Volume shape: (T={t_dim}, Z={z_dim}, Y={y_dim}, X={x_dim})")
     timings['load'] = time.time() - start_load
 
-    # Detection phase
+    # Detection phase -- cached separately (see module docstring): the volume is static,
+    # detection thresholds change rarely, so this is the expensive step worth skipping on
+    # the common "just retuning tracker costs" rerun.
     start_detect = time.time()
-    logger.info(f"[Dataset {dataset_id}] Running detection...")
-    centroids_by_t = {}
-    motion_vectors_by_t = {}
+    det_key = detection_cache_key(zarr_path, CNN_THRESHOLD, UNET_THRESHOLD, CNN_OFFSET, UNET_OFFSET, MAX_CANDIDATES_PER_TIMEPOINT)
+    detection_cached = None if force_rerun else load_detection_cache(det_key)
 
-    for t in range(t_dim):
-        vol_3d = loader.load_timepoint_block(t)
+    if detection_cached is not None:
+        logger.info(f"[Dataset {dataset_id}] Using cached detection output ({len(detection_cached['centroids_by_t'])} timepoints)")
+        centroids_by_t = detection_cached["centroids_by_t"]
+        motion_vectors_by_t = detection_cached["motion_vectors_by_t"]
+    else:
+        logger.info(f"[Dataset {dataset_id}] Running detection...")
+        centroids_by_t = {}
+        motion_vectors_by_t = {}
 
-        cnn_centroids = extract_peaks_from_volume(vol_3d, threshold=0.4, offset_bias=0.0)
-        unet_centroids = extract_peaks_from_volume(vol_3d, threshold=0.45, offset_bias=0.2)
+        for t in range(t_dim):
+            vol_3d = loader.load_timepoint_block(t)
 
-        consensus_centroids = ensemble_consensus_centroids(cnn_centroids, unet_centroids, anisotropy)
-        centroids_by_t[t] = consensus_centroids
+            # NOTE 2026-07-04: thresholds raised from the original 0.4/0.45. Real
+            # quantile-normalized data has a saturated plateau near 1.0 (dense embryonic
+            # tissue, not the old simulated [0,1]-uniform data these constants were tuned
+            # against) -- 0.4 produced ~18,000 candidates in a single timepoint of real
+            # data and caused the ILP tracker to blow up combinatorially (2.5+ hour stuck
+            # run, 30GB+ RAM, no output). 0.92/0.94 cuts that to a few thousand grid hits;
+            # the MAX_CANDIDATES cap below is the real backstop.
+            cnn_centroids = extract_peaks_from_volume(vol_3d, threshold=CNN_THRESHOLD, offset_bias=CNN_OFFSET)
+            unet_centroids = extract_peaks_from_volume(vol_3d, threshold=UNET_THRESHOLD, offset_bias=UNET_OFFSET)
 
-        motion_vectors = [[0.05, 0.2, 0.3] for _ in consensus_centroids]
-        motion_vectors_by_t[t] = motion_vectors
+            consensus_centroids = ensemble_consensus_centroids(cnn_centroids, unet_centroids, anisotropy)
 
-        logger.debug(f"[Dataset {dataset_id}] Timepoint {t:02d}: Detected {len(consensus_centroids)} centroids")
+            if len(consensus_centroids) > MAX_CANDIDATES_PER_TIMEPOINT:
+                logger.warning(
+                    f"[Dataset {dataset_id}] Timepoint {t:02d}: {len(consensus_centroids)} candidates "
+                    f"exceeds cap ({MAX_CANDIDATES_PER_TIMEPOINT}) -- truncating. This means the "
+                    f"placeholder detector is over-predicting for this frame; expect degraded local "
+                    f"score, not a crash."
+                )
+                consensus_centroids = consensus_centroids[:MAX_CANDIDATES_PER_TIMEPOINT]
+
+            centroids_by_t[t] = consensus_centroids
+
+            motion_vectors = [[0.05, 0.2, 0.3] for _ in consensus_centroids]
+            motion_vectors_by_t[t] = motion_vectors
+
+            logger.debug(f"[Dataset {dataset_id}] Timepoint {t:02d}: Detected {len(consensus_centroids)} centroids")
+
+        save_detection_cache(det_key, centroids_by_t, motion_vectors_by_t)
 
     timings['detection'] = time.time() - start_detect
     logger.info(f"[Dataset {dataset_id}] Detection complete ({timings['detection']:.1f}s)")
@@ -150,12 +243,12 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> Tupl
     # Tracking phase
     start_track = time.time()
     logger.info(f"[Dataset {dataset_id}] Running tracker...")
-    tracker = STHypergraphTracker(birth_cost=15.0, death_cost=15.0, division_reward=-8.0)
+    tracker = STHypergraphTracker(birth_cost=BIRTH_COST, death_cost=DEATH_COST, division_reward=DIVISION_REWARD)
     lineage_graph = tracker.solve_lineage(
         centroids_by_t,
         motion_vectors_by_t,
         anisotropy=anisotropy,
-        max_gap_frames=2
+        max_gap_frames=MAX_GAP_FRAMES
     )
 
     # Smooth mitosis edges
@@ -182,7 +275,9 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray) -> Tupl
     logger.info(f"  ---")
     logger.info(f"  TOTAL:      {timings['total']:7.2f}s")
 
-    return td_graph, timings
+    save_dataset_checkpoint(ckpt_key, td_graph, timings)
+
+    return td_graph, timings, False
 
 
 def convert_nx_to_tracksdata(nx_graph: nx.DiGraph, dataset_id: str) -> td.graph.BaseGraph:
@@ -251,6 +346,13 @@ def main():
         default="submissions/phase_0_baseline_submission.csv",
         help="Output path for submission CSV"
     )
+    parser.add_argument(
+        "--force-rerun",
+        action="store_true",
+        help="Bypass detection and dataset checkpoints (e.g. after a code change the "
+             "config hash can't detect, like an ILP formulation edit). Without this flag, "
+             "a dataset already completed under the identical config is skipped entirely."
+    )
 
     args = parser.parse_args()
 
@@ -276,18 +378,23 @@ def main():
     logger.info(f"Found {len(zarr_stores)} Zarr stores in {args.test_dir}")
 
     pass1_start = time.time()
+    pass1_tracker = RunTracker("pass1_submission", total_units=len(zarr_stores))
     for zarr_path in zarr_stores:
         dataset_id = zarr_path.stem  # e.g., "44b6_0113de3b"
+        unit = pass1_tracker.start_unit(dataset_id)
         try:
-            graph, timings = run_dataset(str(zarr_path), dataset_id, anisotropy)
+            graph, timings, was_cached = run_dataset(str(zarr_path), dataset_id, anisotropy, force_rerun=args.force_rerun)
             submission_graphs[dataset_id] = graph
             submission_timings[dataset_id] = timings
+            unit.done(extra={"nodes": graph.num_nodes(), "edges": graph.num_edges()}, cached=was_cached)
             logger.info(f"✓ Dataset {dataset_id} processed successfully\n")
         except Exception as e:
+            unit.failed(str(e))
             logger.error(f"✗ Dataset {dataset_id} failed: {e}\n")
             continue
 
     pass1_duration = time.time() - pass1_start
+    pass1_tracker.run_end(summary={"datasets_completed": len(submission_graphs), "total": len(zarr_stores)})
     logger.info(f"[PASS 1 COMPLETE] Processed {len(submission_graphs)} datasets in {pass1_duration:.1f}s")
 
     # Export submission CSV
@@ -329,11 +436,13 @@ def main():
     logger.info(f"Found {len(zarr_stores)} Zarr stores in {args.train_dir}")
 
     pass2_start = time.time()
+    pass2_tracker = RunTracker("pass2_scoring", total_units=len(zarr_stores))
     for zarr_path in zarr_stores:
         dataset_id = zarr_path.stem
+        unit = pass2_tracker.start_unit(dataset_id)
         try:
             # Run tracker on train data
-            graph, timings = run_dataset(str(zarr_path), dataset_id, anisotropy)
+            graph, timings, was_cached = run_dataset(str(zarr_path), dataset_id, anisotropy, force_rerun=args.force_rerun)
             scoring_graphs[dataset_id] = graph
             scoring_timings[dataset_id] = timings
 
@@ -346,12 +455,15 @@ def main():
                 logger.info(f"✓ Dataset {dataset_id} scored (GT loaded)\n")
             else:
                 logger.warning(f"⚠ Dataset {dataset_id}: No .geff found, skipping evaluation")
+            unit.done(extra={"nodes": graph.num_nodes(), "edges": graph.num_edges()}, cached=was_cached)
 
         except Exception as e:
+            unit.failed(str(e))
             logger.error(f"✗ Dataset {dataset_id} failed: {e}\n")
             continue
 
     pass2_duration = time.time() - pass2_start
+    pass2_tracker.run_end(summary={"datasets_completed": len(scoring_graphs), "total": len(zarr_stores)})
     logger.info(f"[PASS 2 COMPLETE] Processed {len(scoring_graphs)} datasets in {pass2_duration:.1f}s")
 
     # Evaluate

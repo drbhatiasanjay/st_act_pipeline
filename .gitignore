@@ -17,6 +17,10 @@ __pycache__/
 # Output artifacts
 /output/*.csv
 
+# Run tracking: caches are large/regenerable, logs are per-machine execution history
+/.cache/
+/logs/
+
 # Env / secrets
 .env
 *.env.local
