@@ -121,7 +121,13 @@ UNET_OFFSET = 0.2
 # tens-of-seconds range. This is the SAME risk already flagged in STATE.md as a Phase 3
 # "ILP solve time at scale" concern -- it's just materializing in Phase 0 at much lower
 # candidate density than expected, via the detector's over-prediction, not real cell count.
-MAX_CANDIDATES_PER_TIMEPOINT = 100
+# 2026-07-04: even 100/timepoint proved impractically slow for Phase 0's "prove the
+# plumbing works" goal on a real 100-timepoint dataset -- the ILP solves ALL timepoints
+# together in one global problem, so gap-closing accumulation compounds beyond what a
+# short synthetic profile captures. Dropping to 30 for Phase 0 validation specifically;
+# real cap/scale tuning against actual score is Phase 3 scope (windowed/min-cost-flow),
+# not something to brute-force here by raising this number.
+MAX_CANDIDATES_PER_TIMEPOINT = 30
 BIRTH_COST = 15.0
 DEATH_COST = 15.0
 DIVISION_REWARD = -8.0
@@ -205,6 +211,8 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
         motion_vectors_by_t = {}
 
         for t in range(t_dim):
+            if t % 10 == 0:
+                logger.info(f"[Dataset {dataset_id}] Detection progress: timepoint {t}/{t_dim}")
             vol_3d = loader.load_timepoint_block(t)
 
             # NOTE 2026-07-04: thresholds raised from the original 0.4/0.45. Real
