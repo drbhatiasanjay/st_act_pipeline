@@ -9,31 +9,31 @@ Refactored to:
 5. Evaluate locally against .geff ground truth (train/ only)
 """
 
-import os
-import sys
 import argparse
 import logging
+import os
 import time
-from typing import Dict, Tuple
 from pathlib import Path
-import numpy as np
+
 import networkx as nx
+import numpy as np
 import polars as pl
 import tracksdata as td
+from scipy import ndimage
 
 from src.data_loader import AnisotropicZarrLoader
-from src.tracker import STHypergraphTracker
-from src.submission_exporter import export_submission, validate_submission
-from src.evaluation import evaluate_submission, load_geff_ground_truth
+from src.evaluation import DEFAULT_SCALE, evaluate_submission, load_geff_ground_truth
 from src.run_tracker import (
     RunTracker,
-    detection_cache_key,
-    load_detection_cache,
-    save_detection_cache,
     dataset_checkpoint_key,
+    detection_cache_key,
     load_dataset_checkpoint,
+    load_detection_cache,
     save_dataset_checkpoint,
+    save_detection_cache,
 )
+from src.submission_exporter import export_submission, validate_submission
+from src.tracker import STHypergraphTracker
 
 # Configure logging
 logging.basicConfig(
@@ -43,28 +43,51 @@ logging.basicConfig(
 logger = logging.getLogger("Pipeline")
 
 
-def extract_peaks_from_volume(vol: np.ndarray, threshold=0.4, offset_bias=0.0):
+def pool_kernel_from_um(um: float, voxel_size: tuple) -> tuple:
+    """Convert a physical-micron NMS radius into an odd per-axis pooling kernel
+    size in voxels, given each axis's physical voxel size (Z, Y, X) in um."""
+    kernel = []
+    for s in voxel_size:
+        k = max(1, round(um / s))
+        if k % 2 == 0:
+            k += 1
+        kernel.append(k)
+    return tuple(kernel)
+
+
+def extract_peaks_from_volume(vol: np.ndarray, threshold=0.4, voxel_size=DEFAULT_SCALE, nms_radius_um=5.0):
     """
-    Simulates CNN/U-Net heatmap thresholding and peak local max finding.
+    Real 3D non-max suppression via max_pool3d, kernel sized from physical
+    micrometers (not a fixed voxel size) -- replicates the host's own reference
+    NMS approach (REFERENCE_IMPLEMENTATION.md S5). Applied directly to the raw
+    (already quantile-normalized) intensity volume, since no learned detector
+    exists yet in Phase 1; Phase 2 swaps this input for real detection logits.
+
+    IMPORTANT deviation from the host's version: the host applies this to a
+    trained model's logits, which are naturally sharp/point-like. Raw real
+    microscopy intensity has broad, flat-topped bright regions (whole cell
+    bodies, out-of-focus glow), so a strict `vol == pooled` comparison ties
+    across every voxel in a plateau -- verified directly on real data, this
+    produced ~282,000 "peaks" (6.7% of all voxels) at every threshold from 0.5
+    to 0.98, virtually threshold-independent. Collapsing each connected tied
+    region to a single centroid (via scipy.ndimage.label) fixes this without
+    abandoning the host's kernel-sizing approach.
+
+    Uses scipy.ndimage.maximum_filter rather than torch's max_pool3d: verified
+    ~22x faster on real data (0.6s vs 13s per timepoint) for this kernel size,
+    with identical peak count -- naive 3D max-pooling doesn't scale well to a
+    (3,13,13) kernel on CPU, whereas scipy's separable filter does.
     Returns list of 3D coordinates [z, y, x].
     """
-    nz, ny, nx = vol.shape
-    z_indices = np.arange(nz)
-    y_indices = np.arange(4, ny - 4, 8)
-    x_indices = np.arange(4, nx - 4, 8)
+    kernel = pool_kernel_from_um(nms_radius_um, voxel_size)
+    pooled = ndimage.maximum_filter(vol, size=kernel, mode='constant', cval=-np.inf)
+    is_peak = (vol == pooled) & (vol > threshold)
 
-    if len(y_indices) == 0 or len(x_indices) == 0:
+    labeled, num_labels = ndimage.label(is_peak)
+    if num_labels == 0:
         return []
-
-    zz, yy, xx = np.meshgrid(z_indices, y_indices, x_indices, indexing='ij')
-    values = vol[zz, yy, xx]
-    mask = values > threshold
-
-    z_hits = zz[mask]
-    y_hits = yy[mask].astype(float) + offset_bias
-    x_hits = xx[mask].astype(float) + offset_bias
-
-    return np.column_stack([z_hits, y_hits, x_hits]).tolist()
+    centroids = ndimage.center_of_mass(is_peak, labeled, range(1, num_labels + 1))
+    return [list(c) for c in centroids]
 
 
 def ensemble_consensus_centroids(cnn_centroids, unet_centroids, anisotropy, eps_microns=6.0):
@@ -106,28 +129,36 @@ def ensemble_consensus_centroids(cnn_centroids, unet_centroids, anisotropy, eps_
 
 # Detection thresholds and tracker costs live here (module level) so cache keys computed
 # in run_dataset() and the main loop always agree on what "the same config" means.
-CNN_THRESHOLD = 0.92
-UNET_THRESHOLD = 0.94
-CNN_OFFSET = 0.0
-UNET_OFFSET = 0.2
-# Safety cap: prevents pathological ILP blowup regardless of detector quality (a real
-# trained detector in Phase 2 could also occasionally over-predict, this isn't just a
-# placeholder-threshold patch). Value chosen from direct profiling of
-# STHypergraphTracker.solve_lineage on synthetic data at this density: ILP solve time
-# scales super-linearly with candidates/timepoint (50->100->150->200 measured at
-# 0.85s->3.68s->6.94s->17.72s for a 10-timepoint slice) -- 500/timepoint (the original,
-# unbounded value) took 112.7s for just 10 timepoints and was the direct cause of a
-# 2.5+ hour stuck run with no output. 100 keeps a full 100-timepoint dataset in the
-# tens-of-seconds range. This is the SAME risk already flagged in STATE.md as a Phase 3
-# "ILP solve time at scale" concern -- it's just materializing in Phase 0 at much lower
-# candidate density than expected, via the detector's over-prediction, not real cell count.
-# 2026-07-04: even 100/timepoint proved impractically slow for Phase 0's "prove the
-# plumbing works" goal on a real 100-timepoint dataset -- the ILP solves ALL timepoints
-# together in one global problem, so gap-closing accumulation compounds beyond what a
-# short synthetic profile captures. Dropping to 30 for Phase 0 validation specifically;
-# real cap/scale tuning against actual score is Phase 3 scope (windowed/min-cost-flow),
-# not something to brute-force here by raising this number.
-MAX_CANDIDATES_PER_TIMEPOINT = 30
+# Recalibrated 2026-07-06 (Phase 1) for the new max_pool3d/maximum_filter-based
+# NMS peak-finding -- the old 0.92/0.94 values were tuned for the retired
+# stride-8 grid scan and are meaningless for this algorithm. Chosen via
+# scripts/sweep_threshold.py across all 4 staged train datasets, 5 timepoints
+# each, 7 threshold values: candidate counts are fairly threshold-insensitive
+# in the 0.8-0.95 range (real signal is dominated by per-timepoint/per-dataset
+# cell density, not threshold choice) so 0.85/0.9 keeps the CNN/UNET ensemble's
+# two-distinct-views design without landing at an extreme.
+CNN_THRESHOLD = 0.85
+UNET_THRESHOLD = 0.9
+# Safety cap: prevents pathological ILP blowup regardless of detector quality.
+# 2026-07-04 (Phase 0, CBC solver): set to 30 because the placeholder detector's
+# grid-scan over-predicted catastrophically (up to ~18,000 candidates/timepoint)
+# and CBC could not handle more than ~30-100/timepoint in reasonable time.
+# 2026-07-07 (Phase 1, SCIP solver): raised to 75. Two things changed the
+# calculus: (1) the CBC->SCIP swap gave an 11.7x real-data solver speedup, and
+# (2) the new real max_pool3d/maximum_filter peak-finding (replacing the grid
+# scan) produces genuinely higher real candidate counts on dense/late-development
+# timepoints (avg ~1110/timepoint measured on the densest staged dataset's t=85-99
+# tail) -- these are NOT detector over-prediction, they're real embryo cell
+# density, so cap=30 was discarding ~97% of legitimate candidates every frame,
+# confirmed as the dominant reason the Phase 1 local score stayed near-zero
+# despite working peak-finding (786/786 timepoints hit the cap in a full 4-dataset
+# run). Direct profiling on that same dense tail (STHypergraphTracker.solve_lineage,
+# SCIP): cap=30 -> 1.97s, cap=50 -> 4.99s, cap=75 -> 13.44s, cap=100 -> 27.09s for
+# a 15-timepoint slice -- confirms solve time still scales super-linearly, so this
+# is a considered, profiled increase, not an unbounded fix. Full windowed/min-cost-flow
+# scaling remains Phase 3 scope for when real cell counts (not just this placeholder
+# gap) demand it.
+MAX_CANDIDATES_PER_TIMEPOINT = 75
 BIRTH_COST = 15.0
 DEATH_COST = 15.0
 DIVISION_REWARD = -8.0
@@ -140,7 +171,6 @@ def _dataset_full_config() -> dict:
     --force-rerun for those, since they aren't captured by a config hash."""
     return {
         "cnn_threshold": CNN_THRESHOLD, "unet_threshold": UNET_THRESHOLD,
-        "cnn_offset": CNN_OFFSET, "unet_offset": UNET_OFFSET,
         "max_candidates": MAX_CANDIDATES_PER_TIMEPOINT,
         "birth_cost": BIRTH_COST, "death_cost": DEATH_COST,
         "division_reward": DIVISION_REWARD, "max_gap_frames": MAX_GAP_FRAMES,
@@ -148,7 +178,7 @@ def _dataset_full_config() -> dict:
 
 
 def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
-                 force_rerun: bool = False) -> Tuple[nx.DiGraph, Dict[str, float], bool]:
+                 force_rerun: bool = False) -> tuple[nx.DiGraph, dict[str, float], bool]:
     """
     Load a single Zarr dataset, run detector+tracker, return lineage graph + timing info.
 
@@ -198,7 +228,7 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
     # detection thresholds change rarely, so this is the expensive step worth skipping on
     # the common "just retuning tracker costs" rerun.
     start_detect = time.time()
-    det_key = detection_cache_key(zarr_path, CNN_THRESHOLD, UNET_THRESHOLD, CNN_OFFSET, UNET_OFFSET, MAX_CANDIDATES_PER_TIMEPOINT)
+    det_key = detection_cache_key(zarr_path, CNN_THRESHOLD, UNET_THRESHOLD, MAX_CANDIDATES_PER_TIMEPOINT)
     detection_cached = None if force_rerun else load_detection_cache(det_key)
 
     if detection_cached is not None:
@@ -215,15 +245,14 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
                 logger.info(f"[Dataset {dataset_id}] Detection progress: timepoint {t}/{t_dim}")
             vol_3d = loader.load_timepoint_block(t)
 
-            # NOTE 2026-07-04: thresholds raised from the original 0.4/0.45. Real
-            # quantile-normalized data has a saturated plateau near 1.0 (dense embryonic
-            # tissue, not the old simulated [0,1]-uniform data these constants were tuned
-            # against) -- 0.4 produced ~18,000 candidates in a single timepoint of real
-            # data and caused the ILP tracker to blow up combinatorially (2.5+ hour stuck
-            # run, 30GB+ RAM, no output). 0.92/0.94 cuts that to a few thousand grid hits;
-            # the MAX_CANDIDATES cap below is the real backstop.
-            cnn_centroids = extract_peaks_from_volume(vol_3d, threshold=CNN_THRESHOLD, offset_bias=CNN_OFFSET)
-            unet_centroids = extract_peaks_from_volume(vol_3d, threshold=UNET_THRESHOLD, offset_bias=UNET_OFFSET)
+            # NOTE 2026-07-05 (Phase 1): CNN_THRESHOLD/UNET_THRESHOLD's 0.92/0.94 values
+            # were tuned against the OLD stride-8 grid-scan's candidate distribution, not
+            # against real max_pool3d-based NMS peaks -- the two produce very different
+            # candidate counts at the same threshold. Re-sweep before trusting these values
+            # (see scripts/sweep_threshold.py); the MAX_CANDIDATES cap below remains the
+            # hard backstop against a repeat of the 2.5+ hour ILP-blowup incident either way.
+            cnn_centroids = extract_peaks_from_volume(vol_3d, threshold=CNN_THRESHOLD, voxel_size=DEFAULT_SCALE)
+            unet_centroids = extract_peaks_from_volume(vol_3d, threshold=UNET_THRESHOLD, voxel_size=DEFAULT_SCALE)
 
             consensus_centroids = ensemble_consensus_centroids(cnn_centroids, unet_centroids, anisotropy)
 
@@ -238,7 +267,13 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
 
             centroids_by_t[t] = consensus_centroids
 
-            motion_vectors = [[0.05, 0.2, 0.3] for _ in consensus_centroids]
+            # Phase 1 decision (01-CONTEXT.md): zero motion vectors, not a hand-rolled
+            # heuristic. Motion vectors only warp a cell's position before the tracker
+            # measures next-frame distance; real measured inter-frame displacement (see
+            # STATE.md) shows only 3.1% of true edges exceed the tracker's link/break-even
+            # threshold, so zero should already be sufficient for the vast majority of
+            # links. Phase 2 replaces this with a real learned motion field.
+            motion_vectors = [[0.0, 0.0, 0.0] for _ in consensus_centroids]
             motion_vectors_by_t[t] = motion_vectors
 
             logger.debug(f"[Dataset {dataset_id}] Timepoint {t:02d}: Detected {len(consensus_centroids)} centroids")
@@ -280,7 +315,7 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
     logger.info(f"  Detection:  {timings['detection']:7.2f}s")
     logger.info(f"  Tracking:   {timings['tracking']:7.2f}s")
     logger.info(f"  Conversion: {timings['conversion']:7.2f}s")
-    logger.info(f"  ---")
+    logger.info("  ---")
     logger.info(f"  TOTAL:      {timings['total']:7.2f}s")
 
     save_dataset_checkpoint(ckpt_key, td_graph, timings)
@@ -415,7 +450,7 @@ def main():
 
         # Validate submission
         validate_submission(args.output_path)
-        logger.info(f"✓ Submission validation passed (schema-compliant)")
+        logger.info("✓ Submission validation passed (schema-compliant)")
 
         # Report submission stats
         import pandas as pd
@@ -475,7 +510,7 @@ def main():
     logger.info(f"[PASS 2 COMPLETE] Processed {len(scoring_graphs)} datasets in {pass2_duration:.1f}s")
 
     # Evaluate
-    logger.info(f"\n[EVALUATION] Computing scores")
+    logger.info("\n[EVALUATION] Computing scores")
     logger.info("-" * 80)
 
     if gt_graphs:
@@ -492,7 +527,7 @@ def main():
             logger.info(f"Adjusted Edge Jaccard: {results['adjusted_edge_jaccard']:.4f}")
             logger.info(f"Division Jaccard: {results['division_jaccard']:.4f}")
             logger.info(f"Combined Score: {results['score']:.4f}")
-            logger.info(f"Baseline: 0.763")
+            logger.info("Baseline: 0.763")
             logger.info(f"Above baseline: {'YES' if results['score'] > 0.763 else 'NO'}")
             logger.info(f"Datasets evaluated: {results['num_datasets']}")
 
@@ -522,7 +557,7 @@ def main():
         logger.info(f"    Detection:  {total_detect:7.2f}s")
         logger.info(f"    Tracking:   {total_track:7.2f}s ({total_track / len(submission_timings):.1f}s per dataset avg)")
         logger.info(f"    Conversion: {total_convert:7.2f}s")
-        logger.info(f"    ---")
+        logger.info("    ---")
         logger.info(f"    Pass Total: {pass1_duration:7.2f}s")
 
     if scoring_timings:
@@ -544,8 +579,8 @@ def main():
             track_pct = 100 * total_track / total_time
             logger.info(f"  ILP Solving (Tracking): {track_pct:.1f}% of total time")
             if track_pct > 50:
-                logger.info(f"  -> PRIMARY BOTTLENECK: ILP solver dominates execution time")
-                logger.info(f"  -> Optimization: Consider ILP solver parameters, gap closing strategy, or approximation algorithms for Phase 2/3")
+                logger.info("  -> PRIMARY BOTTLENECK: ILP solver dominates execution time")
+                logger.info("  -> Optimization: Consider ILP solver parameters, gap closing strategy, or approximation algorithms for Phase 2/3")
 
     logger.info("\n" + "=" * 80)
     logger.info("Phase 0 Pipeline Complete")

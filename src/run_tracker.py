@@ -23,7 +23,7 @@ import pickle
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 CACHE_DIR = Path(".cache")
 DETECTION_CACHE_DIR = CACHE_DIR / "detections"
@@ -47,7 +47,7 @@ def _format_duration(seconds: float) -> str:
     return f"{hours:.0f}h{minutes:.0f}m"
 
 
-def _git_commit_hash() -> Optional[str]:
+def _git_commit_hash() -> str | None:
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
@@ -197,7 +197,7 @@ class UnitTimer:
 # ---------------------------------------------------------------------------
 
 def detection_cache_key(zarr_path: str, cnn_threshold: float, unet_threshold: float,
-                         cnn_offset: float, unet_offset: float, max_candidates: int) -> str:
+                         max_candidates: int) -> str:
     path = Path(zarr_path)
     stat = path.stat() if path.exists() else None
     config = {
@@ -205,14 +205,12 @@ def detection_cache_key(zarr_path: str, cnn_threshold: float, unet_threshold: fl
         "mtime": stat.st_mtime if stat else None,
         "cnn_threshold": cnn_threshold,
         "unet_threshold": unet_threshold,
-        "cnn_offset": cnn_offset,
-        "unet_offset": unet_offset,
         "max_candidates": max_candidates,
     }
     return _stable_hash(config)
 
 
-def load_detection_cache(cache_key: str) -> Optional[dict]:
+def load_detection_cache(cache_key: str) -> dict | None:
     cache_path = DETECTION_CACHE_DIR / f"{cache_key}.pkl"
     if not cache_path.exists():
         return None
@@ -246,7 +244,7 @@ def dataset_checkpoint_key(dataset_id: str, zarr_path: str, full_config: dict) -
     return _stable_hash(config)
 
 
-def load_dataset_checkpoint(checkpoint_key: str) -> Optional[dict]:
+def load_dataset_checkpoint(checkpoint_key: str) -> dict | None:
     cache_path = DATASET_CACHE_DIR / f"{checkpoint_key}.pkl"
     if not cache_path.exists():
         return None

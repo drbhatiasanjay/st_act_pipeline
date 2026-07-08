@@ -78,9 +78,24 @@ README) — Phase 0 work can start against real data immediately, no extraction 
 
 ### Phase 1: Baseline Parity
 
+**Status: ATTEMPTED, EXIT CRITERION NOT MET (2026-07-08)** — see
+`.planning/phases/01-baseline-parity/01-SUMMARY.md` for the full report.
+
 **Goal:** Prove the pipeline is sound before investing in model training, by wiring the existing untrained placeholder detection model and validating it reaches the classical baseline (0.763).
 
 **Exit Criterion:** Local metric on held-out train embryos reaches ≥ 0.763 using the existing placeholder detection model (no new training), proving the entire pipeline (data loading, detection wiring, tracking, submission generation, local evaluation) is correct.
+
+**Real result (2026-07-08):** Real 3D peak-finding implemented (replacing the stride-8 grid
+scan), a genuine NMS tie-explosion bug found and fixed (282,000 false peaks/timepoint on
+plateau regions -> sane counts), thresholds recalibrated, a real motion-vector bug fixed,
+and `MAX_CANDIDATES_PER_TIMEPOINT` raised 30->75 (profiled safe). Local score progressed
+`0.0092 -> 0.0153 -> 0.0259` across these fixes — real, verified improvement — but still
+~30x short of the 0.763 baseline. Root cause is a quantified two-part gap: (1) real
+peak-finding still can't distinguish true cells from bright noise/glow without a trained
+classifier (Phase 2's job), and (2) even SCIP-accelerated ILP solving has a real,
+profiled super-linear scaling ceiling on candidate density (Phase 3's job). Not a wiring
+defect — proceeding to Phase 2 with this as a grounded planning input, per
+`01-SUMMARY.md`'s recommendation.
 
 **Dependencies:** Phase 0 complete
 
@@ -200,8 +215,8 @@ README) — Phase 0 work can start against real data immediately, no extraction 
 | Phase | Status | Goal | Exit Criterion |
 |---|---|---|---|
 | **0 — Unblock** | ✓ Complete (2026-07-04) | Schema-valid submission from real data, scored locally | Submission CSV + local score computed -- MET (18,735-row valid submission, score 0.0092) |
-| **1 — Baseline parity** | Ready to plan | Prove pipeline is sound | Local score ≥ 0.763 (classical baseline) -- **carry-forward risk**: Phase 0's real run shows the placeholder detector produces raw stride-8 grid points, not real peaks; likely needs actual peak-finding/NMS (not training) before 0.763 is reachable, see PLAN-04 SUMMARY.md |
-| **2 — Learned detection** | Blocked by Phase 1 | Train model, beat baseline, submit to Kaggle | Local score ≥ 0.80, Kaggle submission live |
+| **1 — Baseline parity** | Attempted, NOT MET (2026-07-08) | Prove pipeline is sound | Local score ≥ 0.763 -- NOT MET: real peak-finding shipped, score reached 0.0259 (from 0.0092), root cause quantified (detection precision + ILP capacity), see `01-SUMMARY.md` |
+| **2 — Learned detection** | Ready to plan | Train model, beat baseline, submit to Kaggle | Local score ≥ 0.80, Kaggle submission live |
 | **3 — Scale & correctness** | Blocked by Phase 2 | Make ILP tractable, real-intensity mitosis | Full volumes in <12 hours, no truncation |
 | **4 — Metric-directed tuning** | Blocked by Phase 3 | Systematic parameter calibration | Local score ≥ 0.875 (leaderboard #1) |
 | **5 — Competitive iteration loop** | Blocked by Phase 4 | Weekly cycle, leaderboard climb, visualizations | Sustained rank ≥ 3, no overfitting divergence |

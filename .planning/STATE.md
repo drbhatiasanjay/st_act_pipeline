@@ -28,7 +28,10 @@
 ## Current Position
 
 **Roadmap Status:** Phase 0 (Unblock) — ✓ COMPLETE (2026-07-04, verified by gsd-verifier, 5/5
-must-haves, 60/60 tests passing). Ready to plan Phase 1.
+must-haves, 60/60 tests passing). Phase 1 (Baseline Parity) — ATTEMPTED, exit criterion NOT
+MET (2026-07-08): real peak-finding shipped and verified working, local score reached
+0.0259 (up from 0.0092), still far below the 0.763 baseline. Root cause quantified, not
+hidden — see `01-SUMMARY.md`. Ready to plan Phase 2.
 
 **Phase Structure:**
 ```
@@ -38,14 +41,22 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
   ├─ ✓ Plan 02: Evaluation Harness (COMPLETE)
   ├─ ✓ Plan 03: Submission Exporter (COMPLETE)
   └─ ✓ Plan 04: Pipeline Wiring + real E2E run (COMPLETE -- 8.3min, score 0.0092)
-  └─ Phase 1 (Baseline parity) -- READY TO PLAN
-       └─ Phase 2 (Learned detection)
-            └─ Phase 3 (Scale & correctness)
-                 └─ Phase 4 (Metric-directed tuning)
-                      └─ Phase 5 (Competitive iteration loop)
+  └─ Phase 1 (Baseline parity) -- ATTEMPTED, EXIT CRITERION NOT MET 2026-07-08
+       ├─ Real peak-finding (max_pool3d/maximum_filter NMS) replacing grid scan -- DONE
+       ├─ NMS tie-explosion bug found+fixed (282k false peaks -> sane counts) -- DONE
+       ├─ Threshold recalibration (0.85/0.9) -- DONE
+       ├─ Motion-vector bug fixed (was nonzero constant, now correctly zero) -- DONE
+       ├─ MAX_CANDIDATES_PER_TIMEPOINT raised 30->75 (profiled safe with SCIP) -- DONE
+       └─ Score: 0.0092 -> 0.0153 -> 0.0259 -- still far below 0.763 baseline
+  └─ Phase 2 (Learned detection) -- READY TO PLAN (carries forward Phase 1's finding:
+       real detection precision, not just peak-finding, is required)
+       └─ Phase 3 (Scale & correctness) -- carries forward real ILP scaling profile data
+            └─ Phase 4 (Metric-directed tuning)
+                 └─ Phase 5 (Competitive iteration loop)
 ```
 
-**Current Sprint:** Phase 0 complete. Next: `/gsd:plan-phase 1` (or `/gsd:discuss-phase 1` first).
+**Current Sprint:** Phase 1 attempted and honestly closed out (see `01-SUMMARY.md`). Next:
+`/gsd:discuss-phase 2` (or `/gsd:plan-phase 2` directly).
 
 **v1 Requirement Coverage:**
 - Total v1 requirements: 20
@@ -186,7 +197,39 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
 ## Session Continuity
 
 **Session Start:** 2026-07-03 (roadmap creation)  
-**Session Update:** 2026-07-04 (Phase 0 fully complete, verified, ready for Phase 1)
+**Session Update:** 2026-07-08 (Phase 1 attempted and honestly closed out, exit criterion not met, ready for Phase 2)
+
+**Completed 2026-07-05 to 2026-07-08 (Phase 1, plus carried-over tooling from 2026-07-04):**
+- CBC->SCIP ILP solver swap in `src/tracker.py` (11.7x real-data speedup, verified score-identical)
+- ruff/mypy/pre-commit tooling set up (`pyproject.toml`, `.pre-commit-config.yaml`)
+- `/gsd:discuss-phase 1` run; 4 decisions locked in `01-CONTEXT.md` (real NMS peak-finding,
+  threshold sweep, zero motion vectors, use-all-4-samples validation set)
+- Real peak-finding implemented in `run_pipeline.py` (`pool_kernel_from_um()` + rewritten
+  `extract_peaks_from_volume()`), replacing the stride-8 grid scan
+- **Found and fixed a real NMS bug**: naive `vol == pooled` comparison on raw (non-logit)
+  intensity ties across flat plateau regions, producing ~282,000 false "peaks"/timepoint
+  (6.7% of all voxels) at every threshold tested -- fixed via connected-component
+  centroid collapsing (`scipy.ndimage.label`)
+- **Found and fixed a real performance bug**: `torch.max_pool3d` took ~13s/timepoint for
+  this project's kernel size on CPU; switched to `scipy.ndimage.maximum_filter`, verified
+  ~22x faster with identical output
+- **Found and fixed a real motion-vector bug**: code was NOT using zero vectors as assumed
+  -- a hardcoded non-zero `[0.05, 0.2, 0.3]` constant was still in place; fixed to `[0.0, 0.0, 0.0]`
+- Threshold recalibration via `scripts/sweep_threshold.py`: `CNN_THRESHOLD=0.85`, `UNET_THRESHOLD=0.9`
+- `MAX_CANDIDATES_PER_TIMEPOINT` raised 30->75, validated via direct profiling (dense-tail
+  solve-time scaling measured, not guessed) before committing to a full run
+- Full pipeline run on all 4 staged train datasets: **local score 0.0259** (up from 0.0092,
+  but still far below the 0.763 baseline) -- see `01-SUMMARY.md` for full root-cause analysis
+- `/graphify` run on the full project (803 nodes, 1316 edges, 47 communities) -- confirmed
+  the vendored-scoring-code integration and orchestration structure match what the code
+  actually does; no code-level action items surfaced, used for navigation/verification only
+- **Operational note**: two multi-hour wall-clock gaps this session were caused by the
+  laptop's default sleep timeout suspending long-running background pipeline processes
+  (confirmed via CPU-time-vs-wall-clock analysis), not code or performance defects.
+  Disabled via `powercfg /change standby-timeout-ac 0` / `-dc 0` mid-session --
+  **still needs to be restored to the user's normal setting**, not yet done.
+
+**Session Update (2026-07-04):** Phase 0 fully complete, verified, ready for Phase 1
 
 **Completed This Session (2026-07-03 to 2026-07-04):**
 - Roadmap initialized (6-phase structure); REFERENCE_IMPLEMENTATION.md created and extended
@@ -209,24 +252,35 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
 - ROADMAP.md/REQUIREMENTS.md/STATE.md updated to reflect Phase 0 completion (this update)
 
 **What Happens Next:**
-1. `/gsd:discuss-phase 1` (or `/gsd:plan-phase 1` directly) -- Baseline Parity
-2. Phase 1 planning must account for the carry-forward risk: the placeholder detector needs real
-   peak-finding (local maxima/NMS), not just wiring, to have a realistic shot at reaching 0.763 --
-   see Blockers/Concerns #5 above and `PLAN-04-WIRE-PIPELINE-AND-TEST-SUMMARY.md`'s Key Finding
-3. Depending on Phase 1 outcome: proceed to Phase 2 planning or loop back if baseline isn't reachable
+1. `/gsd:discuss-phase 2` (or `/gsd:plan-phase 2` directly) -- Learned Detection
+2. Phase 2 planning must account for Phase 1's confirmed finding: real peak-finding alone
+   (no learned classification) reaches only 0.0259, ~30x short of baseline -- a trained
+   detector with real precision (distinguishing true cells from bright noise/glow) is
+   required, not optional. See `01-SUMMARY.md`'s "Why the baseline wasn't reached."
+3. Restore normal power/sleep settings (`powercfg /change standby-timeout-ac 15` /
+   `-dc 10` or the user's actual prior values) -- disabled mid-Phase-1 to prevent
+   multi-hour background-run interruptions, not yet restored.
+4. Decide whether to commit the accumulated uncommitted changes (SCIP swap, tooling
+   setup, Phase 1's peak-finding rewrite) -- all still sitting uncommitted as of this update.
 
 **Risk Status:**
 - ✓ Scoring code parity risk RESOLVED: reference implementation vendored exactly
 - ✓ Phase 0 fully complete and verified
-- ⚠ Phase 1 risk UPGRADED from theoretical to confirmed: placeholder detector's raw grid-point
-  output (no NMS) makes 0.763 very unlikely without at least basic peak-finding -- budget for this
-  in Phase 1 planning, not just "wire the existing detector"
-- ⚠ ILP scaling (Phase 3) risk UPGRADED from theoretical to confirmed: 70.2% of runtime even at
-  30 candidates/timepoint, on real data
+- ✓ Phase 1 risk CONFIRMED AND QUANTIFIED (was theoretical, now measured): real
+  peak-finding alone reaches only 0.0259 local score. Root cause is now a well-defined
+  two-part gap (detection precision + ILP candidate capacity), not an open question --
+  see `01-SUMMARY.md`. Phase 2 and Phase 3 scope is now grounded in real measurements
+  instead of Phase 0's synthetic estimates.
+- ⚠ ILP scaling (Phase 3) risk CONFIRMED with real profiling data: solve time scales
+  super-linearly with candidates/timepoint even under SCIP (cap 30/50/75/100 ->
+  1.97s/4.99s/13.44s/27.09s for a 15-timepoint dense slice) -- real numbers now available
+  to size Phase 3's windowed/min-cost-flow work, not just Phase 0's synthetic profile.
 - Kaggle setup (parallel work) still needed before Phase 2 training starts
 - ILP scale-up must be validated early (Phase 2/Phase 3 boundary)
 
 ---
 
-**Last update:** 2026-07-03 (19:30 UTC) — Phase 0, Plan 03 (Submission Exporter) complete  
-**Next step:** Execute Phase 0, Plan 04 (Pipeline Wiring)
+**Last update:** 2026-07-08 — Phase 1 (Baseline Parity) attempted and honestly closed out;
+exit criterion not met (score 0.0259 vs 0.763 baseline), root cause quantified, ready for
+Phase 2 planning.
+**Next step:** `/gsd:discuss-phase 2` (Learned Detection)
