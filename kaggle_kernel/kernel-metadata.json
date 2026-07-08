@@ -1,0 +1,16 @@
+{
+  "id": "drbhatiasanjay/st-act-gpu-smoketest",
+  "title": "ST-ACT GPU Smoke Test",
+  "code_file": "smoketest.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "",
+  "dataset_sources": [],
+  "competition_sources": ["biohub-cell-tracking-during-development"],
+  "kernel_sources": [],
+  "model_sources": []
+}
