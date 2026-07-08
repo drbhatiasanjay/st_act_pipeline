@@ -21,6 +21,7 @@ __pycache__/
 # Run tracking: caches are large/regenerable, logs are per-machine execution history
 /.cache/
 /logs/
+/kaggle_kernel_output/
 
 # Env / secrets
 .env
