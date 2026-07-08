@@ -16,17 +16,15 @@ The module handles:
 - Graceful handling of zero-division cases (no GT divisions)
 """
 
-from typing import Dict, List, Tuple, Union
+
 import tracksdata as td
 from tracksdata.graph import IndexedRXGraph
 
 from src.tracking_cellmot import (
-    evaluate_datasets,
-    evaluate_divisions,
     ADJUSTMENT_ALPHA,
     SCORE_DIVISION_WEIGHT,
+    evaluate_datasets,
 )
-
 
 # Real physical voxel scale (z, y, x) in micrometers — z=1.625um, y=x=0.40625um.
 # NOT the anisotropy RATIO (4.0,1.0,1.0) -- that ratio describes Z:Y:X relative
@@ -34,11 +32,11 @@ from src.tracking_cellmot import (
 # using the ratio instead of real microns inflates every distance by ~2.46x
 # (1/0.40625), silently corrupting node matching. Confirmed against io.py's own
 # DEFAULT_SCALE (vendored from the host's reference implementation, Plan 00).
-DEFAULT_SCALE: Tuple[float, float, float] = (1.625, 0.40625, 0.40625)
+DEFAULT_SCALE: tuple[float, float, float] = (1.625, 0.40625, 0.40625)
 DEFAULT_MAX_DISTANCE: float = 7.0
 
 
-def load_geff_ground_truth(geff_path: str) -> Tuple[td.graph.BaseGraph, 'td.geff.GeffMetadata']:
+def load_geff_ground_truth(geff_path: str) -> tuple[td.graph.BaseGraph, 'td.geff.GeffMetadata']:
     """
     Load a .geff ground-truth file into a tracksdata graph.
 
@@ -62,10 +60,10 @@ def load_geff_ground_truth(geff_path: str) -> Tuple[td.graph.BaseGraph, 'td.geff
     """
     try:
         graph, metadata = IndexedRXGraph.from_geff(geff_path)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"GEFF file not found: {geff_path}")
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"GEFF file not found: {geff_path}") from e
     except Exception as e:
-        raise ValueError(f"Failed to load GEFF file {geff_path}: {e}")
+        raise ValueError(f"Failed to load GEFF file {geff_path}: {e}") from e
 
     # Validation
     if graph is None or graph.num_nodes() == 0:
@@ -107,12 +105,12 @@ def load_gt_for_dataset(dataset_id: str, geff_dir: str) -> td.graph.BaseGraph:
 
 
 def evaluate_submission(
-    pred_graphs: Union[List[td.graph.BaseGraph], Dict[str, td.graph.BaseGraph]],
-    gt_graphs: Union[List[td.graph.BaseGraph], Dict[str, td.graph.BaseGraph]],
-    scale: Tuple[float, ...] = DEFAULT_SCALE,
+    pred_graphs: list[td.graph.BaseGraph] | dict[str, td.graph.BaseGraph],
+    gt_graphs: list[td.graph.BaseGraph] | dict[str, td.graph.BaseGraph],
+    scale: tuple[float, ...] = DEFAULT_SCALE,
     max_distance: float = DEFAULT_MAX_DISTANCE,
-    gt_metadata: Union[List['td.geff.GeffMetadata'], Dict[str, 'td.geff.GeffMetadata']] = None,
-) -> Dict[str, Union[float, int]]:
+    gt_metadata: list['td.geff.GeffMetadata'] | dict[str, 'td.geff.GeffMetadata'] = None,
+) -> dict[str, float | int]:
     """
     Evaluate predicted tracking graphs against ground-truth graphs.
 
@@ -181,7 +179,7 @@ def evaluate_submission(
         )
 
     # Compute micro-averaged Jaccard scores across all datasets
-    graph_pairs = list(zip(pred_list, gt_list))
+    graph_pairs = list(zip(pred_list, gt_list, strict=False))
     datasets_result = evaluate_datasets(graph_pairs, scale=scale, max_distance=max_distance)
 
     # Compute adjusted edge Jaccard using node-count mismatch penalty
@@ -193,7 +191,7 @@ def evaluate_submission(
     # Extract T_true from metadata if available; otherwise use GT node count
     if metadata_list is not None:
         t_true_list = []
-        for m, g in zip(metadata_list, gt_list):
+        for m, g in zip(metadata_list, gt_list, strict=False):
             if hasattr(m, 'extra') and m.extra and 'estimated_number_of_nodes' in m.extra:
                 t_true_list.append(m.extra['estimated_number_of_nodes'])
             else:

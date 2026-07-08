@@ -1,0 +1,16 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: py -m ruff check
+        language: system
+        types: [python]
+        exclude: ^src/tracking_cellmot/
+
+      - id: tracker-tests
+        name: pytest tests/test_tracker.py (flow-conservation regression guard)
+        entry: py -m pytest tests/test_tracker.py -q
+        language: system
+        pass_filenames: false
+        files: ^(src/tracker\.py|tests/test_tracker\.py)$

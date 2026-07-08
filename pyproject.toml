@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["data", ".cache", "logs", "output", "submissions", "models", "graphify-out", "notebooks", "src/tracking_cellmot"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "run_pipeline.py"]
+exclude = ["src/tracking_cellmot"]
+explicit_package_bases = true
+mypy_path = "."
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true

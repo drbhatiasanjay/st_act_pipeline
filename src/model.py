@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class AnisotropicCoordinateTransformer(nn.Module):
     """
     Natively maps 3D coordinate tensors from anisotropic voxel space (Z, Y, X)
@@ -24,22 +25,22 @@ class AnisotropicCoordinateTransformer(nn.Module):
 
 class STACTCentroidPredictor(nn.Module):
     """
-    Fully Convolutional 3D Network that inputs anisotropic timepoint blocks 
+    Fully Convolutional 3D Network that inputs anisotropic timepoint blocks
     and predicts:
     1. Cell Centroid Probability Heatmap (B, 1, Z, Y, X)
     2. Local 3D Motion Vector Offsets (B, 3, Z, Y, X) to map movement to time T+1.
     """
     def __init__(self, in_channels=1, base_features=16):
         super().__init__()
-        
+
         # Downsampling path representing anisotropic voxel kernels
         # Uses asymmetric kernel structures (e.g., 1x3x3) on Z to prevent pixel distortion
         self.encoder1 = nn.Conv3d(in_channels, base_features, kernel_size=(1, 3, 3), padding=(0, 1, 1))
         self.encoder2 = nn.Conv3d(base_features, base_features*2, kernel_size=(3, 3, 3), padding=(1, 1, 1))
-        
+
         # Coordinate Calibration Layer
         self.coord_transformer = AnisotropicCoordinateTransformer()
-        
+
         # Heatmap prediction head
         self.heatmap_head = nn.Sequential(
             nn.Conv3d(base_features*2, base_features, kernel_size=3, padding=1),
@@ -47,7 +48,7 @@ class STACTCentroidPredictor(nn.Module):
             nn.Conv3d(base_features, 1, kernel_size=1),
             nn.Sigmoid()
         )
-        
+
         # 3D motion vector head
         self.motion_head = nn.Sequential(
             nn.Conv3d(base_features*2, base_features, kernel_size=3, padding=1),
@@ -66,11 +67,11 @@ class STACTCentroidPredictor(nn.Module):
         # Feature extraction
         feat = F.relu(self.encoder1(x))
         feat = F.relu(self.encoder2(feat))
-        
+
         # Predict heads
         heatmap = self.heatmap_head(feat)
         motion_vectors = self.motion_head(feat)
-        
+
         return heatmap, motion_vectors
 
 if __name__ == "__main__":

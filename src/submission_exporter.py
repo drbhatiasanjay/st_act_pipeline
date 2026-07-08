@@ -17,15 +17,15 @@ Schema:
 """
 
 from pathlib import Path
-from typing import Dict, Union
+
 import pandas as pd
 import tracksdata as td
 
 
 def export_submission(
-    graphs_dict: Dict[str, td.graph.BaseGraph],
-    output_path: Union[str, Path],
-) -> Union[str, pd.DataFrame]:
+    graphs_dict: dict[str, td.graph.BaseGraph],
+    output_path: str | Path,
+) -> str | pd.DataFrame:
     """
     Export tracksdata graphs to a Kaggle-compliant submission CSV.
 
@@ -133,7 +133,7 @@ def export_submission(
     return str(output_path)
 
 
-def validate_submission(csv_path: Union[str, Path]) -> bool:
+def validate_submission(csv_path: str | Path) -> bool:
     """
     Validate a submission CSV against the schema.
 
@@ -165,7 +165,7 @@ def validate_submission(csv_path: Union[str, Path]) -> bool:
     try:
         df = pd.read_csv(csv_path)
     except Exception as e:
-        raise ValueError(f"Failed to read CSV file: {e}")
+        raise ValueError(f"Failed to read CSV file: {e}") from e
 
     # Check 2: Header is exactly as expected
     expected_header = ['id', 'dataset', 'row_type', 'node_id', 't', 'z', 'y', 'x', 'source_id', 'target_id']
@@ -191,7 +191,7 @@ def validate_submission(csv_path: Union[str, Path]) -> bool:
     actual_ids = df['id'].tolist()
     if actual_ids != expected_ids:
         # Find first mismatch
-        for i, (exp, act) in enumerate(zip(expected_ids, actual_ids)):
+        for i, (exp, act) in enumerate(zip(expected_ids, actual_ids, strict=False)):
             if exp != act:
                 raise ValueError(
                     f"id column not sequential at row {i}: expected {exp}, got {act}"
