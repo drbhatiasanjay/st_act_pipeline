@@ -9,11 +9,11 @@ Tests:
 5. Evaluation scores are numeric
 """
 
-import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -38,7 +38,22 @@ def test_full_pipeline():
         ]
 
         print(f"\nRunning command: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        # Real profiled per-dataset cost at MAX_CANDIDATES_PER_TIMEPOINT=75 (2026-07-08,
+        # sleep-free runs): up to ~708s (192s detect + 515.6s track) for the densest staged
+        # dataset. This test processes 8 dataset-passes (4 test-dir + 4 train-dir), so
+        # worst-case real runtime is ~93 min; 7200s gives comfortable headroom without
+        # masking a genuine hang for too long. Without a timeout, a hung child process
+        # (a real regression, not hypothetical -- this happened twice during independent
+        # verification runs) makes this test hang forever with zero error signal.
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
+        except subprocess.TimeoutExpired as e:
+            stdout = e.stdout.decode() if e.stdout else "(no stdout captured)"
+            stderr = e.stderr.decode() if e.stderr else "(no stderr captured)"
+            raise RuntimeError(
+                f"Pipeline did not finish within 7200s -- likely a hang, not a normal "
+                f"failure.\n--- STDOUT ---\n{stdout}\n--- STDERR ---\n{stderr}"
+            ) from e
 
         print("\n--- STDOUT ---")
         print(result.stdout)
@@ -118,16 +133,16 @@ def test_submission_csv_structure():
         f"CSV header mismatch. Expected: {required_columns}, Got: {list(df.columns)}"
 
     # Print some stats
-    print(f"\nSubmission CSV Stats:")
+    print("\nSubmission CSV Stats:")
     print(f"  Total rows: {len(df)}")
     print(f"  Datasets: {sorted(df['dataset'].unique())}")
     print(f"  Nodes: {len(df[df['row_type'] == 'node'])}")
     print(f"  Edges: {len(df[df['row_type'] == 'edge'])}")
 
     # Print first and last rows
-    print(f"\nFirst 5 rows:")
+    print("\nFirst 5 rows:")
     print(df.head(5).to_string())
-    print(f"\nLast 5 rows:")
+    print("\nLast 5 rows:")
     print(df.tail(5).to_string())
 
 
