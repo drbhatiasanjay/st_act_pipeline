@@ -9,7 +9,7 @@
   "enable_tpu": "false",
   "enable_internet": "true",
   "machine_shape": "",
-  "dataset_sources": [],
+  "dataset_sources": ["drbhatiasanjay/st-act-src"],
   "competition_sources": ["biohub-cell-tracking-during-development"],
   "kernel_sources": [],
   "model_sources": []

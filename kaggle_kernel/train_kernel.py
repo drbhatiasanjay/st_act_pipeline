@@ -16,12 +16,19 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-# Kaggle script kernels execute from a Kaggle-internal path (e.g.
-# /kaggle/src/script.py) where the script's own directory is NOT
-# automatically on sys.path the way `python script.py` from a shell is --
-# confirmed by a real push failing with "ModuleNotFoundError: No module
-# named 'src'" despite kaggle_kernel/src/ being bundled alongside this file.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Kaggle "script"-type kernel pushes only upload the single code_file --
+# sibling files/folders in the local push directory (e.g. the bundled
+# kaggle_kernel/src/) are NOT included, confirmed by pulling the kernel back
+# down and finding only this one file present. The correct mechanism is a
+# Kaggle Dataset (drbhatiasanjay/st-act-src, containing src/ + data_split.json)
+# attached via dataset_sources in kernel-metadata.json, mounted read-only at
+# /kaggle/input/st-act-src/.
+KAGGLE_SRC_DATASET_DIR = "/kaggle/input/st-act-src"
+if os.path.exists(KAGGLE_SRC_DATASET_DIR):
+    sys.path.insert(0, KAGGLE_SRC_DATASET_DIR)
+else:
+    # Local run: src/ is a sibling of this file's parent directory.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configure logging
 logging.basicConfig(
@@ -111,7 +118,10 @@ logger.info("\n" + f"{'='*80}")
 logger.info("DATA LOADING")
 logger.info(f"{'='*80}")
 
-data_split_file = Path("data_split.json")
+if os.path.exists(KAGGLE_SRC_DATASET_DIR):
+    data_split_file = Path(KAGGLE_SRC_DATASET_DIR) / "data_split.json"
+else:
+    data_split_file = Path("data_split.json")
 if not data_split_file.exists():
     logger.error(f"data_split.json not found at {data_split_file}")
     raise FileNotFoundError("Missing data_split.json")
