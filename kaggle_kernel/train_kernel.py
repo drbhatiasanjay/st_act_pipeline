@@ -139,6 +139,12 @@ if KAGGLE_MODE:
             "tracksdata==0.1.0rc6", "zarr>=3.0.0", "numcodecs>=0.11.0",
             "geff>=1.0.0", "geff-spec", "polars>=1.36.0", "dask",
             "bidict", "rustworkx", "psygnal", "donfig", "google-crc32c", "typer",
+            # tracksdata/__init__.py unconditionally imports tracksdata.solvers
+            # (-> ilpy) at package init, even though this project's code path
+            # never calls tracksdata's own ILP solver (only its graph/geff I/O
+            # and metric functions) -- confirmed required by a real run's
+            # ModuleNotFoundError, so it can't be skipped as originally assumed.
+            "ilpy",
         ],
         check=True,
     )
