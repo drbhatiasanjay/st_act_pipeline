@@ -98,8 +98,28 @@ logger.info("\nHyperparameters:")
 for key, val in HYPERPARAMS.items():
     logger.info(f"  {key}: {val}")
 
+# Kaggle's base image does not have this project's non-standard pinned
+# dependencies (confirmed by a real failed run: ModuleNotFoundError on
+# tracksdata after the src/ import path itself was fixed). Install them from
+# requirements.txt's exact pins before importing any project code.
+# tracksdata==0.1.0rc6 is pre-1.0 and version-sensitive (see CLAUDE.md);
+# geff/polars are pulled in as its transitive deps but pinned explicitly
+# here too so a resolver change on Kaggle's side can't silently swap them.
+if KAGGLE_MODE:
+    import subprocess
+    logger.info("Installing non-standard dependencies (tracksdata, zarr, geff, polars, dask, numcodecs)...")
+    subprocess.run(
+        [
+            sys.executable, "-m", "pip", "install", "-q",
+            "tracksdata==0.1.0rc6", "zarr>=3.0.0", "numcodecs>=0.11.0",
+            "geff>=1.0.0", "polars", "dask",
+        ],
+        check=True,
+    )
+    logger.info("Dependency installation complete.")
+
 # For local development: import from src/
-# For Kaggle: would need to copy src/ directory or inline the code
+# For Kaggle: dependencies come from the attached st-act-src Dataset
 try:
     from src.dataset import CompetitionDataset
     from src.model import SimpleNodeTransformer, UNet3D
