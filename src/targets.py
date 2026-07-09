@@ -215,3 +215,91 @@ def generate_edge_targets(
     }
 
     return edge_labels, metadata
+
+
+class DivisionLoss(torch.nn.Module):
+    """
+    Weighted BCE loss for edge prediction with division event upweighting.
+
+    Division edges (where parent has >1 children) get higher loss weight.
+    """
+
+    def __init__(self, weight_division: float = 2.0, pos_weight: float = 10.0):
+        """
+        Initialize division loss.
+
+        Args:
+            weight_division: Loss weight multiplier for division edges (default 2.0-3.0x)
+            pos_weight: Weight for positive class in BCE (to handle class imbalance)
+        """
+        super().__init__()
+        self.weight_division = weight_division
+        self.pos_weight = pos_weight
+        self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor,
+                division_mask: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Compute weighted BCE loss.
+
+        Args:
+            logits: (n_candidates,) edge logits
+            targets: (n_candidates,) binary edge labels [0, 1]
+            division_mask: (n_candidates,) boolean mask for division edges
+
+        Returns:
+            Scalar loss (mean over candidates with weighting)
+        """
+        # Compute base BCE loss
+        targets_float = targets.float() if targets.dtype == torch.bool else targets
+        loss = self.bce_loss(logits, targets_float)
+
+        # Apply class imbalance weighting
+        loss = loss * (self.pos_weight * targets_float + (1.0 - targets_float))
+
+        # Apply division edge weighting
+        if division_mask is not None:
+            division_float = division_mask.float() if division_mask.dtype == torch.bool else division_mask
+            loss = loss * (self.weight_division * division_float + (1.0 - division_float))
+
+        return loss.mean()
+
+
+class DetectionLoss(torch.nn.Module):
+    """
+    Weighted BCE loss for heatmap detection with inverse-frequency weighting.
+
+    Upweights rare positive voxels to handle extreme class imbalance.
+    """
+
+    def __init__(self, weight_pos: float = 1.0, weight_neg: float = 0.01):
+        """
+        Initialize detection loss.
+
+        Args:
+            weight_pos: Weight for positive (cell) voxels
+            weight_neg: Weight for negative (background) voxels
+        """
+        super().__init__()
+        self.weight_pos = weight_pos
+        self.weight_neg = weight_neg
+        self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
+
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Compute weighted BCE loss for detection.
+
+        Args:
+            logits: (B, 1, Z, Y, X) detection logits
+            targets: (B, 1, Z, Y, X) binary heatmap targets [0, 1]
+
+        Returns:
+            Scalar loss (weighted mean)
+        """
+        # Compute base BCE loss
+        loss = self.bce_loss(logits, targets.float())
+
+        # Apply class imbalance weighting
+        loss = loss * (self.weight_pos * targets.float() + self.weight_neg * (1.0 - targets.float()))
+
+        return loss.mean()
