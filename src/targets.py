@@ -13,6 +13,7 @@ from typing import Literal
 import numpy as np
 import torch
 import tracksdata
+from scipy.spatial.distance import cdist
 
 logger = logging.getLogger(__name__)
 
@@ -130,22 +131,35 @@ def generate_edge_targets(
     geff_path: str | Path,
     nodes_t: torch.Tensor,
     nodes_t1: torch.Tensor,
-    max_distance: float = 10.0,
+    t: int,
+    max_distance: float = 7.0,
+    physical_voxel_size: tuple[float, float, float] = (1.625, 0.40625, 0.40625),
 ) -> tuple[torch.Tensor, dict]:
     """
     Generate edge probability targets from .geff ground truth.
 
+    Candidate nodes are matched to GT nodes by nearest-neighbor distance in
+    physical (micron) space, independently at frame t and frame t+1. A
+    candidate edge (i, j) is labeled positive only if BOTH nodes_t[i] and
+    nodes_t1[j] have a GT match within max_distance AND a real GT edge exists
+    between those two matched GT nodes.
+
     Args:
         sample_id: Sample identifier
         geff_path: Path to .geff file
-        nodes_t: (n_t, 3) node coordinates at frame t [z, y, x]
-        nodes_t1: (n_t1, 3) node coordinates at frame t+1 [z, y, x]
-        max_distance: Maximum distance for candidate edges (um)
+        nodes_t: (n_t, 3) node coordinates at frame t [z, y, x], voxel units
+        nodes_t1: (n_t1, 3) node coordinates at frame t+1 [z, y, x], voxel units
+        t: Timepoint index of nodes_t (nodes_t1 is assumed to be frame t+1)
+        max_distance: Maximum GT-match distance (um). Default 7.0 matches this
+            competition's real scoring match gate (src/evaluation.py DEFAULT_MAX_DISTANCE).
+        physical_voxel_size: (z, y, x) micrometers per voxel, for converting
+            voxel-space distances to physical distances before gating.
 
     Returns:
         (edge_labels, metadata) tuple where:
-        - edge_labels: (num_candidates,) binary tensor [0, 1]
-        - metadata: dict with stats (num_gt_edges, class_imbalance, division_edges, etc.)
+        - edge_labels: (n_t * n_t1,) binary tensor [0, 1], row-major over (i, j)
+        - metadata: dict with stats (num_candidates, num_matched_to_gt,
+          num_positive_edges, class_imbalance_ratio, division_mask, etc.)
     """
     # Load ground truth
     try:
@@ -161,57 +175,77 @@ def generate_edge_targets(
         # Return empty labels for empty node sets
         return torch.zeros(0, dtype=torch.long), {
             'sample_id': sample_id,
-            'num_gt_edges': 0,
+            't': t,
+            'num_candidates': 0,
+            'num_matched_to_gt': 0,
             'num_positive_edges': 0,
             'num_negative_edges': 0,
+            'class_imbalance_ratio': 0.0,
+            'division_mask': torch.zeros(0, dtype=torch.bool),
         }
 
-    # Extract GT edges for this timepoint (simplified - would need timepoint info in practice)
-    # For now, assume nodes are indexed consistently with GT graph
-    gt_edges = set()
+    node_attrs_df = graph.node_attrs(attr_keys=['t', 'node_id', 'z', 'y', 'x'])
+    gt_t = node_attrs_df.filter(node_attrs_df['t'] == t)
+    gt_t1 = node_attrs_df.filter(node_attrs_df['t'] == t + 1)
+    dividing = set(graph.dividing_nodes())
+    scale = np.array(physical_voxel_size)  # (z, y, x) um per voxel
 
-    try:
-        edge_ids = graph.edge_ids() if hasattr(graph, 'edge_ids') else []
-        for edge_id in edge_ids:
-            try:
-                src, tgt = edge_id
-                # In real implementation, check if this edge is at our timepoint
-                gt_edges.add((src, tgt))
-            except Exception:
-                continue
-    except Exception:
-        pass
+    def match_to_gt(candidate_coords: torch.Tensor, gt_frame) -> list[int | None]:
+        """Nearest-neighbor match each candidate to a GT node id, gated by max_distance (um)."""
+        if gt_frame.height == 0:
+            return [None] * candidate_coords.shape[0]
+        gt_coords = np.stack(
+            [gt_frame['z'].to_numpy(), gt_frame['y'].to_numpy(), gt_frame['x'].to_numpy()],
+            axis=1,
+        )
+        gt_ids = gt_frame['node_id'].to_list()
+        cand = candidate_coords.numpy() if isinstance(candidate_coords, torch.Tensor) else np.asarray(candidate_coords)
+        dists_um = cdist(cand * scale, gt_coords * scale)
+        nearest_idx = dists_um.argmin(axis=1)
+        nearest_dist = dists_um[np.arange(len(cand)), nearest_idx]
+        return [
+            gt_ids[idx] if dist <= max_distance else None
+            for idx, dist in zip(nearest_idx, nearest_dist, strict=True)
+        ]
 
-    # Generate candidate edges
+    matched_t = match_to_gt(nodes_t, gt_t)
+    matched_t1 = match_to_gt(nodes_t1, gt_t1)
+
     edge_labels = []
-    candidate_count = 0
+    division_mask = []
+    num_matched_pairs = 0
 
-    for _i in range(n_t):
-        for _j in range(n_t1):
-            # Check if GT edge exists
-            # This is simplified - real implementation would match nodes properly
-            label = 0  # Default: negative edge
-
-            # In practice, would:
-            # 1. Match nodes_t[i] to GT node at time t
-            # 2. Match nodes_t1[j] to GT node at time t+1
-            # 3. Check if matched nodes have a GT edge
-
+    for i in range(n_t):
+        gt_src = matched_t[i]
+        for j in range(n_t1):
+            gt_tgt = matched_t1[j]
+            label = 0
+            is_division = False
+            if gt_src is not None and gt_tgt is not None:
+                num_matched_pairs += 1
+                if graph.has_edge(gt_src, gt_tgt):
+                    label = 1
+                    is_division = gt_src in dividing
             edge_labels.append(label)
-            candidate_count += 1
+            division_mask.append(is_division)
 
     edge_labels = torch.tensor(edge_labels, dtype=torch.long)
+    division_mask = torch.tensor(division_mask, dtype=torch.bool)
+    candidate_count = n_t * n_t1
 
-    # Count positive edges
-    num_positive = (edge_labels == 1).sum().item()
-    num_negative = (edge_labels == 0).sum().item()
+    num_positive = int((edge_labels == 1).sum().item())
+    num_negative = int((edge_labels == 0).sum().item())
 
     metadata = {
         'sample_id': sample_id,
+        't': t,
         'num_candidates': candidate_count,
+        'num_matched_to_gt': num_matched_pairs,
         'num_positive_edges': num_positive,
         'num_negative_edges': num_negative,
-        'class_imbalance_ratio': num_positive / (num_positive + num_negative) if candidate_count > 0 else 0,
+        'class_imbalance_ratio': num_positive / candidate_count if candidate_count > 0 else 0.0,
+        'num_division_edges': int(division_mask.sum().item()),
+        'division_mask': division_mask,
     }
 
     return edge_labels, metadata
