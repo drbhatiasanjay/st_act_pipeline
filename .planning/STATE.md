@@ -31,9 +31,11 @@
 must-haves, 60/60 tests passing). Phase 1 (Baseline Parity) — ATTEMPTED, exit criterion NOT
 MET (2026-07-08): real peak-finding shipped and verified working, local score reached
 0.0259 (up from 0.0092), still far below the 0.763 baseline. Root cause quantified, not
-hidden — see `01-SUMMARY.md`. Phase 2 (Learned Detection), Wave 1 — ✓ IN PROGRESS (2026-07-05 to 2026-07-09):
-Normalization locked (Option A), full 199-sample dataset enumerated (no extraction), train/val split built (149/50),
-PyTorch Dataset class implemented. Ready for Wave 2 training infrastructure.
+hidden — see `01-SUMMARY.md`. Phase 2 (Learned Detection), Wave 1 — ✓ COMPLETE (2026-07-05 to 2026-07-09,
+verified 2026-07-09): Normalization locked (Option A), full 199-sample dataset enumerated (no extraction),
+train/val split built (149/50), PyTorch Dataset class implemented. A critical shape bug (discarding 63/64
+Z-slices) was found and fixed during independent post-execution verification — see Decisions #4 below and
+01-SUMMARY.md. Ready for Wave 2 training infrastructure.
 
 **Phase Structure:**
 ```
@@ -116,9 +118,13 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
    means individual sample ID, not movie prefix. Both sets draw from both 44b6 and 6bba.
 
 4. **Dataset testing scope: local-available samples only, full validation deferred to Wave 3.** Task 1.4
-   tested CompetitionDataset against 4 locally-staged + up-to-5 spot-checked samples (~9 total), verified
-   shape/dtype/metadata correctness and split-filtering logic. Full 199-sample I/O validation only makes
-   sense when Kaggle dataset mounted; this phase validates *correctness*, not end-to-end coverage.
+   tested CompetitionDataset against 4 locally-staged + up-to-5 spot-checked samples (~9 total). Full
+   199-sample I/O validation only makes sense when Kaggle dataset mounted; this phase validates
+   *correctness*, not end-to-end coverage. **A critical shape bug was found during independent
+   post-execution verification and fixed (commit a25fba1)**: `__getitem__()` was slicing away 63/64
+   Z-slices while producing a shape that still passed the wave's own (too-weak, ndim-only) test
+   assertion. Corrected to preserve the full (1,64,256,256) volume; test assertion strengthened to
+   check exact shape. See 01-SUMMARY.md's "Issues Encountered" for full detail.
 
 ---
 

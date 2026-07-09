@@ -69,12 +69,20 @@ scope, not this file.
 ## Operational lessons — read before running long jobs or delegating to sub-agents
 
 - **Never trust a sub-agent's "PLAN COMPLETE" / "all tests pass" claim without independently
-  re-running the actual command yourself.** This session caught 6+ real bugs an executor claimed
-  were done/passing: a physical-scale bug, two tests that aliased the same mutable graph object
-  instead of copying it, a schema-less-empty-graph crash, a wrong `tracksdata` API call, and a
-  hallucinated directory structure in a *plan* (before execution even started, missed by the
-  plan-checker too). Verification means: run the test command, read the actual file, inspect the
-  actual output — not reading the agent's summary of what it did.
+  re-running the actual command yourself.** Bugs caught this way across the project so far: a
+  physical-scale bug, two tests that aliased the same mutable graph object instead of copying it,
+  a schema-less-empty-graph crash, a wrong `tracksdata` API call, a hallucinated directory
+  structure in a *plan* (before execution even started, missed by the plan-checker too), and —
+  Phase 2 Wave 1 — `CompetitionDataset.__getitem__()` claimed "shape/dtype/metadata correctness
+  confirmed" while actually slicing away 63 of 64 Z-slices (`frame_t[0:1, :, :]` on a (Z,Y,X)
+  array slices axis 0 instead of adding a channel axis); the executor's own test only asserted
+  `ndim == 3`, which passed for both the bug's wrong output and the correct shape, so "all tests
+  passed" was true and still hid a silent-data-corruption bug that would have broken UNet3D
+  training in the very next wave with no crash. A weak assertion (ndim/type-only, not exact shape
+  or exact value) is *not* real verification — write assertions specific enough that the actual
+  bug you're worried about would fail them. Verification means: run the test command, read the
+  actual file, inspect the actual output — not reading the agent's summary of what it did, and not
+  trusting a test that technically ran but wasn't specific enough to catch the failure mode.
 - **Long-running executor/Task calls (30-50+ min) have stalled mid-stream twice this session**
   ("API Error: Response stalled mid-stream"). When this happens: check `git log`/`git status`/
   the actual filesystem directly for what really landed before assuming failure or re-running
