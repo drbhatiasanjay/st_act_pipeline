@@ -102,24 +102,24 @@ for key, val in HYPERPARAMS.items():
 # dependencies (confirmed by a real failed run: ModuleNotFoundError on
 # tracksdata after the src/ import path itself was fixed). Install them from
 # requirements.txt's exact pins before importing any project code.
-# tracksdata==0.1.0rc6 is pre-1.0 and version-sensitive (see CLAUDE.md);
-# geff/polars are pulled in as its transitive deps but pinned explicitly
-# here too so a resolver change on Kaggle's side can't silently swap them.
+# tracksdata==0.1.0rc6 is pre-1.0 and version-sensitive (see CLAUDE.md).
 #
-# numpy<2.4 is pinned deliberately: a first real run let pip's resolver
-# silently upgrade numpy to 2.4.6 to satisfy zarr/tracksdata, which broke
-# Kaggle's own pre-loaded compiled numpy extensions mid-import (real error:
-# "cannot import name '_center' from 'numpy._core.umath'" -- a self-
-# inconsistency inside numpy's own package after the partial upgrade).
-# Kaggle's pre-installed ydata-profiling already requires numpy<2.4 too, so
-# holding numpy back is compatible with the base image, not just a workaround.
+# --no-deps is deliberate and load-bearing, not an optimization: two real
+# runs showed pip's normal dependency resolution -- even WITH an explicit
+# numpy<2.4 constraint added -- silently reinstalls numpy in a way that
+# leaves it internally inconsistent (numpy's own strings.py importing names
+# from numpy._core.umath that the installed umath binary doesn't have).
+# Kaggle's base image already ships numpy/scipy/pandas current enough for
+# these packages' actual runtime needs; --no-deps stops pip from touching
+# them via transitive resolution at all. If a genuinely-missing transitive
+# dependency surfaces (not numpy/scipy), it needs to be added to this list
+# explicitly rather than removing --no-deps.
 if KAGGLE_MODE:
     import subprocess
     logger.info("Installing non-standard dependencies (tracksdata, zarr, geff, polars, dask, numcodecs)...")
     subprocess.run(
         [
-            sys.executable, "-m", "pip", "install", "-q",
-            "numpy<2.4,>=1.24.0",
+            sys.executable, "-m", "pip", "install", "-q", "--no-deps",
             "tracksdata==0.1.0rc6", "zarr>=3.0.0", "numcodecs>=0.11.0",
             "geff>=1.0.0", "polars", "dask",
         ],
