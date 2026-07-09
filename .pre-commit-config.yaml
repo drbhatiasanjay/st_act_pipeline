@@ -6,7 +6,7 @@ repos:
         entry: py -m ruff check
         language: system
         types: [python]
-        exclude: ^src/tracking_cellmot/
+        exclude: ^(src/tracking_cellmot/|kaggle_kernel/src/)
 
       - id: tracker-tests
         name: pytest tests/test_tracker.py (flow-conservation regression guard)

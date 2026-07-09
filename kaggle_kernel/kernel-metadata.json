@@ -1,7 +1,7 @@
 {
   "id": "drbhatiasanjay/st-act-gpu-smoke-test",
   "title": "ST ACT GPU Smoke Test",
-  "code_file": "smoketest.py",
+  "code_file": "train_kernel.py",
   "language": "python",
   "kernel_type": "script",
   "is_private": "true",

@@ -7,7 +7,6 @@ Sanity-check training: 3-5 epochs on full 199-sample train set.
 - Does NOT commit to full training yet; sanity-check first
 """
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -87,8 +86,8 @@ for key, val in HYPERPARAMS.items():
 # For local development: import from src/
 # For Kaggle: would need to copy src/ directory or inline the code
 try:
-    from src.model import UNet3D, SimpleNodeTransformer
     from src.dataset import CompetitionDataset
+    from src.model import SimpleNodeTransformer, UNet3D
     from src.train import TrainingLoop
     LOCAL_IMPORTS = True
 except ImportError:
@@ -107,18 +106,26 @@ logger.info(f"{'='*80}")
 data_split_file = Path("data_split.json")
 if not data_split_file.exists():
     logger.error(f"data_split.json not found at {data_split_file}")
-    raise FileNotFoundError(f"Missing data_split.json")
+    raise FileNotFoundError("Missing data_split.json")
 
 logger.info("Creating datasets...")
+# NOTE: KAGGLE_MODE's exact input subdirectory structure under INPUT_DIR
+# (e.g. INPUT_DIR/"train" vs INPUT_DIR itself) has NOT been verified against
+# the real Kaggle mount in this session -- smoketest.py's own docstring notes
+# a prior guessed path was wrong once already. Verify this path exists on
+# Kaggle (e.g. via a quick `os.listdir(INPUT_DIR)` in the actual kernel logs)
+# before trusting a full sanity-check run to use it correctly.
+train_data_dir = (INPUT_DIR / "train") if KAGGLE_MODE else Path("data/staging/train")
+logger.info(f"Using data_dir: {train_data_dir}")
 try:
     train_dataset = CompetitionDataset(
-        data_dir=Path("data/staging/train"),
+        data_dir=train_data_dir,
         split_file=data_split_file,
         split_type='train',
         normalize=True
     )
     val_dataset = CompetitionDataset(
-        data_dir=Path("data/staging/train"),
+        data_dir=train_data_dir,
         split_file=data_split_file,
         split_type='validation',
         normalize=True
@@ -173,7 +180,7 @@ training_loop = TrainingLoop(
     train_loader=train_loader,
     val_loader=val_loader,
     device=device,
-    data_dir=Path("data/staging/train"),
+    data_dir=train_data_dir,
     checkpoint_dir=str(checkpoint_dir),
     log_file=str(log_file),
     hyperparams=HYPERPARAMS,

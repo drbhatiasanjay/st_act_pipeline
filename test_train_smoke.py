@@ -10,7 +10,6 @@ Verifies that:
 6. Checkpoints are saved and loadable
 """
 
-import json
 import logging
 from pathlib import Path
 
@@ -42,18 +41,6 @@ def test_training_loop_smoke():
     data_dir = Path("data/staging/train")
     split_file = Path("data_split.json")
 
-    # Load split
-    with open(split_file) as f:
-        data_split = json.load(f)
-
-    # Use only the 4 staged samples
-    staged_samples = [
-        "44b6_0113de3b",  # train
-        "44b6_0b24845f",  # val
-        "6bba_05b6850b",  # train
-        "6bba_05db0fb1",  # train
-    ]
-
     # Create datasets
     logger.info("Creating datasets...")
     train_dataset = CompetitionDataset(
@@ -71,6 +58,16 @@ def test_training_loop_smoke():
 
     logger.info(f"Train dataset size: {len(train_dataset)}")
     logger.info(f"Val dataset size: {len(val_dataset)}")
+
+    # Smoke test = "quick, ~5 min" per 03-PLAN.md -- the full dataset (297
+    # train / 99 val pairs) reopens the Zarr store + reloads the .geff graph
+    # from scratch every single batch (no caching), ~20s/batch, so running it
+    # unsubset would take 2+ hours. Subset to a handful of real batches; this
+    # is a syntax/shape/loss-computation check, not a training run.
+    from torch.utils.data import Subset
+    train_dataset = Subset(train_dataset, list(range(min(5, len(train_dataset)))))
+    val_dataset = Subset(val_dataset, list(range(min(5, len(val_dataset)))))
+    logger.info(f"Subset for smoke test: train={len(train_dataset)}, val={len(val_dataset)}")
 
     # Create data loaders
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=False)
@@ -138,7 +135,11 @@ def test_training_loop_smoke():
     for key, val in val_metrics.items():
         logger.info(f"  {key}: {val:.6f}")
 
-    # Check checkpoint was saved
+    # Check checkpoint was saved. save_checkpoint() is only called from
+    # fit()'s per-epoch loop, not by train_epoch()/validate_epoch() directly
+    # (this smoke test calls those directly for granular verification) --
+    # call it explicitly to actually exercise what this assertion checks.
+    training_loop.save_checkpoint(1, val_metrics)
     checkpoint_dir = Path("checkpoints_smoke_test")
     checkpoints = list(checkpoint_dir.glob("epoch_*.pt"))
     assert len(checkpoints) > 0, "No checkpoints were saved!"
@@ -150,7 +151,10 @@ def test_training_loop_smoke():
     logger.info("✓ Checkpoint loaded successfully")
     logger.info(f"  Loaded metrics: {loaded_metrics}")
 
-    # Verify training log was created
+    # Verify training log was created. _log_epoch() (like save_checkpoint())
+    # is only called from fit()'s per-epoch loop, not by train_epoch()/
+    # validate_epoch() directly -- call it explicitly here too.
+    training_loop._log_epoch(1, train_loss, val_metrics)
     log_file = Path("training_log_smoke_test.csv")
     assert log_file.exists(), "Training log was not created!"
     with open(log_file) as f:
