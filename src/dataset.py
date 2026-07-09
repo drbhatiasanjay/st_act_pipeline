@@ -119,8 +119,8 @@ class CompetitionDataset(Dataset):
 
         Returns:
             {
-                "frame_t": (C, H, W) uint16 or float32,
-                "frame_t1": (C, H, W) uint16 or float32,
+                "frame_t": (C=1, Z=64, Y=256, X=256) float32, full 3D volume,
+                "frame_t1": (C=1, Z=64, Y=256, X=256) float32, full 3D volume,
                 "sample_id": str,
                 "t_idx": int (frame index for frame_t),
                 "metadata": {
@@ -146,13 +146,16 @@ class CompetitionDataset(Dataset):
         frame_t = frame_t.astype(np.float32)
         frame_t1 = frame_t1.astype(np.float32)
 
-        # Add channel dimension if missing (shape should be (Z, Y, X) -> (1, Y, X) by squeeze Z)
-        # The shape (Z, Y, X) is from load_timepoint_block, but we want (C, H, W) format
-        # For now, use as-is which will be (Z, Y, X)
+        # load_timepoint_block() returns (Z, Y, X) = (64, 256, 256). Add a leading
+        # channel dimension -> (1, Z, Y, X) = (1, 64, 256, 256), preserving the full
+        # 3D volume. Task 2.1's UNet3D needs the real Z depth, not a single slice --
+        # an earlier version of this code used frame_t[0:1, :, :] here, which SLICES
+        # axis 0 (Z) down to one plane instead of adding a new axis, silently
+        # discarding 63 of 64 Z-slices. Caught during plan verification, not by this
+        # file's own test (which logged shapes but never asserted them).
         if frame_t.ndim == 3:
-            # Squeeze Z dimension to get (Y, X), then add channel: (1, Y, X)
-            frame_t = frame_t[0:1, :, :]  # Take first Z slice and add channel
-            frame_t1 = frame_t1[0:1, :, :]
+            frame_t = frame_t[np.newaxis, :, :, :]
+            frame_t1 = frame_t1[np.newaxis, :, :, :]
 
         # Convert to torch
         frame_t = torch.from_numpy(frame_t).float()

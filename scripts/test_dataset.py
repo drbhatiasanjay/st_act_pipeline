@@ -101,12 +101,19 @@ def test_dataset():
                     )
                     logger.info(f"    Anisotropy: {metadata['anisotropy_ratio']}")
 
-                    # Verify shapes and dtypes
-                    assert frame_t.ndim == 3, (
-                        f"Expected 3D tensor, got {frame_t.ndim}D"
+                    # Verify shapes and dtypes -- exact shape, not just ndim. An
+                    # earlier version of this assertion only checked ndim==3, which
+                    # passed for BOTH the correct shape (if it had been 3D) and a
+                    # real bug that sliced away 63 of 64 Z-slices while producing a
+                    # shape that also happened to be 3D ((1,256,256) instead of the
+                    # full (1,64,256,256)). Asserting the exact expected shape here
+                    # is what actually catches that class of silent data-corruption bug.
+                    expected_shape = (1, 64, 256, 256)
+                    assert tuple(frame_t.shape) == expected_shape, (
+                        f"Expected frame_t shape {expected_shape}, got {tuple(frame_t.shape)}"
                     )
-                    assert frame_t1.ndim == 3, (
-                        f"Expected 3D tensor, got {frame_t1.ndim}D"
+                    assert tuple(frame_t1.shape) == expected_shape, (
+                        f"Expected frame_t1 shape {expected_shape}, got {tuple(frame_t1.shape)}"
                     )
                     assert frame_t.dtype in [torch.float32], (
                         f"Expected float32, got {frame_t.dtype}"
