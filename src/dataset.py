@@ -18,7 +18,7 @@ import torch
 import tracksdata
 from torch.utils.data import Dataset
 
-from data_loader import AnisotropicZarrLoader
+from src.data_loader import AnisotropicZarrLoader
 
 logger = logging.getLogger(__name__)
 

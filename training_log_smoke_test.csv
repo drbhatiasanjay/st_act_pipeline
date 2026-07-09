@@ -1,0 +1,1 @@
+epoch,train_loss,val_edge_jaccard,val_adjusted_edge_jaccard,val_division_jaccard,val_score,learning_rate
