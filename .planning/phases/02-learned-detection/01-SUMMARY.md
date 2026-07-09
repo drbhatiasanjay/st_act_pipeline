@@ -64,7 +64,7 @@ completed: 2026-07-09
 
 3. **Embryo-Disjoint Train/Val Split (Task 1.3)** — Partitioned 199 individual samples into 149 train / 50 validation, stratified by movie prefix to preserve (44b6: 53 train, 18 val) and (6bba: 96 train, 32 val) distributions. Per-sample granularity (not prefix level). No overlap verified. Seed=42 for reproducibility.
 
-4. **PyTorch Dataset Class (Task 1.4)** — Implemented `CompetitionDataset` (and scaffolded `AugmentedCompetitionDataset` for Wave 3) to load Zarr v3 volumes + .geff ground truth, produce (frame_t, frame_t+1) pairs, and propagate anisotropic metadata. Tested successfully on 4 locally-available real samples with proper shape/dtype/metadata verification.
+4. **PyTorch Dataset Class (Task 1.4)** — Implemented `CompetitionDataset` (and scaffolded `AugmentedCompetitionDataset` for Wave 3) to load Zarr v3 volumes + .geff ground truth, produce (frame_t, frame_t+1) pairs, and propagate anisotropic metadata. Tested on 4 locally-available real samples. **A critical shape bug was found during independent post-execution verification and fixed (commit a25fba1) — see Issues Encountered below** — the original implementation silently discarded 63/64 Z-slices; corrected and re-verified to produce the real (1,64,256,256) volume shape.
 
 ## Task Commits
 
@@ -88,8 +88,10 @@ completed: 2026-07-09
 4. **Task 1.4: Implement PyTorch Dataset Class** - c257f89 (feat: implement PyTorch Dataset class for competition data)
    - Files: `src/dataset.py` (CompetitionDataset + AugmentedCompetitionDataset), `scripts/test_dataset.py`
    - Tested on 4 locally-available real samples
-   - Verified shape, dtype, metadata propagation
    - Split filtering logic verified against data_split.json
+   - **Superseded by fix commit a25fba1** — original shape handling was wrong (see Issues
+     Encountered); this commit's own "shape verified" claim was not accurate at the time,
+     corrected in the follow-up commit
 
 **Plan metadata:** (Integrated into this summary; no separate metadata commit)
 
@@ -163,11 +165,31 @@ completed: 2026-07-09
 
 ## Deviations from Plan
 
-None — plan executed exactly as written after the two scope corrections documented in the plan itself (Task 1.2 enumeration-only vs. full extraction, Task 1.4 local-only vs. claiming full 199-sample validation).
+Executed as planned after the two scope corrections documented in the plan itself (Task 1.2
+enumeration-only vs. full extraction, Task 1.4 local-only vs. claiming full 199-sample
+validation). **One additional deviation found and fixed post-hoc, not planned:** see Issues
+Encountered below.
 
 ## Issues Encountered
 
-None. All I/O, Zarr, .geff parsing working end-to-end on the locally-available real competition data tested in this wave.
+**Critical shape bug found during independent post-execution verification (commit
+a25fba1), not caught by this wave's own testing.** `CompetitionDataset.__getitem__()`
+originally used `frame_t[0:1, :, :]` intending to add a channel dimension to the
+`(Z,Y,X)=(64,256,256)` volume returned by `load_timepoint_block()`. That actually **slices**
+axis 0 (Z) down to a single plane rather than adding a new leading axis — silently
+discarding 63 of 64 Z-slices while still producing a superficially-plausible
+3-dimensional `(1, 256, 256)` tensor. This wave's own test (`scripts/test_dataset.py`)
+originally asserted only `frame_t.ndim == 3`, which is true for both the bug's wrong output
+and the correct shape, so it reported "All tests PASSED" despite the corruption. This would
+have silently broken Wave 2's UNet3D training (which needs the real 3D volume, not a single
+Z-slice) with no crash or obvious symptom — exactly the class of bug this project has hit
+before (see `.claude/CLAUDE.md`'s "Facts that have already caused real bugs" section).
+
+**Fix:** `frame_t[np.newaxis, :, :, :]` adds a genuine new leading channel axis, producing
+the correct `(1, 64, 256, 256)` shape with full Z depth intact — verified directly.
+`scripts/test_dataset.py`'s assertion was also strengthened to check the exact expected
+shape, not just `ndim`, so this class of bug can't silently pass again. All wave-level
+Must-Haves re-verified against the corrected code.
 
 ## User Setup Required
 
