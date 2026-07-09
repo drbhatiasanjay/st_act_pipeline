@@ -1,0 +1,82 @@
+[
+  {
+    "sample_id": "44b6_0113de3b",
+    "heatmap_type": "point",
+    "edge_jaccard": 0.0,
+    "adjusted_edge_jaccard": 0.0,
+    "num_pred_nodes": 1125,
+    "num_gt_nodes": 3,
+    "total_candidates": 1125,
+    "elapsed_s": 83.86266708374023
+  },
+  {
+    "sample_id": "44b6_0113de3b",
+    "heatmap_type": "gaussian",
+    "edge_jaccard": 0.0,
+    "adjusted_edge_jaccard": 0.0,
+    "num_pred_nodes": 0,
+    "num_gt_nodes": 3,
+    "total_candidates": 0,
+    "elapsed_s": 65.22085642814636
+  },
+  {
+    "sample_id": "44b6_0b24845f",
+    "heatmap_type": "point",
+    "edge_jaccard": 0.0,
+    "adjusted_edge_jaccard": 0.0,
+    "num_pred_nodes": 0,
+    "num_gt_nodes": 15,
+    "total_candidates": 0,
+    "elapsed_s": 63.20293927192688
+  },
+  {
+    "sample_id": "44b6_0b24845f",
+    "heatmap_type": "gaussian",
+    "edge_jaccard": 0.0,
+    "adjusted_edge_jaccard": 0.0,
+    "num_pred_nodes": 622,
+    "num_gt_nodes": 15,
+    "total_candidates": 622,
+    "elapsed_s": 76.51080322265625
+  },
+  {
+    "sample_id": "6bba_05b6850b",
+    "heatmap_type": "point",
+    "edge_jaccard": 0.0,
+    "adjusted_edge_jaccard": 0.0,
+    "num_pred_nodes": 1125,
+    "num_gt_nodes": 98,
+    "total_candidates": 1125,
+    "elapsed_s": 79.9947259426117
+  },
+  {
+    "sample_id": "6bba_05b6850b",
+    "heatmap_type": "gaussian",
+    "edge_jaccard": 0.0,
+    "adjusted_edge_jaccard": 0.0,
+    "num_pred_nodes": 0,
+    "num_gt_nodes": 98,
+    "total_candidates": 0,
+    "elapsed_s": 66.33655214309692
+  },
+  {
+    "sample_id": "6bba_05db0fb1",
+    "heatmap_type": "point",
+    "edge_jaccard": 0.0,
+    "adjusted_edge_jaccard": 0.0,
+    "num_pred_nodes": 0,
+    "num_gt_nodes": 121,
+    "total_candidates": 0,
+    "elapsed_s": 60.16994261741638
+  },
+  {
+    "sample_id": "6bba_05db0fb1",
+    "heatmap_type": "gaussian",
+    "edge_jaccard": 0.0,
+    "adjusted_edge_jaccard": 0.0,
+    "num_pred_nodes": 1021,
+    "num_gt_nodes": 121,
+    "total_candidates": 1021,
+    "elapsed_s": 91.62339305877686
+  }
+]

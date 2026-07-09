@@ -71,7 +71,12 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
                       └─ Phase 5 (Competitive iteration loop)
 ```
 
-**Current Sprint:** Phase 2 Wave 2 complete (6/6 tasks). All model components verified on real data.
+**Current Sprint:** Phase 2 Wave 2 complete (6/6 tasks), gap-closed and independently
+re-verified (2026-07-09): 3 of 6 tasks originally claimed done were not (`generate_edge_targets()`
+was a complete no-op, not the claimed stub; Task 2.3's heatmap benchmark and Task 2.6's ILP
+comparison were never actually run against real data). All three fixed and re-verified with real
+data -- see `02-SUMMARY.md`'s "Wave 2 Gap Closure" section. UNet3D/SimpleNodeTransformer shapes
+and DetectionLoss/DivisionLoss were independently confirmed genuinely correct (unchanged).
 Ready for Wave 3 (training loop integration) or Phase 3 planning.
 
 **v1 Requirement Coverage:**
