@@ -105,12 +105,21 @@ for key, val in HYPERPARAMS.items():
 # tracksdata==0.1.0rc6 is pre-1.0 and version-sensitive (see CLAUDE.md);
 # geff/polars are pulled in as its transitive deps but pinned explicitly
 # here too so a resolver change on Kaggle's side can't silently swap them.
+#
+# numpy<2.4 is pinned deliberately: a first real run let pip's resolver
+# silently upgrade numpy to 2.4.6 to satisfy zarr/tracksdata, which broke
+# Kaggle's own pre-loaded compiled numpy extensions mid-import (real error:
+# "cannot import name '_center' from 'numpy._core.umath'" -- a self-
+# inconsistency inside numpy's own package after the partial upgrade).
+# Kaggle's pre-installed ydata-profiling already requires numpy<2.4 too, so
+# holding numpy back is compatible with the base image, not just a workaround.
 if KAGGLE_MODE:
     import subprocess
     logger.info("Installing non-standard dependencies (tracksdata, zarr, geff, polars, dask, numcodecs)...")
     subprocess.run(
         [
             sys.executable, "-m", "pip", "install", "-q",
+            "numpy<2.4,>=1.24.0",
             "tracksdata==0.1.0rc6", "zarr>=3.0.0", "numcodecs>=0.11.0",
             "geff>=1.0.0", "polars", "dask",
         ],
