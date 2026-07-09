@@ -1,6 +1,6 @@
 # Project State: ST-ACT — Spatio-Temporal Anisotropic Cell Tracker
 
-**Last Updated:** 2026-07-04
+**Last Updated:** 2026-07-09
 
 ---
 
@@ -31,7 +31,9 @@
 must-haves, 60/60 tests passing). Phase 1 (Baseline Parity) — ATTEMPTED, exit criterion NOT
 MET (2026-07-08): real peak-finding shipped and verified working, local score reached
 0.0259 (up from 0.0092), still far below the 0.763 baseline. Root cause quantified, not
-hidden — see `01-SUMMARY.md`. Ready to plan Phase 2.
+hidden — see `01-SUMMARY.md`. Phase 2 (Learned Detection), Wave 1 — ✓ IN PROGRESS (2026-07-05 to 2026-07-09):
+Normalization locked (Option A), full 199-sample dataset enumerated (no extraction), train/val split built (149/50),
+PyTorch Dataset class implemented. Ready for Wave 2 training infrastructure.
 
 **Phase Structure:**
 ```
@@ -48,11 +50,15 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
        ├─ Motion-vector bug fixed (was nonzero constant, now correctly zero) -- DONE
        ├─ MAX_CANDIDATES_PER_TIMEPOINT raised 30->75 (profiled safe with SCIP) -- DONE
        └─ Score: 0.0092 -> 0.0153 -> 0.0259 -- still far below 0.763 baseline
-  └─ Phase 2 (Learned detection) -- READY TO PLAN (carries forward Phase 1's finding:
-       real detection precision, not just peak-finding, is required)
-       └─ Phase 3 (Scale & correctness) -- carries forward real ILP scaling profile data
-            └─ Phase 4 (Metric-directed tuning)
-                 └─ Phase 5 (Competitive iteration loop)
+  └─ Phase 2 (Learned detection) -- WAVE 1 IN PROGRESS 2026-07-05 to 2026-07-09
+       ├─ ✓ Task 1.1: Normalization benchmark (Option A locked in)
+       ├─ ✓ Task 1.2: Dataset enumeration (199 samples, no extraction)
+       ├─ ✓ Task 1.3: Train/val split (149/50, stratified)
+       ├─ ✓ Task 1.4: PyTorch Dataset class (tested on real data)
+       └─ Wave 2: Training infrastructure (ready to plan)
+            └─ Phase 3 (Scale & correctness) -- carries forward real ILP scaling profile data
+                 └─ Phase 4 (Metric-directed tuning)
+                      └─ Phase 5 (Competitive iteration loop)
 ```
 
 **Current Sprint:** Phase 1 attempted and honestly closed out (see `01-SUMMARY.md`). Next:
@@ -92,21 +98,47 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
 
 ### Decisions
 
-1. **Phase structure mirrors PRD § 8 exactly.** PRD's 6-phase roadmap is well-formed and aligns with requirements; no reordering or restructuring needed. All phases 0–5 included in v1 roadmap.
+**NEW 2026-07-09 (Phase 2, Wave 1 execution):**
 
-2. **PyTorch + MONAI chosen over Keras 3/JAX.** Framework selection rationale: ecosystem maturity for 3D biomedical volumes (sliding-window inference, anisotropic augmentations) outweighs JAX's framework-purity; GPU (not TPU) is the compute plan. Noted in REQUIREMENTS.md Out of Scope section.
+1. **Normalization approach locked: Option A (existing [0,1]-clipped zarr-quantile).** Empirical benchmark
+   (Task 1.1) across 4 real samples (2×44b6, 2×6bba) compared Option A (current) vs. Option B (host's
+   [0,4.0]-clipped self-computed). Option A wins: already implemented, Phase 1 peak-finding was tuned
+   against it, switching would require expensive threshold recalibration with no demonstrated benefit.
+   Enables Wave 2 to proceed without additional tuning cost.
 
-3. **Local evaluation harness is critical to competition success.** Every model/tracker change must be validated against local harness (edge Jaccard + division Jaccard on held-out embryos) before a Kaggle submission is spent; submissions are scarce and rate-limited.
+2. **Dataset enumeration without full local extraction.** Task 1.2 confirmed 199 samples directly from zip,
+   stratified by prefix (44b6=71, 6bba=128), spot-checked 5 random samples (5/5 passed Zarr v3 format
+   + .geff parsability). Aligns with CONTEXT.md locked decision: no local extraction (~80GB + 1-2h waste).
+   Full 199-sample I/O validation deferred to Wave 3 Kaggle sanity-check run (where dataset mounted).
 
-4. **Overfitting to ~29% public slice is a known risk.** Mitigated by always validating primarily against held-out train embryos with real `.geff` ground truth (not just public leaderboard feedback). Phase 5 includes monitoring for local-vs-public divergence.
+3. **Per-sample split granularity (not movie-prefix level).** Task 1.3 partitioned 199 samples into 149
+   train / 50 validation at per-sample granularity, stratified by prefix. Per RESEARCH.md S2.3: "embryo"
+   means individual sample ID, not movie prefix. Both sets draw from both 44b6 and 6bba.
 
-5. **Kaggle setup (API + GPU kernel) is parallel work.** Phase 0 and Phase 1 do NOT depend on this (local development). Phase 2 (model training) DOES depend on it being complete. This is tracked separately in `../st_act_pipeline-kaggle-setup` branch; no blocking dependency for immediate Phase 0 work.
+4. **Dataset testing scope: local-available samples only, full validation deferred to Wave 3.** Task 1.4
+   tested CompetitionDataset against 4 locally-staged + up-to-5 spot-checked samples (~9 total), verified
+   shape/dtype/metadata correctness and split-filtering logic. Full 199-sample I/O validation only makes
+   sense when Kaggle dataset mounted; this phase validates *correctness*, not end-to-end coverage.
 
-6. **Phase 0, Plan 00 executed 2026-07-03 (COMPLETE).** Successfully vendored `metrics.py`, `division_metrics.py`, and `io.py` from `royerlab/kaggle-cell-tracking-competition` via raw GitHub URLs (git clone unavailable in execution environment; fallback to HTTP fetch). Three commits created (1e3fabd, c6249bb, b710b1d); SUMMARY.md written. Scoring code now trusted dependency, ready for downstream plans (02, 04, 05).
+---
 
-7. **Phase 0, Plan 01 executed 2026-07-03 (COMPLETE).** Fixed AnisotropicZarrLoader to correctly load Zarr v3 OME-NGFF format and apply correct physical anisotropy (4.0, 1.0, 1.0) Z:Y:X (not hardcoded 5.0). This bug affected both real data paths and simulated fallback. Real data tests now pass on staged training data (44b6_0113de3b.zarr and siblings). Data loader ready for tracker and model pipeline in Phase 1.
+**PREVIOUS DECISIONS (from Phase 0/1):**
 
-8. **Phase 0, Plan 02 executed 2026-07-03 (COMPLETE).** Implemented local evaluation harness (`src/evaluation.py`, 226 lines) with clean API: `evaluate_submission(pred_graphs, gt_graphs, scale, max_distance, gt_metadata)`. Provides: micro-averaged edge Jaccard (via `tracksdata.evaluate_datasets()`), division Jaccard (via vendored `evaluate_divisions()`), node-count adjustment formula (`J_adj = max(0, J * (1 - 0.1 * (T_pred - T_true) / T_true))`), and combined score. Correctly drops division term when no GT divisions exist (not `+0`). Helpers: `load_geff_ground_truth()` and `load_gt_for_dataset()`. Unit tests (pytest + standalone runner) created; use real staged .geff data (52+ nodes per sample). Ready for Plan 04 (pipeline wiring) and all downstream submission validation.
+5. **Phase structure mirrors PRD § 8 exactly.** PRD's 6-phase roadmap is well-formed and aligns with requirements; no reordering or restructuring needed. All phases 0–5 included in v1 roadmap.
+
+6. **PyTorch + MONAI chosen over Keras 3/JAX.** Framework selection rationale: ecosystem maturity for 3D biomedical volumes (sliding-window inference, anisotropic augmentations) outweighs JAX's framework-purity; GPU (not TPU) is the compute plan. Noted in REQUIREMENTS.md Out of Scope section.
+
+7. **Local evaluation harness is critical to competition success.** Every model/tracker change must be validated against local harness (edge Jaccard + division Jaccard on held-out embryos) before a Kaggle submission is spent; submissions are scarce and rate-limited.
+
+8. **Overfitting to ~29% public slice is a known risk.** Mitigated by always validating primarily against held-out train embryos with real `.geff` ground truth (not just public leaderboard feedback). Phase 5 includes monitoring for local-vs-public divergence.
+
+9. **Kaggle setup (API + GPU kernel) is parallel work.** Phase 0 and Phase 1 do NOT depend on this (local development). Phase 2 (model training) DOES depend on it being complete. This is tracked separately in `../st_act_pipeline-kaggle-setup` branch; no blocking dependency for immediate Phase 0 work.
+
+10. **Phase 0, Plan 00 executed 2026-07-03 (COMPLETE).** Successfully vendored `metrics.py`, `division_metrics.py`, and `io.py` from `royerlab/kaggle-cell-tracking-competition` via raw GitHub URLs (git clone unavailable in execution environment; fallback to HTTP fetch). Three commits created (1e3fabd, c6249bb, b710b1d); SUMMARY.md written. Scoring code now trusted dependency, ready for downstream plans (02, 04, 05).
+
+11. **Phase 0, Plan 01 executed 2026-07-03 (COMPLETE).** Fixed AnisotropicZarrLoader to correctly load Zarr v3 OME-NGFF format and apply correct physical anisotropy (4.0, 1.0, 1.0) Z:Y:X (not hardcoded 5.0). This bug affected both real data paths and simulated fallback. Real data tests now pass on staged training data (44b6_0113de3b.zarr and siblings). Data loader ready for tracker and model pipeline in Phase 1.
+
+12. **Phase 0, Plan 02 executed 2026-07-03 (COMPLETE).** Implemented local evaluation harness (`src/evaluation.py`, 226 lines) with clean API: `evaluate_submission(pred_graphs, gt_graphs, scale, max_distance, gt_metadata)`. Provides: micro-averaged edge Jaccard (via `tracksdata.evaluate_datasets()`), division Jaccard (via vendored `evaluate_divisions()`), node-count adjustment formula (`J_adj = max(0, J * (1 - 0.1 * (T_pred - T_true) / T_true))`), and combined score. Correctly drops division term when no GT divisions exist (not `+0`). Helpers: `load_geff_ground_truth()` and `load_gt_for_dataset()`. Unit tests (pytest + standalone runner) created; use real staged .geff data (52+ nodes per sample). Ready for Plan 04 (pipeline wiring) and all downstream submission validation.
 
 ### Pending Todos
 
@@ -197,7 +229,8 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
 ## Session Continuity
 
 **Session Start:** 2026-07-03 (roadmap creation)  
-**Session Update:** 2026-07-08 (Phase 1 attempted and honestly closed out, exit criterion not met, ready for Phase 2)
+**Session Update:** 2026-07-08 (Phase 1 attempted and honestly closed out, exit criterion not met, ready for Phase 2)  
+**Session Update:** 2026-07-09 (Phase 2 Wave 1 executed and complete)
 
 **Completed 2026-07-05 to 2026-07-08 (Phase 1, plus carried-over tooling from 2026-07-04):**
 - CBC->SCIP ILP solver swap in `src/tracker.py` (11.7x real-data speedup, verified score-identical)
@@ -280,7 +313,9 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
 
 ---
 
-**Last update:** 2026-07-08 — Phase 1 (Baseline Parity) attempted and honestly closed out;
-exit criterion not met (score 0.0259 vs 0.763 baseline), root cause quantified, ready for
-Phase 2 planning.
-**Next step:** `/gsd:discuss-phase 2` (Learned Detection)
+**Last update:** 2026-07-09 — Phase 2 Wave 1 (Infrastructure & Decisions) complete:
+- Normalization locked (Option A)
+- Full 199-sample dataset enumerated (no extraction)
+- Train/val split built (149/50, stratified by prefix)
+- PyTorch Dataset class implemented and tested on real data
+**Next step:** Phase 2 Wave 2 (Training Infrastructure) ready to plan/execute
