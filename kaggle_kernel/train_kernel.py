@@ -126,11 +126,18 @@ if KAGGLE_MODE:
     # (heavier, solver-binding-adjacent -- add only if actually needed, since
     # tracksdata's own ILP tracker isn't used here, only its graph/geff I/O
     # and metric functions per this project's established usage).
+    #
+    # polars pinned to >=1.36.0 (tracksdata's real declared requirement, not
+    # a guess): a bare "polars" with no version constraint let pip treat an
+    # already-installed older polars as "satisfied" and skip reinstalling it
+    # (--no-deps means pip won't upgrade an unconstrained already-present
+    # package), and that old polars lacks the Float16 dtype tracksdata's own
+    # internals reference -- confirmed by a real run's AttributeError.
     subprocess.run(
         [
             sys.executable, "-m", "pip", "install", "-q", "--no-deps",
             "tracksdata==0.1.0rc6", "zarr>=3.0.0", "numcodecs>=0.11.0",
-            "geff>=1.0.0", "geff-spec", "polars", "dask",
+            "geff>=1.0.0", "geff-spec", "polars>=1.36.0", "dask",
             "bidict", "rustworkx", "psygnal", "donfig", "google-crc32c", "typer",
         ],
         check=True,
