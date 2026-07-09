@@ -9,11 +9,19 @@ Sanity-check training: 3-5 epochs on full 199-sample train set.
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+
+# Kaggle script kernels execute from a Kaggle-internal path (e.g.
+# /kaggle/src/script.py) where the script's own directory is NOT
+# automatically on sys.path the way `python script.py` from a shell is --
+# confirmed by a real push failing with "ModuleNotFoundError: No module
+# named 'src'" despite kaggle_kernel/src/ being bundled alongside this file.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Configure logging
 logging.basicConfig(
