@@ -293,25 +293,28 @@ class TrainingLoop:
 
             # === DETECTION LOSS (teacher forcing) ===
             # Generate real GT heatmap targets
-            volume_shape = (1,) + frame_t.shape[2:]  # (1, Z, Y, X)
+            # frame_t shape is (1, Z, Y, X), we need (T, Z, Y, X) for generate_heatmap_targets
+            z, y, x = frame_t.shape[2:]
+            volume_shape = (1, z, y, x)  # (T=1, Z, Y, X) - just one timepoint for this pair
             try:
                 heatmap_targets_dict, _ = generate_heatmap_targets(
                     sample_id,
                     str(self.data_dir / f"{sample_id}.geff"),
-                    (1,) + volume_shape,
+                    volume_shape,
                     target_type='gaussian'
                 )
-                # Get frame 0 (frame_t) heatmap
-                heatmap_target = heatmap_targets_dict.get(t_idx, torch.zeros(volume_shape, dtype=torch.float32))
+                # Get frame 0 (frame_t) heatmap - it's (1, Z, Y, X)
+                heatmap_target = heatmap_targets_dict.get(t_idx, torch.zeros((1, z, y, x), dtype=torch.float32))
                 if not isinstance(heatmap_target, torch.Tensor):
                     heatmap_target = torch.from_numpy(heatmap_target).float()
                 heatmap_target = heatmap_target.to(self.device)
             except Exception as e:
                 logger.warning(f"Heatmap generation failed for {sample_id}: {e}, using zero targets")
                 self.epoch_fallback_counts['heatmap_generation_failure'] += 1
-                heatmap_target = torch.zeros((1,) + volume_shape, dtype=torch.float32, device=self.device)
+                heatmap_target = torch.zeros((1, z, y, x), dtype=torch.float32, device=self.device)
 
-            detection_loss = self.detection_loss_fn(logits, heatmap_target.unsqueeze(0))
+            # detection_loss expects (B, 1, Z, Y, X) for both logits and targets
+            detection_loss = self.detection_loss_fn(logits, heatmap_target)
 
             # === EDGE LOSS (teacher forcing) ===
             edge_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
