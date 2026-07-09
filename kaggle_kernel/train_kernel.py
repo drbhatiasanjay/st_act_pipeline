@@ -144,7 +144,15 @@ if KAGGLE_MODE:
             # never calls tracksdata's own ILP solver (only its graph/geff I/O
             # and metric functions) -- confirmed required by a real run's
             # ModuleNotFoundError, so it can't be skipped as originally assumed.
-            "ilpy",
+            # ilpy itself requires pyscipopt (checked via
+            # importlib.metadata.requires('ilpy') locally, not a guess).
+            "ilpy", "pyscipopt",
+            # blosc2 is in requirements.txt for real (Zarr v3 compression
+            # codec) but was missed from earlier install rounds -- a full
+            # recursive scan of tracksdata's package source for every
+            # third-party top-level import (not just following one
+            # ModuleNotFoundError at a time) confirmed it's referenced.
+            "blosc2>=2.0.0",
         ],
         check=True,
     )
