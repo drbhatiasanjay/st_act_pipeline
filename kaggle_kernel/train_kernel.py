@@ -116,12 +116,22 @@ for key, val in HYPERPARAMS.items():
 # explicitly rather than removing --no-deps.
 if KAGGLE_MODE:
     import subprocess
-    logger.info("Installing non-standard dependencies (tracksdata, zarr, geff, polars, dask, numcodecs)...")
+    logger.info("Installing non-standard dependencies...")
+    # --no-deps means transitive deps must be listed explicitly. Real full
+    # dependency tree checked locally (importlib.metadata.requires) for
+    # tracksdata/geff/zarr; geff-spec confirmed missing by a real Kaggle run
+    # (ModuleNotFoundError: No module named 'geff_spec'). bidict/rustworkx/
+    # psygnal/donfig/google-crc32c/typer are niche enough to be unlikely on
+    # Kaggle's base image; ilpy/imagecodecs deliberately omitted for now
+    # (heavier, solver-binding-adjacent -- add only if actually needed, since
+    # tracksdata's own ILP tracker isn't used here, only its graph/geff I/O
+    # and metric functions per this project's established usage).
     subprocess.run(
         [
             sys.executable, "-m", "pip", "install", "-q", "--no-deps",
             "tracksdata==0.1.0rc6", "zarr>=3.0.0", "numcodecs>=0.11.0",
-            "geff>=1.0.0", "polars", "dask",
+            "geff>=1.0.0", "geff-spec", "polars", "dask",
+            "bidict", "rustworkx", "psygnal", "donfig", "google-crc32c", "typer",
         ],
         check=True,
     )
