@@ -122,36 +122,50 @@ class SimpleNodeTransformer(nn.Module):
     - Dropout: 0.3
 
     Predicts edge probabilities between detected nodes in consecutive frames.
+    Processes node embeddings through transformer encoders, then scores edges
+    by concatenating attended feature pairs.
     """
 
     def __init__(self, hidden_dim=128, num_heads=4, num_blocks=4, dropout=0.3,
-                 feature_dim=32, max_nodes=1000):
+                 feature_dim=128):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.num_blocks = num_blocks
-        self.feature_dim = feature_dim
-        self.max_nodes = max_nodes
 
-        # Node embedding: coordinates (3) + positional encoding (8*3) + features (feature_dim)
-        node_input_dim = 3 + 8*3 + feature_dim  # 27 + feature_dim
+        # Node embedding: coordinates (3) + sinusoidal PE (8*3=24) + UNet features (feature_dim)
+        # Total input: 3 + 24 + feature_dim
+        node_input_dim = 3 + 24 + feature_dim
 
         # Project node embeddings to hidden dimension
         self.node_embed = nn.Linear(node_input_dim, hidden_dim)
 
-        # Transformer encoder for each frame's nodes
-        self.encoder_layers = nn.ModuleList([
-            self._transformer_block(hidden_dim, num_heads, dropout)
-            for _ in range(num_blocks)
-        ])
+        # Self-attention transformer encoders for each frame
+        self.encoder_t = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=hidden_dim,
+                nhead=num_heads,
+                dim_feedforward=hidden_dim * 4,
+                dropout=dropout,
+                batch_first=True,
+                activation='relu'
+            ),
+            num_layers=num_blocks
+        )
 
-        # Cross-attention for edge prediction
-        self.cross_attn_layers = nn.ModuleList([
-            nn.MultiheadAttention(hidden_dim, num_heads, dropout=dropout, batch_first=True)
-            for _ in range(num_blocks)
-        ])
+        self.encoder_t1 = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=hidden_dim,
+                nhead=num_heads,
+                dim_feedforward=hidden_dim * 4,
+                dropout=dropout,
+                batch_first=True,
+                activation='relu'
+            ),
+            num_layers=num_blocks
+        )
 
-        # Edge scoring head
+        # Edge scoring MLP: concatenated features -> probability
         self.edge_scorer = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.ReLU(),
@@ -161,18 +175,6 @@ class SimpleNodeTransformer(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_dim // 2, 1),
             nn.Sigmoid()
-        )
-
-    @staticmethod
-    def _transformer_block(hidden_dim, num_heads, dropout):
-        """Single transformer encoder block."""
-        return nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=num_heads,
-            dim_feedforward=hidden_dim * 4,
-            dropout=dropout,
-            batch_first=True,
-            activation='relu'
         )
 
     @staticmethod
@@ -198,8 +200,8 @@ class SimpleNodeTransformer(nn.Module):
         Args:
             nodes_t: (n_t, 3) node coordinates [z, y, x] at frame t
             nodes_t1: (n_t1, 3) node coordinates [z, y, x] at frame t+1
-            features_t: (n_t, feature_dim) node features at frame t
-            features_t1: (n_t1, feature_dim) node features at frame t+1
+            features_t: (n_t, 128) node features from UNet at frame t
+            features_t1: (n_t1, 128) node features from UNet at frame t+1
             candidate_edges: Optional (n_candidates, 2) edge indices to score
                             If None, score all possible edges
 
@@ -210,32 +212,26 @@ class SimpleNodeTransformer(nn.Module):
         n_t = nodes_t.shape[0]
         n_t1 = nodes_t1.shape[0]
 
-        # Generate sinusoidal positional encoding for coordinates
-        pe_dim = 8  # 8 per axis = 24 dims total for 3D coordinates
+        if n_t == 0 or n_t1 == 0:
+            # Handle empty node sets
+            return torch.tensor([], dtype=torch.float32, device=device)
+
+        # Generate sinusoidal positional encoding (24 dims for 3 axes x 8)
+        pe_dim = 8
         pos_enc_t = self.sinusoidal_positional_encoding(n_t, pe_dim * 3).to(device)
         pos_enc_t1 = self.sinusoidal_positional_encoding(n_t1, pe_dim * 3).to(device)
 
-        # Concatenate coordinates + positional encoding + features
-        nodes_t_emb = torch.cat([
-            nodes_t,
-            pos_enc_t,
-            features_t
-        ], dim=1)  # (n_t, 3 + 24 + feature_dim)
-
-        nodes_t1_emb = torch.cat([
-            nodes_t1,
-            pos_enc_t1,
-            features_t1
-        ], dim=1)  # (n_t1, 3 + 24 + feature_dim)
+        # Concatenate coordinates + positional encoding + UNet features
+        nodes_t_emb = torch.cat([nodes_t, pos_enc_t, features_t], dim=1)  # (n_t, 3+24+128)
+        nodes_t1_emb = torch.cat([nodes_t1, pos_enc_t1, features_t1], dim=1)  # (n_t1, 3+24+128)
 
         # Project to hidden dimension
         nodes_t_h = self.node_embed(nodes_t_emb)  # (n_t, hidden_dim)
         nodes_t1_h = self.node_embed(nodes_t1_emb)  # (n_t1, hidden_dim)
 
-        # Apply transformer encoder blocks
-        for encoder_layer in self.encoder_layers:
-            nodes_t_h = encoder_layer(nodes_t_h.unsqueeze(0)).squeeze(0)  # (n_t, hidden_dim)
-            nodes_t1_h = encoder_layer(nodes_t1_h.unsqueeze(0)).squeeze(0)  # (n_t1, hidden_dim)
+        # Apply transformer encoders (with batch dimension for transformer)
+        nodes_t_h = self.encoder_t(nodes_t_h.unsqueeze(0)).squeeze(0)  # (n_t, hidden_dim)
+        nodes_t1_h = self.encoder_t1(nodes_t1_h.unsqueeze(0)).squeeze(0)  # (n_t1, hidden_dim)
 
         # Generate candidate edges if not provided
         if candidate_edges is None:
@@ -248,28 +244,19 @@ class SimpleNodeTransformer(nn.Module):
         else:
             candidate_edges = candidate_edges.to(device)
 
-        # Cross-attention and edge scoring
+        # Score all candidate edges
         edge_probs = []
-        for _idx, (i, j) in enumerate(candidate_edges):
-            # Get node embeddings
-            node_t_feat = nodes_t_h[i:i+1]  # (1, hidden_dim)
-            node_t1_feat = nodes_t1_h[j:j+1]  # (1, hidden_dim)
-
-            # Apply cross-attention
-            for cross_attn_layer in self.cross_attn_layers:
-                attn_out, _ = cross_attn_layer(
-                    node_t_feat,  # query
-                    node_t1_feat.expand(n_t1, -1).unsqueeze(0),  # key/value
-                    node_t1_feat.expand(n_t1, -1).unsqueeze(0)
-                )
-                node_t_feat = attn_out
+        for i, j in candidate_edges:
+            # Get attended node features
+            feat_t = nodes_t_h[i]  # (hidden_dim,)
+            feat_t1 = nodes_t1_h[j]  # (hidden_dim,)
 
             # Concatenate and score
-            edge_feat = torch.cat([node_t_feat, node_t1_feat], dim=-1)  # (1, hidden_dim*2)
-            prob = self.edge_scorer(edge_feat)  # (1, 1)
+            edge_feat = torch.cat([feat_t, feat_t1])  # (hidden_dim*2,)
+            prob = self.edge_scorer(edge_feat.unsqueeze(0))  # (1, 1)
             edge_probs.append(prob.squeeze())
 
-        return torch.stack(edge_probs) if edge_probs else torch.tensor([], device=device)
+        return torch.stack(edge_probs) if edge_probs else torch.tensor([], dtype=torch.float32, device=device)
 
 
 class AnisotropicCoordinateTransformer(nn.Module):
