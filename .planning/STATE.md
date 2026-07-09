@@ -52,19 +52,27 @@ Phase 0 (Unblock) -- ✓ COMPLETE 2026-07-04
        ├─ Motion-vector bug fixed (was nonzero constant, now correctly zero) -- DONE
        ├─ MAX_CANDIDATES_PER_TIMEPOINT raised 30->75 (profiled safe with SCIP) -- DONE
        └─ Score: 0.0092 -> 0.0153 -> 0.0259 -- still far below 0.763 baseline
-  └─ Phase 2 (Learned detection) -- WAVE 1 IN PROGRESS 2026-07-05 to 2026-07-09
-       ├─ ✓ Task 1.1: Normalization benchmark (Option A locked in)
-       ├─ ✓ Task 1.2: Dataset enumeration (199 samples, no extraction)
-       ├─ ✓ Task 1.3: Train/val split (149/50, stratified)
-       ├─ ✓ Task 1.4: PyTorch Dataset class (tested on real data)
-       └─ Wave 2: Training infrastructure (ready to plan)
+  └─ Phase 2 (Learned detection)
+       ├─ ✓ Wave 1 (Data & infrastructure): 2026-07-05 to 2026-07-09
+       │  ├─ ✓ Task 1.1: Normalization benchmark (Option A locked in)
+       │  ├─ ✓ Task 1.2: Dataset enumeration (199 samples, no extraction)
+       │  ├─ ✓ Task 1.3: Train/val split (149/50, stratified)
+       │  ├─ ✓ Task 1.4: PyTorch Dataset class (tested on real data)
+       │  └─ Critical bug fix: CompetitionDataset shape assertion (63/64 Z-slices)
+       └─ ✓ Wave 2 (Model architecture): 2026-07-09, 16 minutes
+          ├─ ✓ Task 2.1: UNet3D backbone
+          ├─ ✓ Task 2.2: SimpleNodeTransformer
+          ├─ ✓ Task 2.3: Heatmap targets (Gaussian winner)
+          ├─ ✓ Task 2.4: Edge targets & loss functions
+          ├─ ✓ Task 2.5: Test-time augmentation
+          └─ ✓ Task 2.6: Greedy edge assignment
             └─ Phase 3 (Scale & correctness) -- carries forward real ILP scaling profile data
                  └─ Phase 4 (Metric-directed tuning)
                       └─ Phase 5 (Competitive iteration loop)
 ```
 
-**Current Sprint:** Phase 1 attempted and honestly closed out (see `01-SUMMARY.md`). Next:
-`/gsd:discuss-phase 2` (or `/gsd:plan-phase 2` directly).
+**Current Sprint:** Phase 2 Wave 2 complete (6/6 tasks). All model components verified on real data.
+Ready for Wave 3 (training loop integration) or Phase 3 planning.
 
 **v1 Requirement Coverage:**
 - Total v1 requirements: 20
