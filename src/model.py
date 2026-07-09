@@ -1,6 +1,275 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class UNet3D(nn.Module):
+    """
+    3D U-Net for cell detection in anisotropic volumetric data.
+
+    Architecture:
+    - Input: (B, 2, 64, 256, 256) [batch, channels=2 (two frames concatenated), z, y, x]
+    - Channels: [32, 64, 128] (from host reference implementation)
+    - Downsample strides: (1, 4, 4) - Z untouched, Y/X downsampled 4x
+    - Output logits: (B, 1, 64, 256, 256) per-voxel detection [0,1]
+    - Output features: (B, 128, 64, 256, 256) dense feature maps for transformer
+
+    Uses asymmetric kernels (1,3,3) on Z to preserve Z resolution.
+    """
+
+    def __init__(self, in_channels=2, channels=(32, 64, 128), anisotropy_stride=(1, 4, 4)):
+        super().__init__()
+        self.in_channels = in_channels
+        self.channels = channels
+        self.anisotropy_stride = anisotropy_stride
+
+        # Encoder blocks with anisotropic downsampling
+        # Level 0: input (B, 2, 64, 256, 256) -> (B, 32, 64, 256, 256)
+        self.enc0 = self._conv_block(in_channels, channels[0], kernel=(1, 3, 3), padding=(0, 1, 1))
+
+        # Downsample to Level 1: (B, 32, 64, 256, 256) -> (B, 64, 64, 64, 64)
+        self.pool1 = nn.AvgPool3d(kernel_size=(1, 4, 4), stride=(1, 4, 4))
+        self.enc1 = self._conv_block(channels[0], channels[1], kernel=(1, 3, 3), padding=(0, 1, 1))
+
+        # Downsample to Level 2: (B, 64, 64, 64, 64) -> (B, 128, 64, 16, 16)
+        self.pool2 = nn.AvgPool3d(kernel_size=(1, 4, 4), stride=(1, 4, 4))
+        self.enc2 = self._conv_block(channels[1], channels[2], kernel=(1, 3, 3), padding=(0, 1, 1))
+
+        # Bottleneck: (B, 128, 64, 16, 16)
+        self.bottleneck = self._conv_block(channels[2], channels[2], kernel=(1, 3, 3), padding=(0, 1, 1))
+
+        # Decoder with skip connections
+        # Upsample from Level 2 to Level 1
+        self.up2 = nn.Upsample(scale_factor=(1, 4, 4), mode='nearest')
+        self.dec2 = self._conv_block(channels[2] + channels[1], channels[1], kernel=(1, 3, 3), padding=(0, 1, 1))
+
+        # Upsample from Level 1 to Level 0
+        self.up1 = nn.Upsample(scale_factor=(1, 4, 4), mode='nearest')
+        self.dec1 = self._conv_block(channels[1] + channels[0], channels[0], kernel=(1, 3, 3), padding=(0, 1, 1))
+
+        # Final output heads
+        # Detection head: per-voxel logits
+        self.det_head = nn.Sequential(
+            nn.Conv3d(channels[0], channels[0], kernel_size=(1, 3, 3), padding=(0, 1, 1)),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(channels[0], 1, kernel_size=1)
+        )
+
+    @staticmethod
+    def _conv_block(in_ch, out_ch, kernel=(1, 3, 3), padding=(0, 1, 1)):
+        """Double convolution block with anisotropic kernels."""
+        return nn.Sequential(
+            nn.Conv3d(in_ch, out_ch, kernel_size=kernel, padding=padding),
+            nn.ReLU(inplace=True),
+            nn.Conv3d(out_ch, out_ch, kernel_size=kernel, padding=padding),
+            nn.ReLU(inplace=True)
+        )
+
+    def forward(self, x):
+        """
+        Forward pass.
+
+        Args:
+            x: (B, 2, 64, 256, 256) two consecutive frames concatenated along channel dim
+              where channels 0 is frame_t and channel 1 is frame_t+1
+
+        Returns:
+            logits: (B, 1, 64, 256, 256) per-voxel detection logits
+            features: (B, 128, 64, 256, 256) dense feature maps for transformer
+        """
+        # Encoder with skip connections
+        enc0 = self.enc0(x)  # (B, 32, 64, 256, 256)
+
+        pool1 = self.pool1(enc0)  # (B, 32, 64, 64, 64)
+        enc1 = self.enc1(pool1)  # (B, 64, 64, 64, 64)
+
+        pool2 = self.pool2(enc1)  # (B, 64, 64, 16, 16)
+        enc2 = self.enc2(pool2)  # (B, 128, 64, 16, 16)
+
+        # Bottleneck
+        bottleneck = self.bottleneck(enc2)  # (B, 128, 64, 16, 16)
+
+        # Decoder with skip connections
+        up2 = self.up2(bottleneck)  # (B, 128, 64, 64, 64)
+        up2 = torch.cat([up2, enc1], dim=1)  # (B, 192, 64, 64, 64)
+        dec2 = self.dec2(up2)  # (B, 64, 64, 64, 64)
+
+        up1 = self.up1(dec2)  # (B, 64, 64, 256, 256)
+        up1 = torch.cat([up1, enc0], dim=1)  # (B, 96, 64, 256, 256)
+        dec1 = self.dec1(up1)  # (B, 32, 64, 256, 256)
+
+        # Detection logits from final decoder output
+        logits = self.det_head(dec1)  # (B, 1, 64, 256, 256)
+
+        # For transformer: use bottleneck features at full Z resolution
+        # Upsample bottleneck features to full resolution
+        features_upsampled = self.up2(bottleneck)  # (B, 128, 64, 64, 64)
+        features_upsampled = self.up1(features_upsampled)  # (B, 128, 64, 256, 256)
+
+        return logits, features_upsampled
+
+
+class SimpleNodeTransformer(nn.Module):
+    """
+    Cross-attention Transformer for pairwise edge probability prediction.
+
+    Architecture:
+    - Hidden dim: 128
+    - Heads: 4
+    - Blocks: 4
+    - Dropout: 0.3
+
+    Predicts edge probabilities between detected nodes in consecutive frames.
+    """
+
+    def __init__(self, hidden_dim=128, num_heads=4, num_blocks=4, dropout=0.3,
+                 feature_dim=32, max_nodes=1000):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.num_blocks = num_blocks
+        self.feature_dim = feature_dim
+        self.max_nodes = max_nodes
+
+        # Node embedding: coordinates (3) + positional encoding (8*3) + features (feature_dim)
+        node_input_dim = 3 + 8*3 + feature_dim  # 27 + feature_dim
+
+        # Project node embeddings to hidden dimension
+        self.node_embed = nn.Linear(node_input_dim, hidden_dim)
+
+        # Transformer encoder for each frame's nodes
+        self.encoder_layers = nn.ModuleList([
+            self._transformer_block(hidden_dim, num_heads, dropout)
+            for _ in range(num_blocks)
+        ])
+
+        # Cross-attention for edge prediction
+        self.cross_attn_layers = nn.ModuleList([
+            nn.MultiheadAttention(hidden_dim, num_heads, dropout=dropout, batch_first=True)
+            for _ in range(num_blocks)
+        ])
+
+        # Edge scoring head
+        self.edge_scorer = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, 1),
+            nn.Sigmoid()
+        )
+
+    @staticmethod
+    def _transformer_block(hidden_dim, num_heads, dropout):
+        """Single transformer encoder block."""
+        return nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            batch_first=True,
+            activation='relu'
+        )
+
+    @staticmethod
+    def sinusoidal_positional_encoding(num_pos, hidden_dim):
+        """Generate sinusoidal positional encoding."""
+        pe = torch.zeros(num_pos, hidden_dim)
+        position = torch.arange(0, num_pos, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, hidden_dim, 2, dtype=torch.float) *
+            -(math.log(10000.0) / hidden_dim)
+        )
+        pe[:, 0::2] = torch.sin(position * div_term)
+        if hidden_dim % 2 == 1:
+            pe[:, 1::2] = torch.cos(position * div_term[:-1])
+        else:
+            pe[:, 1::2] = torch.cos(position * div_term)
+        return pe
+
+    def forward(self, nodes_t, nodes_t1, features_t, features_t1, candidate_edges=None):
+        """
+        Forward pass for edge probability prediction.
+
+        Args:
+            nodes_t: (n_t, 3) node coordinates [z, y, x] at frame t
+            nodes_t1: (n_t1, 3) node coordinates [z, y, x] at frame t+1
+            features_t: (n_t, feature_dim) node features at frame t
+            features_t1: (n_t1, feature_dim) node features at frame t+1
+            candidate_edges: Optional (n_candidates, 2) edge indices to score
+                            If None, score all possible edges
+
+        Returns:
+            edge_probs: (n_candidates,) edge probabilities in [0, 1]
+        """
+        device = nodes_t.device
+        n_t = nodes_t.shape[0]
+        n_t1 = nodes_t1.shape[0]
+
+        # Generate sinusoidal positional encoding for coordinates
+        pe_dim = 8  # 8 per axis = 24 dims total for 3D coordinates
+        pos_enc_t = self.sinusoidal_positional_encoding(n_t, pe_dim * 3).to(device)
+        pos_enc_t1 = self.sinusoidal_positional_encoding(n_t1, pe_dim * 3).to(device)
+
+        # Concatenate coordinates + positional encoding + features
+        nodes_t_emb = torch.cat([
+            nodes_t,
+            pos_enc_t,
+            features_t
+        ], dim=1)  # (n_t, 3 + 24 + feature_dim)
+
+        nodes_t1_emb = torch.cat([
+            nodes_t1,
+            pos_enc_t1,
+            features_t1
+        ], dim=1)  # (n_t1, 3 + 24 + feature_dim)
+
+        # Project to hidden dimension
+        nodes_t_h = self.node_embed(nodes_t_emb)  # (n_t, hidden_dim)
+        nodes_t1_h = self.node_embed(nodes_t1_emb)  # (n_t1, hidden_dim)
+
+        # Apply transformer encoder blocks
+        for encoder_layer in self.encoder_layers:
+            nodes_t_h = encoder_layer(nodes_t_h.unsqueeze(0)).squeeze(0)  # (n_t, hidden_dim)
+            nodes_t1_h = encoder_layer(nodes_t1_h.unsqueeze(0)).squeeze(0)  # (n_t1, hidden_dim)
+
+        # Generate candidate edges if not provided
+        if candidate_edges is None:
+            # Create all pairwise edges
+            candidates = []
+            for i in range(n_t):
+                for j in range(n_t1):
+                    candidates.append((i, j))
+            candidate_edges = torch.tensor(candidates, dtype=torch.long, device=device)
+        else:
+            candidate_edges = candidate_edges.to(device)
+
+        # Cross-attention and edge scoring
+        edge_probs = []
+        for _idx, (i, j) in enumerate(candidate_edges):
+            # Get node embeddings
+            node_t_feat = nodes_t_h[i:i+1]  # (1, hidden_dim)
+            node_t1_feat = nodes_t1_h[j:j+1]  # (1, hidden_dim)
+
+            # Apply cross-attention
+            for cross_attn_layer in self.cross_attn_layers:
+                attn_out, _ = cross_attn_layer(
+                    node_t_feat,  # query
+                    node_t1_feat.expand(n_t1, -1).unsqueeze(0),  # key/value
+                    node_t1_feat.expand(n_t1, -1).unsqueeze(0)
+                )
+                node_t_feat = attn_out
+
+            # Concatenate and score
+            edge_feat = torch.cat([node_t_feat, node_t1_feat], dim=-1)  # (1, hidden_dim*2)
+            prob = self.edge_scorer(edge_feat)  # (1, 1)
+            edge_probs.append(prob.squeeze())
+
+        return torch.stack(edge_probs) if edge_probs else torch.tensor([], device=device)
 
 
 class AnisotropicCoordinateTransformer(nn.Module):
