@@ -138,6 +138,39 @@ scope, not this file.
      trusting any checkpoint — independent verification from the real artifact, never from a run
      summary alone.
 
+  If step 3 is done via browser automation (a Cowork session or similar) rather than a human
+  manually looking, these failure modes are confirmed real, not hypothetical:
+  - **The notebook's bare URL (or `/log`, `/versions`) while logged in as owner does not open a
+    passive read view** — it redirects into the same shared live editor/draft-session shell as
+    whatever tab is actually being worked in. Two tabs on that shell at once (human + automated,
+    or two automated) race on autosave and throw `ConcurrencyViolation` — once this **silently
+    discarded a pasted fix entirely** (looked applied in the tab, but reloading showed the old
+    code, because the other tab's save won the race). The only genuinely read-only URL is a
+    specific completed version's `.../log?scriptVersionId=<id>` (from that version's own "..."
+    menu) — never navigate the bare notebook URL for monitoring.
+  - **The small icon left of each "Active Events" entry is a live Stop/Cancel button for a
+    still-running version, with no confirmation dialog** — not a neutral "open" control. Clicking
+    it cancelled a run that had already cleared a bug under test and was mid-training. Use that
+    entry's "..." menu → "Open Logs in Viewer" instead.
+  - **That "..." menu's "Open in Viewer" option can itself spin up another live `/edit/run/<id>`
+    editor session in the background** (not a static log page), confirmed twice — close any such
+    extra tab immediately.
+  - **The Kaggle log viewer is a heavy virtualized widget**: scrolling several lines at once, or
+    screenshotting immediately after navigation, frequently renders a blank viewport for a few
+    seconds even though the content exists — wait ~3-5s and re-screenshot before concluding a
+    script or log was wiped.
+  - **Paste code fixes via real OS clipboard (copy, `Ctrl+A`, `Ctrl+V`), never simulated
+    keystroke-by-keystroke typing of multi-line code** — the editor's autoindent re-indents on
+    every typed newline and corrupts pasted indentation; a real paste event inserts text verbatim.
+  - **Full page-text extraction of a long-running log (a few thousand+ lines) can exceed a text
+    tool's output limit** — grep the saved dump for `ERROR|Traceback|WARNING` instead of
+    re-reading it in full; prefer the small "Running for Xs" counter for a quick liveness check.
+  - **Never let more than one path (a local CLI push, a teammate's browser click, another agent
+    or Cowork session) trigger a new run against the same kernel at the same time** — two
+    independent triggers raced once and produced two back-to-back failed versions that were
+    briefly indistinguishable from a genuinely new bug. Agree on one "who triggers the next run"
+    owner per iteration before pushing or clicking Save & Run All.
+
 ## Workflow
 
 - This project is executed via **GSD** (`/gsd:*` skills) against `PRD.md`'s §8 phased roadmap —
