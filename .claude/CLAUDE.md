@@ -65,6 +65,26 @@ scope, not this file.
   2.5+ hour stuck run (~18,000 false candidates/timepoint → ILP combinatorial blowup) the first
   time real data replaced simulated data here. Sanity-check candidate counts (order of magnitude,
   not exact) before running anything at full scale.
+- **`kaggle_kernel/train_kernel.py`'s Kaggle dependency install uses `pip install --no-deps`
+  deliberately** (protects Kaggle's pre-installed numpy/scipy from a transitive-resolution
+  corruption bug hit earlier), but `--no-deps` also blocks a package's own required companion
+  packages, not just optional transitive extras. Confirmed real case: modern `polars` ships as a
+  thin Python package that separately `Requires: polars-runtime-32` (the actual compiled Rust
+  extension, `polars._plr`) — `--no-deps` silently skipped installing it, and polars' own source
+  swallows that failure (`with contextlib.suppress(ImportError): from polars._plr import
+  PySeries` in `polars/series/series.py`), so every `graph.node_attrs()` call in
+  `src/targets.py`/`src/train.py` raised a caught `NameError` and silently fell back to
+  all-zero GT targets for an entire ~75-minute Kaggle GPU run with no crash. Fix: install such
+  companion packages explicitly by name alongside the main package (same pattern already used
+  for `ilpy`→`pyscipopt`). A PyPI metadata audit of all 16 currently-pinned Kaggle packages found
+  only polars has this split-runtime pattern (checked `Requires-Dist` directly, not guessed) — but
+  re-check any *newly added* pinned package the same way before trusting `--no-deps` with it.
+- **`src/train.py`'s `TrainingLoop.train_epoch()` hard-fails if any single fallback type
+  (`heatmap_generation_failure`, `edge_target_generation_failure`, etc.) fires on >50% of
+  batches in an epoch** — added after the polars bug above proved silent per-batch fallbacks can
+  run to completion producing a checkpoint trained on garbage with no error, ever. If you see this
+  `RuntimeError`, it means the pipeline is actually broken (not just occasional missing data);
+  diagnose the root cause before retrying, don't raise the threshold to make it go away.
 
 ## Operational lessons — read before running long jobs or delegating to sub-agents
 
@@ -97,6 +117,26 @@ scope, not this file.
   per-unit checkpointing so a partial failure doesn't require reprocessing everything. This
   pattern is implemented in `src/run_tracker.py` — reuse it (or the equivalent
   `long-running-pipeline-tracking` skill) rather than re-inventing it for Phase 2/3 work.
+- **Kaggle kernel runs cannot be monitored live via CLI/API — this is a confirmed, permanent
+  platform limitation, not a tooling gap to keep trying to close.** `kaggle kernels output`
+  only ever returns the *last completed* version's log; while a kernel is `RUNNING`, polling it
+  repeatedly returns byte-identical stale data (confirmed for over an hour straight). There is no
+  CLI/API method to cancel a running kernel or stream its live log (checked
+  `kaggle_api_extended.py`'s actual client methods directly; Kaggle GitHub issues #653 and #388
+  are open, unresolved feature requests for exactly this). Given that, the real procedure for a
+  Kaggle GPU run is:
+  1. Run the training script locally first if at all feasible, to catch import/dependency
+     breakage before spending Kaggle GPU quota.
+  2. After triggering, poll `kaggle kernels status` for RUNNING/COMPLETE/ERROR — that's the only
+     thing the CLI can tell you mid-run; don't re-poll `kernels output` expecting new data.
+  3. To see real early progress, ask a human (or a browser/cowork session) to check the website's
+     Logs tab directly for the first couple minutes — specifically for the dependency-install
+     fail-loud checks (e.g. `polars X.Y.Z extension verified OK`) and any hard-fail
+     `RuntimeError`, so breakage is caught in minutes, not after a full run.
+  4. After COMPLETE/ERROR, pull the CSV log via CLI and check it directly (it now includes
+     `num_batches` and `epoch_wall_clock_seconds` alongside the fallback-count columns) before
+     trusting any checkpoint — independent verification from the real artifact, never from a run
+     summary alone.
 
 ## Workflow
 

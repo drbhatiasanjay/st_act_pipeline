@@ -13,6 +13,7 @@ import csv
 import json
 import logging
 import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -180,6 +181,8 @@ class TrainingLoop:
             'edge_loss_computation_failure': 0,
             'evaluation_failure': 0,
         }
+        self.last_epoch_wall_clock_seconds = 0.0
+        self.last_epoch_num_batches = 0
 
         # Logging
         self._init_log()
@@ -203,6 +206,8 @@ class TrainingLoop:
                 'edge_target_failures',
                 'edge_loss_failures',
                 'eval_failures',
+                'num_batches',
+                'epoch_wall_clock_seconds',
             ])
 
     def _log_epoch(self, epoch: int, train_loss: float, val_metrics: dict[str, float]):
@@ -221,6 +226,8 @@ class TrainingLoop:
                 self.epoch_fallback_counts['edge_target_generation_failure'],
                 self.epoch_fallback_counts['edge_loss_computation_failure'],
                 self.epoch_fallback_counts['evaluation_failure'],
+                self.last_epoch_num_batches,
+                f'{self.last_epoch_wall_clock_seconds:.1f}',
             ])
 
     def _get_gt_nodes(self, sample_id: str, t_idx: int) -> torch.Tensor | None:
@@ -273,6 +280,7 @@ class TrainingLoop:
         self.transformer.train()
         total_loss = 0.0
         num_batches = 0
+        epoch_start_time = time.time()
 
         # Reset fallback counters for this epoch
         for key in self.epoch_fallback_counts:
@@ -410,11 +418,31 @@ class TrainingLoop:
                           f"Loss: {total_loss_item.item():.6f}")
 
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        self.last_epoch_wall_clock_seconds = time.time() - epoch_start_time
+        self.last_epoch_num_batches = num_batches
 
         # Log fallback counts
         for key, count in self.epoch_fallback_counts.items():
             if count > 0:
                 logger.warning(f"Epoch had {count} {key} fallbacks")
+
+        # Hard-fail if a majority of batches hit the same fallback: a real
+        # sanity-check run's whole point is validating the pipeline works,
+        # so silently completing on mostly-fallback data (as happened for a
+        # full ~75min Kaggle run when polars._plr was silently broken --
+        # every GT lookup fell back to all-zero targets with no crash) is
+        # worse than failing loudly. Occasional real failures (a missing
+        # .geff, an edge case) are expected and shouldn't abort a run.
+        FALLBACK_RATE_THRESHOLD = 0.5
+        for key, count in self.epoch_fallback_counts.items():
+            rate = count / num_batches if num_batches > 0 else 0.0
+            if rate > FALLBACK_RATE_THRESHOLD:
+                raise RuntimeError(
+                    f"Epoch aborted: {key} fired on {count}/{num_batches} batches "
+                    f"({rate * 100:.1f}%, threshold {FALLBACK_RATE_THRESHOLD * 100:.0f}%). "
+                    f"Training would silently produce a checkpoint from garbage data -- "
+                    f"diagnose the root cause before retrying."
+                )
 
         logger.info(f"Train epoch average loss: {avg_loss:.6f}")
         return avg_loss
