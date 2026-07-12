@@ -237,7 +237,8 @@ if __name__ == "__main__":
     motion = {
         0: [[0.1, 1.0, 1.0], [0.0, 0.0, 0.0]]
     }
-    anisotropy = np.array([4.0, 1.0, 1.0])
+    from src.evaluation import DEFAULT_SCALE  # real physical microns, not the (4,1,1) ratio
+    anisotropy = np.array(DEFAULT_SCALE)
 
     graph = tracker.solve_lineage(centroids, motion, anisotropy, max_gap_frames=2)
     print("Solved Lineage Tracking successfully with Gap Closing and Edge Pruning!")

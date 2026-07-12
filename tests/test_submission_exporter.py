@@ -189,6 +189,34 @@ class TestExportSubmission:
         node_ids_b = df_b[df_b['row_type'] == 'node']['node_id'].tolist()
         assert node_ids_b == [1, 2]  # Reset, not [3, 4]
 
+    def test_export_all_datasets_zero_detections_produces_valid_empty_csv(self, temp_csv):
+        """REGRESSION GUARD: a submission where every dataset has zero nodes/edges must
+        still export a schema-correct, header-only CSV, not crash.
+
+        Real bug, hit live on Kaggle (inference_kernel.py v4): pd.DataFrame(rows) on a
+        fully-empty rows list produces a DataFrame with zero columns, so the subsequent
+        df[column_order] raised KeyError since those column names didn't exist yet. This
+        happens for real whenever the checkpoint under test produces no detections on any
+        real test sample (confirmed with the known severely-undertrained sanity-check
+        checkpoint) -- not just a hypothetical input.
+        """
+        empty_graph_a = self.create_synthetic_graph([])
+        empty_graph_b = self.create_synthetic_graph([])
+        graphs_dict = {'dataset_A': empty_graph_a, 'dataset_B': empty_graph_b}
+        csv_path = temp_csv / 'test_all_empty.csv'
+
+        result_path = export_submission(
+            graphs_dict, csv_path, required_dataset_ids=['dataset_A', 'dataset_B']
+        )
+
+        df = pd.read_csv(result_path)
+        assert len(df) == 0
+        assert list(df.columns) == [
+            'id', 'dataset', 'row_type', 'node_id', 't', 'z', 'y', 'x', 'source_id', 'target_id'
+        ]
+        # validate_submission() must accept a genuinely empty-but-schema-correct submission
+        assert validate_submission(result_path) is True
+
     def test_coordinates_are_integers(self, temp_csv):
         """Test that exported coordinates are integers (no floats)."""
         # Create synthetic graph with coordinates that might be floats
@@ -201,7 +229,7 @@ class TestExportSubmission:
         export_submission(graphs_dict, csv_path)
 
         # Read CSV as strings to verify no decimal points
-        with open(csv_path, 'r') as f:
+        with open(csv_path) as f:
             lines = f.readlines()
             # Header line
             assert lines[0].strip() == 'id,dataset,row_type,node_id,t,z,y,x,source_id,target_id'

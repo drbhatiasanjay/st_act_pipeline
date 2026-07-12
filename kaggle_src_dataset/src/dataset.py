@@ -78,7 +78,23 @@ class CompetitionDataset(Dataset):
 
         # Build index of (frame_t, frame_t+1) pairs
         self.pairs = []
+        # One AnisotropicZarrLoader per sample_id, reused across _build_pair_index and
+        # every __getitem__ call for that sample instead of reopening the store (real
+        # zarr.open() + quantile-attrs extraction + several logger.info() calls) on
+        # every single frame access -- confirmed live in Kaggle logs this session
+        # (repeated "Opening real Zarr v3 store..." at closely-spaced timestamps for the
+        # same sample_id, since shuffle=False means ~100 consecutive pairs per sample).
+        self._loader_cache: dict[str, AnisotropicZarrLoader] = {}
         self._build_pair_index()
+
+    def _get_loader(self, sample_id: str) -> AnisotropicZarrLoader:
+        """Return this instance's cached loader for sample_id, opening it on first use."""
+        loader = self._loader_cache.get(sample_id)
+        if loader is None:
+            zarr_path = self.data_dir / f"{sample_id}.zarr"
+            loader = AnisotropicZarrLoader(str(zarr_path))
+            self._loader_cache[sample_id] = loader
+        return loader
 
     def _build_pair_index(self) -> None:
         """Build index of all (frame_t, frame_t+1) pairs."""
@@ -93,7 +109,7 @@ class CompetitionDataset(Dataset):
                     continue
 
                 # Load zarr to determine number of frames
-                loader = AnisotropicZarrLoader(str(zarr_path))
+                loader = self._get_loader(sample_id)
                 num_frames = loader.get_shape()[0]
 
                 # Add all consecutive frame pairs
@@ -134,9 +150,8 @@ class CompetitionDataset(Dataset):
         """
         sample_id, frame_idx = self.pairs[idx]
 
-        # Load volume
-        zarr_path = self.data_dir / f"{sample_id}.zarr"
-        loader = AnisotropicZarrLoader(str(zarr_path))
+        # Load volume (reuses this instance's cached loader -- see _get_loader)
+        loader = self._get_loader(sample_id)
 
         # Extract frame_t and frame_t+1
         frame_t = loader.load_timepoint_block(frame_idx, normalize=self.normalize)

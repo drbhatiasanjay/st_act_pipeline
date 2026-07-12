@@ -399,7 +399,14 @@ def main():
 
     args = parser.parse_args()
 
-    anisotropy = np.array([4.0, 1.0, 1.0])
+    # DEFAULT_SCALE (real physical microns, (1.625, 0.40625, 0.40625)) not the
+    # (4.0, 1.0, 1.0) Z:Y:X ratio -- ensemble_consensus_centroids()/run_dataset()'s
+    # tracker calls compare scaled distances against real micron thresholds
+    # (eps_microns, max_z_micron, max_xy_micron, the 40um search radius), and the
+    # ratio inflates every computed distance by ~2.46x, silently tightening all
+    # four gates below their intended values. Same bug class already fixed once in
+    # evaluation.py's DEFAULT_SCALE; this was the still-unfixed second instance.
+    anisotropy = np.array(DEFAULT_SCALE)
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(args.output_path), exist_ok=True)

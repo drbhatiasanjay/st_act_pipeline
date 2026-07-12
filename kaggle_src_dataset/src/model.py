@@ -250,28 +250,27 @@ class SimpleNodeTransformer(nn.Module):
 
         # Generate candidate edges if not provided
         if candidate_edges is None:
-            # Create all pairwise edges
-            candidates = []
-            for i in range(n_t):
-                for j in range(n_t1):
-                    candidates.append((i, j))
-            candidate_edges = torch.tensor(candidates, dtype=torch.long, device=device)
+            # All pairwise (i, j) edges in the same row-major order the old nested
+            # Python loop produced (i outer, j inner) -- greedy_edge_assignment's
+            # default reconstruction and inference_kernel.py's peak ordering both
+            # assume this order.
+            candidate_edges = torch.cartesian_prod(
+                torch.arange(n_t, device=device), torch.arange(n_t1, device=device)
+            )
         else:
             candidate_edges = candidate_edges.to(device)
 
-        # Score all candidate edges
-        edge_probs = []
-        for i, j in candidate_edges:
-            # Get attended node features
-            feat_t = nodes_t_h[i]  # (hidden_dim,)
-            feat_t1 = nodes_t1_h[j]  # (hidden_dim,)
+        # Score all candidate edges in one batched call instead of a Python-level loop
+        # per edge -- unvectorized version was a confirmed-unmeasured scaling risk
+        # (run_pipeline.py's own profiling notes cite ~1110 candidates/timepoint on
+        # dense real timepoints). Handles the zero-candidate case natively (an (0, D)
+        # input produces an (0,) output), no separate empty-list fallback needed.
+        feat_t = nodes_t_h[candidate_edges[:, 0]]    # (n_candidates, hidden_dim)
+        feat_t1 = nodes_t1_h[candidate_edges[:, 1]]  # (n_candidates, hidden_dim)
+        edge_feat = torch.cat([feat_t, feat_t1], dim=1)  # (n_candidates, hidden_dim*2)
+        edge_probs = self.edge_scorer(edge_feat).squeeze(-1)  # (n_candidates,)
 
-            # Concatenate and score
-            edge_feat = torch.cat([feat_t, feat_t1])  # (hidden_dim*2,)
-            prob = self.edge_scorer(edge_feat.unsqueeze(0))  # (1, 1)
-            edge_probs.append(prob.squeeze())
-
-        return torch.stack(edge_probs) if edge_probs else torch.tensor([], dtype=torch.float32, device=device)
+        return edge_probs
 
 
 class AnisotropicCoordinateTransformer(nn.Module):

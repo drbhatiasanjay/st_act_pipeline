@@ -14,15 +14,24 @@ comment block in solve_lineage). These tests exist to:
 
 Run: py -m pytest tests/test_tracker.py -v
 """
-import sys
 import os
+import sys
+
 import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.tracker import STHypergraphTracker
 
-ANISOTROPY = np.array([4.0, 1.0, 1.0])  # real competition ratio, not the stale (5,1,1)
+ANISOTROPY = np.array([4.0, 1.0, 1.0])  # illustrative Z:Y:X scale factor for exercising
+# prune_unphysical_edges()/solve_lineage()'s distance math generically -- NOT the real
+# competition physical-micron scale. Production code (run_pipeline.py) uses
+# src.evaluation.DEFAULT_SCALE = (1.625, 0.40625, 0.40625) um/voxel instead, fixed after
+# this exact (4,1,1)-as-microns conflation was found live in run_pipeline.py (PRD-flagged
+# bug 1.3). These tests stay valid regardless of which real value production uses, since
+# they only check that the pruning/costing arithmetic is internally correct for whatever
+# anisotropy array is passed in -- but don't read this constant as "the real" competition
+# scale.
 
 
 def zero_motion(centroids_by_t):

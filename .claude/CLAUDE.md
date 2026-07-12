@@ -8,12 +8,19 @@ scope, not this file.
 ## Facts that have already caused real bugs — do not re-derive, just use these
 
 - **Physical anisotropy is `(4.0, 1.0, 1.0)`** (Z:Y:X), from real voxel scale z=1.625µm,
-  y=x=0.40625µm — **fixed as of Phase 0** in `data_loader.py`, `run_pipeline.py`,
-  `hyperparams.yaml`. If you find `(5.0, 1.0, 1.0)` anywhere, it's a regression, not intentional.
+  y=x=0.40625µm — **fixed as of Phase 0** in `data_loader.py`. If you find `(5.0, 1.0, 1.0)`
+  anywhere, it's a regression, not intentional. (`config/hyperparams.yaml` also lists this
+  ratio, but that file is confirmed dead/unread by any `.py` in the repo — don't trust "fixed
+  in hyperparams.yaml" as meaning anything actually executes differently.)
   Separately, `src/evaluation.py`'s `DEFAULT_SCALE` must be the real **physical micron** value
   `(1.625, 0.40625, 0.40625)`, not the `(4.0,1.0,1.0)` **ratio** — using the ratio there inflates
   every distance by ~2.46x and silently corrupts the 7.0µm match gate (this exact bug shipped
-  once and was only caught by manually re-deriving the math, not by tests).
+  once and was only caught by manually re-deriving the math, not by tests). **A second instance
+  of the exact same ratio-vs-microns conflation shipped in `run_pipeline.py`'s `anisotropy`
+  variable** (fed into `ensemble_consensus_centroids()`/`tracker.py`'s `solve_lineage()`/
+  `prune_unphysical_edges()`, all of which compare against real-micron thresholds) — fixed by
+  passing `DEFAULT_SCALE` there too. If you add a new call site that gates a distance against a
+  micron threshold, use `DEFAULT_SCALE`, never the bare ratio.
 - **`AnisotropicZarrLoader`'s simulated-data fallback must never silently activate** against a
   real competition path (`simulate=False` is the loader's actual guard now). It exists for
   local/offline testing only; if it fires against `data/train/` or `data/test/` it means the real
