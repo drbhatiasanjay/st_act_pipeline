@@ -154,6 +154,14 @@ HYPERPARAMS = {
     'seed': SEED,
     'batch_size': 1,  # Memory-constrained
     'epochs_for_sanity_check': 3,
+    # A real run (v26) revealed the true per-epoch batch count is ~14,751
+    # (149 train samples x ~99 consecutive-frame pairs each), not the ~199
+    # this session originally assumed -- at ~1.37s/batch, 3 full epochs is
+    # ~17 real hours, not the ~30min a "sanity check" is meant to take.
+    # Cap batches/epoch so this validates the pipeline end-to-end (real
+    # data, real GPU, real checkpoint save) in a practical amount of time
+    # instead. Full (non-sanity-check) training should NOT set this.
+    'max_batches_per_epoch': 200,
 }
 
 logger.info("\nHyperparameters:")

@@ -136,6 +136,14 @@ class TrainingLoop:
             'detection_threshold': 0.5,
             'nms_radius_um': 5.0,
             'seed': 42,
+            # None = unlimited (real full-training default). A real run
+            # revealed the true per-epoch batch count is ~14,751 (149
+            # samples x ~99 consecutive-frame pairs each), not the ~199
+            # this session originally assumed -- 3 epochs at that scale is
+            # ~17 real hours, not the ~30min a "sanity check" is meant to
+            # take. Kaggle callers should set this explicitly to validate
+            # the pipeline end-to-end fast instead.
+            'max_batches_per_epoch': None,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -296,7 +304,13 @@ class TrainingLoop:
         for key in self.epoch_fallback_counts:
             self.epoch_fallback_counts[key] = 0
 
+        max_batches = self.hyperparams.get('max_batches_per_epoch')
+
         for batch_idx, batch in enumerate(self.train_loader):
+            if max_batches is not None and batch_idx >= max_batches:
+                logger.info(f"Stopping train epoch early at {max_batches} batches (max_batches_per_epoch cap)")
+                break
+
             # Move batch to device
             frame_t = batch['frame_t'].to(self.device)
             frame_t1 = batch['frame_t1'].to(self.device)
@@ -577,8 +591,14 @@ class TrainingLoop:
         # neighbor merge before this validation score is trustworthy for a
         # real Task 3.4 go/no-go decision -- acceptable for now to unblock
         # verifying training itself works, not to finalize scoring.
+        max_batches = self.hyperparams.get('max_batches_per_epoch')
+
         with torch.no_grad():
             for _batch_idx, batch in enumerate(self.val_loader):
+                if max_batches is not None and _batch_idx >= max_batches:
+                    logger.info(f"Stopping validation early at {max_batches} batches (max_batches_per_epoch cap)")
+                    break
+
                 frame_t = batch['frame_t'].to(self.device)
                 frame_t1 = batch['frame_t1'].to(self.device)
                 sample_id = batch['sample_id'][0]
