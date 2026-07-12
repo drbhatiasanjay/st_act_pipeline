@@ -144,12 +144,12 @@ def export_submission(
                 f"datasets got zero predictions before submitting."
             )
 
-    # Convert to DataFrame and save
-    df = pd.DataFrame(rows)
-
-    # Ensure column order matches schema
+    # Convert to DataFrame and save. Pass columns= explicitly: pd.DataFrame(rows) on an
+    # empty rows list produces a DataFrame with zero columns, and df[column_order] then
+    # raises KeyError since those column names don't exist yet on an empty frame -- a real
+    # crash confirmed when every sample in a submission has zero detections.
     column_order = ['id', 'dataset', 'row_type', 'node_id', 't', 'z', 'y', 'x', 'source_id', 'target_id']
-    df = df[column_order]
+    df = pd.DataFrame(rows, columns=column_order)
 
     # Save to CSV (no index, exact schema)
     output_path = Path(output_path)

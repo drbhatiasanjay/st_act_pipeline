@@ -79,6 +79,14 @@ scope, not this file.
   for `ilpy`→`pyscipopt`). A PyPI metadata audit of all 16 currently-pinned Kaggle packages found
   only polars has this split-runtime pattern (checked `Requires-Dist` directly, not guessed) — but
   re-check any *newly added* pinned package the same way before trusting `--no-deps` with it.
+  **This exact bug recurred a second time**, in `kaggle_kernel_inference/inference_kernel.py`
+  (the separate no-internet Code Competition submission kernel written in Phase 3.5): the
+  `--force-reinstall` fix already existed in `kaggle_kernel/train_kernel.py`, but wasn't carried
+  over when the new script reimplemented the same install step, and the first real run reproduced
+  the identical "Polars binary is missing!" failure. A fix living in one kernel script does not
+  automatically apply to a sibling script — when writing a new Kaggle kernel that reuses an
+  install/setup pattern from an existing one, diff the block against the known-good original
+  instead of rewriting it from memory.
 - **`src/train.py`'s `TrainingLoop.train_epoch()` hard-fails if any single fallback type
   (`heatmap_generation_failure`, `edge_target_generation_failure`, etc.) fires on >50% of
   batches in an epoch** — added after the polars bug above proved silent per-batch fallbacks can
@@ -170,6 +178,27 @@ scope, not this file.
     independent triggers raced once and produced two back-to-back failed versions that were
     briefly indistinguishable from a genuinely new bug. Agree on one "who triggers the next run"
     owner per iteration before pushing or clicking Save & Run All.
+- **`kaggle kernels push` can hit a persistent `409 Client Error: Conflict` that does NOT resolve
+  via the usual fixes** (closing the specific tab, closing *all* tabs on that kernel, waiting up
+  to ~90s, changing the kernel title to remove punctuation) — confirmed on the inference kernel
+  push in Phase 3.5, distinct from the earlier (successfully resolved) training-kernel instance of
+  this same error class. When CLI push is genuinely stuck like this, don't keep blindly retrying —
+  fall back to the manual-paste pattern: give the user the full corrected file content, have them
+  open the kernel editor (one tab only), Ctrl+A + delete the existing code, paste the new content
+  in via real clipboard paste (never simulated typing — see the autoindent-corruption note above),
+  then trigger **Save Version → Save & Run All (Commit)** from the website directly.
+- **This competition is a Code Competition** (Notebook-only submission, internet disabled, 12h
+  runtime cap — see `PRD.md`/the real `/rules` page for full details). A critical, easy-to-miss
+  consequence: **a plain `Save Version` / `Save & Run All (Commit)` run is NOT the same as a real
+  graded `Submit` run.** Confirmed via a real log (`inference_kernel.py`, v3): during an ordinary
+  Commit, `/kaggle/input/competitions/<slug>/test/` contains only the small **public example test
+  set** (4 samples in this competition) — the real ~149-sample **hidden** test set the rules
+  describe ("approximately the same size as the training dataset") is swapped in only when the
+  notebook is actually rerun as part of clicking the real **Submit** button. Don't extrapolate a
+  Commit run's wall-clock time directly onto the real submission's runtime budget without scaling
+  by this ratio (in this case ~37x more pairs, 149/4), and don't assume a fast/successful Commit
+  run alone proves the real Submit run will finish inside the 12h cap — it's strong evidence, not
+  a guarantee, since the real run processes far more data.
 
 ## Model & effort policy
 
