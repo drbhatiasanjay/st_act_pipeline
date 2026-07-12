@@ -171,6 +171,27 @@ scope, not this file.
     briefly indistinguishable from a genuinely new bug. Agree on one "who triggers the next run"
     owner per iteration before pushing or clicking Save & Run All.
 
+## Model & effort policy
+
+- **Mechanical/verification tasks** (grep a log for ERROR/Traceback, confirm a file/line exists,
+  run pytest and report pass/fail, check git status) → `/model haiku`. Cheap, fast, no judgment
+  required.
+- **Normal iteration** (fix the bug that just surfaced, edit a call site, wire up an existing
+  helper, rerun and check the log) → `/model sonnet`, default/high effort. This is most of the
+  day-to-day work on this repo.
+- **Hard judgment calls** (anisotropy/unit-scale math, ILP cost-function tuning, "does this
+  architecture even support X," diagnosing an ambiguous crash across multiple files) → `/model
+  opus` or `/model fable`, `/effort high` or `/effort xhigh`. Reserve for the handful of
+  decisions where being wrong costs a wasted GPU run.
+- **Decide model + effort once, at the start of a task, and don't switch mid-task.** Every switch
+  forces a full-price, uncached re-read of everything already in the conversation — bouncing
+  between levels mid-debug is itself a cost driver, not just a settings choice.
+- Subagent frontmatter's `model:` field is currently broken upstream (ignored — subagents inherit
+  the parent model regardless of what's set in the `.md` file, per
+  `anthropics/claude-code#44385`). Until that's fixed, don't rely on frontmatter for this — either
+  run the haiku-tier checks directly in the main session with `/model haiku` before switching
+  back, or pass the model explicitly if dispatching via the Task tool.
+
 ## Workflow
 
 - This project is executed via **GSD** (`/gsd:*` skills) against `PRD.md`'s §8 phased roadmap —
