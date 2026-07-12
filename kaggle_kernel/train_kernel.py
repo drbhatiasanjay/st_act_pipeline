@@ -197,45 +197,29 @@ if KAGGLE_MODE:
     )
     logger.info("Dependency installation complete.")
 
-    # A real run (v20) proved unconstrained "polars>=1.36.0" above is not
-    # enough: if Kaggle's base image already has a polars satisfying that
-    # bound, pip leaves it untouched (same class of bug as the earlier bare
-    # "polars" issue), and that pre-existing polars had a compiled Rust
-    # extension (polars._plr) that failed to import. polars/series/series.py
-    # swallows that ImportError silently (`with contextlib.suppress(ImportError):
-    # from polars._plr import PyDataFrame, PySeries`), so every later
-    # DataFrame/Series call raised NameError: name 'PySeries' is not defined
-    # -- caught by this project's own try/except fallbacks and silently
-    # replaced with all-zero heatmap targets and empty GT node sets for
-    # EVERY timepoint, all epoch, with no crash. Confirmed via v20's real
-    # log (repeated "Failed to get GT nodes ... using zero targets"), traced
-    # to polars' own source, not guessed. --force-reinstall guarantees a
-    # genuinely fresh wheel+extension pair instead of reusing whatever
-    # broken polars Kaggle's image shipped.
-    # v21 tried --force-reinstall and made this WORSE, not better: the
-    # reinstalled polars had NO compiled extension at all
-    # ("UserWarning: Polars binary is missing!" / "ImportError: could not
-    # find Polars' Rust module"), same root failure as v20's unforced
-    # install (silently swallowed there). This means plain `pip install
-    # polars` on Kaggle -- forced or not -- is landing a polars package
-    # with a missing/broken _plr regardless. Rather than guess a 4th fix
-    # blind, capture the FULL (non-quiet) pip resolution output plus
-    # `pip show polars` so the next run's log says exactly which
-    # version/wheel got selected and why it lacks the compiled binary.
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "--no-deps",
-         "--force-reinstall", "polars>=1.36.0"],
-        check=True, capture_output=True, text=True,
+    # v20-v22 traced a real bug through three rounds: v20's plain install
+    # left `polars._plr` (the compiled extension) broken, silently swallowed
+    # by polars/series/series.py's `with contextlib.suppress(ImportError):
+    # from polars._plr import PyDataFrame, PySeries` -- every later
+    # DataFrame/Series call then raised NameError: name 'PySeries' is not
+    # defined, caught by this project's own try/except fallbacks and
+    # silently replaced with all-zero heatmap targets and empty GT node
+    # sets for EVERY timepoint, no crash (confirmed via v20's real log).
+    # v21 added a fail-loud check (kept below) and tried --force-reinstall,
+    # which made the symptom clearer but not fixed: "Polars binary is
+    # missing!" / "could not find Polars' Rust module". v22's `pip show -f
+    # polars` gave the real answer: `Requires: polars-runtime-32` -- modern
+    # polars ships as a thin Python package plus a SEPARATE compiled
+    # extension package (polars-runtime-32) that provides polars._plr.
+    # This project's --no-deps flag (deliberately there to stop pip from
+    # touching numpy/scipy, see the block above) was also blocking polars'
+    # own required runtime companion from ever installing. Fix: install it
+    # explicitly by name, same trick already used for ilpy/pyscipopt.
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "--no-deps",
+         "--force-reinstall", "polars>=1.36.0", "polars-runtime-32"],
+        check=True,
     )
-    logger.info(f"polars pip install stdout:\n{result.stdout}")
-    if result.stderr:
-        logger.info(f"polars pip install stderr:\n{result.stderr}")
-
-    show_result = subprocess.run(
-        [sys.executable, "-m", "pip", "show", "-f", "polars"],
-        capture_output=True, text=True,
-    )
-    logger.info(f"pip show polars:\n{show_result.stdout}")
 
     # Fail loud, not silent: verify polars' compiled extension actually
     # loaded before training starts, instead of letting the same bug
