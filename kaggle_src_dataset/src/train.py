@@ -514,6 +514,8 @@ class TrainingLoop:
         #    time. Fixed by creating pred_graph once per sample_id and
         #    reusing/appending to it across that sample's batches.
         prev_peaks: list | None = None
+        prev_nodes: torch.Tensor | None = None
+        prev_features: torch.Tensor | None = None
         prev_node_id_map: dict[int, int] = {}
         prev_sample_id: str | None = None
 
@@ -528,6 +530,8 @@ class TrainingLoop:
                 # exists to pair with, so reset the sliding cache.
                 if sample_id != prev_sample_id:
                     prev_peaks = None
+                    prev_nodes = None
+                    prev_features = None
                     prev_node_id_map = {}
                     prev_sample_id = sample_id
 
@@ -582,20 +586,30 @@ class TrainingLoop:
                     nms_radius_um=self.hyperparams['nms_radius_um']
                 )
 
+                # Extract THIS iteration's own feature vectors at its own
+                # peaks, unconditionally, against `features` (this
+                # iteration's own forward-pass output) -- cached below for
+                # reuse as "features_t" next iteration. Deliberately NOT
+                # re-indexing a different iteration's features tensor with
+                # cross-iteration peak coordinates: a real bug caught by
+                # re-reading this fix -- since cells move between frames,
+                # doing that would silently pull feature vectors from
+                # wherever those pixels happen to sit in the WRONG frame,
+                # not a crash, just quietly wrong signal into the
+                # edge-prediction transformer.
+                if len(current_peaks) > 0:
+                    current_nodes = torch.tensor(current_peaks, dtype=torch.float32, device=self.device)
+                    z_c = torch.clamp(current_nodes[:, 0].long(), 0, features.shape[2] - 1)
+                    y_c = torch.clamp(current_nodes[:, 1].long(), 0, features.shape[3] - 1)
+                    x_c = torch.clamp(current_nodes[:, 2].long(), 0, features.shape[4] - 1)
+                    current_features = features[0, :, z_c, y_c, x_c].t()
+                else:
+                    current_nodes = torch.zeros((0, 3), dtype=torch.float32, device=self.device)
+                    current_features = torch.zeros((0, features.shape[1]), dtype=torch.float32, device=self.device)
+
                 if prev_peaks is not None and len(prev_peaks) > 0 and len(current_peaks) > 0:
-                    nodes_t = torch.tensor(prev_peaks, dtype=torch.float32, device=self.device)
-                    nodes_t1 = torch.tensor(current_peaks, dtype=torch.float32, device=self.device)
-
-                    # Extract features at peak locations
-                    z_t = torch.clamp(nodes_t[:, 0].long(), 0, features.shape[2] - 1)
-                    y_t = torch.clamp(nodes_t[:, 1].long(), 0, features.shape[3] - 1)
-                    x_t = torch.clamp(nodes_t[:, 2].long(), 0, features.shape[4] - 1)
-                    features_t = features[0, :, z_t, y_t, x_t].t()
-
-                    z_t1 = torch.clamp(nodes_t1[:, 0].long(), 0, features.shape[2] - 1)
-                    y_t1 = torch.clamp(nodes_t1[:, 1].long(), 0, features.shape[3] - 1)
-                    x_t1 = torch.clamp(nodes_t1[:, 2].long(), 0, features.shape[4] - 1)
-                    features_t1 = features[0, :, z_t1, y_t1, x_t1].t()
+                    nodes_t, nodes_t1 = prev_nodes, current_nodes
+                    features_t, features_t1 = prev_features, current_features
 
                     # Get edge predictions
                     edge_probs = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
@@ -641,6 +655,8 @@ class TrainingLoop:
                     pred_graph.add_edge(node_id_map_t[src_idx], node_id_map_t1[tgt_idx], {})
 
                 prev_peaks = current_peaks
+                prev_nodes = current_nodes
+                prev_features = current_features
                 prev_node_id_map = node_id_map_t1
 
         # Load each sample's GT graph once (not once per batch -- a sample
@@ -655,6 +671,24 @@ class TrainingLoop:
             except Exception as e:
                 logger.warning(f"Failed to load GT for {sample_id}: {e}")
                 self.epoch_fallback_counts['evaluation_failure'] += 1
+
+        # Hard-fail if most samples' GT couldn't load: train_epoch() already
+        # has this protection (added after the polars bug ran silently for
+        # ~75min producing a checkpoint from garbage data), but
+        # validate_epoch() had none -- without it, a broken GT path would
+        # just silently produce a meaningless near-zero val_score forever,
+        # with early stopping/checkpoint selection quietly acting on noise
+        # instead of a loud, fast failure.
+        num_samples = len(all_pred_graphs)
+        if num_samples > 0:
+            eval_failure_rate = self.epoch_fallback_counts['evaluation_failure'] / num_samples
+            if eval_failure_rate > 0.5:
+                raise RuntimeError(
+                    f"Validation aborted: GT loading failed on "
+                    f"{self.epoch_fallback_counts['evaluation_failure']}/{num_samples} samples "
+                    f"({eval_failure_rate * 100:.1f}%, threshold 50%). val_score would be "
+                    f"meaningless -- diagnose the root cause before retrying."
+                )
 
         # Evaluate if we have GT graphs
         if all_gt_graphs:
