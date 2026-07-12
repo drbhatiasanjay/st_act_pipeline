@@ -20,7 +20,6 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
-import tracksdata
 from scipy import ndimage
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -39,6 +38,7 @@ from src.targets import (
     DivisionLoss,
     generate_edge_targets,
     generate_heatmap_targets,
+    load_geff_cached,
 )
 
 logger = logging.getLogger(__name__)
@@ -184,6 +184,16 @@ class TrainingLoop:
         self.last_epoch_wall_clock_seconds = 0.0
         self.last_epoch_num_batches = 0
 
+        # Cache of parsed .geff graphs, keyed by path -- a single training
+        # batch calls IndexedRXGraph.from_geff() on the SAME sample's .geff
+        # up to 4 times (twice in _get_gt_nodes for t/t+1, once each in
+        # generate_heatmap_targets/generate_edge_targets), confirmed via a
+        # real Kaggle run + code audit to be ~600 redundant re-parses per
+        # epoch across only a handful of distinct files. Safe to reuse the
+        # returned graph object across calls -- every caller only reads it
+        # (node_attrs/dividing_nodes/has_edge), never mutates it.
+        self._geff_cache: dict = {}
+
         # Logging
         self._init_log()
 
@@ -246,7 +256,7 @@ class TrainingLoop:
             if not geff_path.exists():
                 return None
 
-            graph, _ = tracksdata.graph.IndexedRXGraph.from_geff(str(geff_path))
+            graph, _ = load_geff_cached(geff_path, self._geff_cache)
             node_attrs = graph.node_attrs(attr_keys=['t', 'z', 'y', 'x'])
             nodes_at_t = node_attrs.filter(node_attrs['t'] == t_idx)
 
@@ -317,6 +327,7 @@ class TrainingLoop:
                     volume_shape,
                     target_type='gaussian',
                     target_ts=[int(t_idx)],
+                    geff_cache=self._geff_cache,
                 )
                 # heatmaps[t] is (1, Z, Y, X) -- add batch dim to match
                 # logits' (B, 1, Z, Y, X) for DetectionLoss/BCEWithLogitsLoss.
@@ -364,6 +375,7 @@ class TrainingLoop:
                         t=t_idx,
                         max_distance=DEFAULT_MAX_DISTANCE,
                         physical_voxel_size=DEFAULT_SCALE,
+                        geff_cache=self._geff_cache,
                     )
                     edge_targets = edge_targets.to(self.device)
                     division_mask = edge_metadata.get('division_mask', torch.zeros_like(edge_targets, dtype=torch.bool))

@@ -127,13 +127,19 @@ def greedy_edge_assignment(edge_probs: torch.Tensor,
             }
         }
 
-    # Generate candidate edges if not provided
+    # Generate candidate edges if not provided. Built on edge_probs' device
+    # (not left as default CPU): the real caller (train.py's validate_epoch)
+    # passes GPU-resident edge_probs with candidate_edges=None, and indexing
+    # a CPU tensor with the CUDA boolean mask from `edge_probs > threshold`
+    # below raises a device-mismatch RuntimeError -- confirmed by reading
+    # the call site, not yet hit in a real run only because validation
+    # hadn't reached a batch with peaks detected at both t and t+1 yet.
     if candidate_edges is None:
         candidate_edges = []
         for i in range(n_t):
             for j in range(n_t1):
                 candidate_edges.append((i, j))
-        candidate_edges = torch.tensor(candidate_edges, dtype=torch.long)
+        candidate_edges = torch.tensor(candidate_edges, dtype=torch.long, device=edge_probs.device)
 
     # Filter edges above threshold
     valid_mask = edge_probs > threshold

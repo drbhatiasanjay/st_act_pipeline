@@ -18,6 +18,27 @@ from scipy.spatial.distance import cdist
 logger = logging.getLogger(__name__)
 
 
+def load_geff_cached(geff_path: str | Path, geff_cache: dict | None):
+    """
+    Load a .geff graph, reusing a previously-parsed result if geff_cache is
+    given. Confirmed via a real Kaggle run + code audit: a single training
+    batch calls IndexedRXGraph.from_geff() on the SAME sample's .geff file
+    up to 4 times (twice in TrainingLoop._get_gt_nodes for t and t+1, once
+    each here and in generate_edge_targets), ~600 redundant re-parses per
+    epoch across only a handful of distinct files. Caller owns the cache's
+    lifetime (e.g. TrainingLoop.__init__'s self._geff_cache) so it can be
+    dropped/reset between runs; passing None preserves the original
+    always-reparse behavior for standalone/test callers.
+    """
+    key = str(geff_path)
+    if geff_cache is not None and key in geff_cache:
+        return geff_cache[key]
+    result = tracksdata.graph.IndexedRXGraph.from_geff(key)
+    if geff_cache is not None:
+        geff_cache[key] = result
+    return result
+
+
 def generate_heatmap_targets(
     sample_id: str,
     geff_path: str | Path,
@@ -27,6 +48,7 @@ def generate_heatmap_targets(
     sigma_z: float = 1.0,
     sigma_yx: float = 2.0,
     target_ts: list[int] | None = None,
+    geff_cache: dict | None = None,
 ) -> tuple[dict, dict]:
     """
     Generate heatmap targets from .geff ground truth.
@@ -48,6 +70,9 @@ def generate_heatmap_targets(
             needed (e.g. one training batch's t_idx out of a ~100-frame
             sample). Backward compatible: omitting it preserves the original
             all-timepoints behavior for existing callers.
+        geff_cache: Optional dict for reusing a previously-parsed .geff
+            graph across calls that share the same geff_path (see
+            load_geff_cached). Omitting it re-parses every call.
 
     Returns:
         (heatmaps, metadata) tuple where:
@@ -56,7 +81,7 @@ def generate_heatmap_targets(
     """
     # Load ground truth from .geff
     try:
-        graph, geff_metadata = tracksdata.graph.IndexedRXGraph.from_geff(str(geff_path))
+        graph, geff_metadata = load_geff_cached(geff_path, geff_cache)
     except Exception as e:
         logger.error(f"Failed to load .geff for {sample_id}: {e}")
         raise
@@ -157,6 +182,7 @@ def generate_edge_targets(
     t: int,
     max_distance: float = 7.0,
     physical_voxel_size: tuple[float, float, float] = (1.625, 0.40625, 0.40625),
+    geff_cache: dict | None = None,
 ) -> tuple[torch.Tensor, dict]:
     """
     Generate edge probability targets from .geff ground truth.
@@ -177,6 +203,9 @@ def generate_edge_targets(
             competition's real scoring match gate (src/evaluation.py DEFAULT_MAX_DISTANCE).
         physical_voxel_size: (z, y, x) micrometers per voxel, for converting
             voxel-space distances to physical distances before gating.
+        geff_cache: Optional dict for reusing a previously-parsed .geff
+            graph across calls that share the same geff_path (see
+            load_geff_cached). Omitting it re-parses every call.
 
     Returns:
         (edge_labels, metadata) tuple where:
@@ -186,7 +215,7 @@ def generate_edge_targets(
     """
     # Load ground truth
     try:
-        graph, geff_metadata = tracksdata.graph.IndexedRXGraph.from_geff(str(geff_path))
+        graph, geff_metadata = load_geff_cached(geff_path, geff_cache)
     except Exception as e:
         logger.error(f"Failed to load .geff for {sample_id}: {e}")
         raise
