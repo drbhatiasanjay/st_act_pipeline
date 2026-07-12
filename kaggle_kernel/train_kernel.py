@@ -28,12 +28,29 @@ from torch.utils.data import DataLoader
 # panel -- rather than guess a third exact path, search every directory
 # under /kaggle/input for one that actually contains src/dataset.py, and use
 # whatever that real path turns out to be.
+#
+# A one-level os.listdir() scan is NOT enough: Kaggle's current layout
+# nests attached datasets under /kaggle/input/datasets/<owner>/<slug>/ (and
+# competition data under /kaggle/input/competitions/<slug>/) rather than
+# flat /kaggle/input/<slug>/. Confirmed by a real failed run (Version #17
+# and #18 both) whose own diagnostic logged
+# "/kaggle/input contents: ['competitions', 'datasets']" -- neither of
+# those top-level names itself contains src/dataset.py, so the old loop
+# always left KAGGLE_SRC_DATASET_DIR as None and every run died on
+# `from src.dataset import CompetitionDataset` before training ever
+# started. Walk recursively instead (capped at a shallow depth so this
+# can't run away scanning a huge competition input tree), and take the
+# first directory that actually contains src/dataset.py.
 KAGGLE_SRC_DATASET_DIR = None
 if os.path.exists("/kaggle/input"):
-    for entry in os.listdir("/kaggle/input"):
-        candidate = os.path.join("/kaggle/input", entry)
-        if os.path.isfile(os.path.join(candidate, "src", "dataset.py")):
-            KAGGLE_SRC_DATASET_DIR = candidate
+    MAX_SEARCH_DEPTH = 5
+    for dirpath, dirnames, _filenames in os.walk("/kaggle/input"):
+        depth = dirpath[len("/kaggle/input"):].count(os.sep)
+        if depth >= MAX_SEARCH_DEPTH:
+            dirnames[:] = []
+            continue
+        if "src" in dirnames and os.path.isfile(os.path.join(dirpath, "src", "dataset.py")):
+            KAGGLE_SRC_DATASET_DIR = dirpath
             break
 
 if KAGGLE_SRC_DATASET_DIR:
@@ -179,6 +196,43 @@ if KAGGLE_MODE:
         check=True,
     )
     logger.info("Dependency installation complete.")
+
+    # A real run (v20) proved unconstrained "polars>=1.36.0" above is not
+    # enough: if Kaggle's base image already has a polars satisfying that
+    # bound, pip leaves it untouched (same class of bug as the earlier bare
+    # "polars" issue), and that pre-existing polars had a compiled Rust
+    # extension (polars._plr) that failed to import. polars/series/series.py
+    # swallows that ImportError silently (`with contextlib.suppress(ImportError):
+    # from polars._plr import PyDataFrame, PySeries`), so every later
+    # DataFrame/Series call raised NameError: name 'PySeries' is not defined
+    # -- caught by this project's own try/except fallbacks and silently
+    # replaced with all-zero heatmap targets and empty GT node sets for
+    # EVERY timepoint, all epoch, with no crash. Confirmed via v20's real
+    # log (repeated "Failed to get GT nodes ... using zero targets"), traced
+    # to polars' own source, not guessed. --force-reinstall guarantees a
+    # genuinely fresh wheel+extension pair instead of reusing whatever
+    # broken polars Kaggle's image shipped.
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "--no-deps",
+         "--force-reinstall", "polars>=1.36.0"],
+        check=True,
+    )
+
+    # Fail loud, not silent: verify polars' compiled extension actually
+    # loaded before training starts, instead of letting the same bug
+    # resurface as a quietly-swallowed per-timepoint warning again.
+    import polars as _pl_check
+    try:
+        from polars._plr import PySeries as _PySeriesCheck  # noqa: F401
+    except ImportError as e:
+        logger.error(f"polars._plr failed to import after force-reinstall: {e}")
+        logger.error(f"polars version: {_pl_check.__version__}")
+        raise RuntimeError(
+            "polars compiled extension (_plr) is broken -- GT node/heatmap "
+            "loading would silently degrade to all-zero targets. Aborting "
+            "instead of training on garbage data."
+        ) from e
+    logger.info(f"polars {_pl_check.__version__} extension verified OK.")
 
 # For local development: import from src/
 # For Kaggle: dependencies come from the attached st-act-src Dataset
