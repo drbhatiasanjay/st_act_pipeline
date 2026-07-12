@@ -21,13 +21,27 @@ from torch.utils.data import DataLoader
 # kaggle_kernel/src/) are NOT included, confirmed by pulling the kernel back
 # down and finding only this one file present. The correct mechanism is a
 # Kaggle Dataset (drbhatiasanjay/st-act-src, containing src/ + data_split.json)
-# attached via dataset_sources in kernel-metadata.json, mounted read-only at
-# /kaggle/input/st-act-src/.
-KAGGLE_SRC_DATASET_DIR = "/kaggle/input/st-act-src"
-if os.path.exists(KAGGLE_SRC_DATASET_DIR):
+# attached via dataset_sources in kernel-metadata.json.
+#
+# The assumed mount path (/kaggle/input/st-act-src) 404'd on import TWICE
+# despite the dataset showing as attached in the website editor's Input
+# panel -- rather than guess a third exact path, search every directory
+# under /kaggle/input for one that actually contains src/dataset.py, and use
+# whatever that real path turns out to be.
+KAGGLE_SRC_DATASET_DIR = None
+if os.path.exists("/kaggle/input"):
+    for entry in os.listdir("/kaggle/input"):
+        candidate = os.path.join("/kaggle/input", entry)
+        if os.path.isfile(os.path.join(candidate, "src", "dataset.py")):
+            KAGGLE_SRC_DATASET_DIR = candidate
+            break
+
+if KAGGLE_SRC_DATASET_DIR:
     sys.path.insert(0, KAGGLE_SRC_DATASET_DIR)
 else:
-    # Local run: src/ is a sibling of this file's parent directory.
+    # Local run (or dataset not found/attached): src/ is a sibling of this
+    # file's parent directory locally; on Kaggle this leaves imports to fail
+    # loudly below rather than silently resolving to the wrong "src".
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configure logging
@@ -43,6 +57,14 @@ if KAGGLE_MODE:
     INPUT_DIR = Path("/kaggle/input/competitions/biohub-cell-tracking-during-development")
     WORKING_DIR = Path("/kaggle/working")
     OUTPUT_DIR = Path("/kaggle/output")
+    # Diagnostic: the st-act-src dataset was visibly attached in the website
+    # editor's Input panel yet the assumed mount path
+    # (/kaggle/input/st-act-src) still 404'd on import -- log the REAL
+    # contents of /kaggle/input instead of guessing the path a third time.
+    try:
+        logger.info(f"/kaggle/input contents: {os.listdir('/kaggle/input')}")
+    except Exception as e:
+        logger.warning(f"Could not list /kaggle/input: {e}")
 else:
     INPUT_DIR = Path("data/staging")
     WORKING_DIR = Path(".")
@@ -168,7 +190,8 @@ try:
 except ImportError:
     LOCAL_IMPORTS = False
     logger.error("Could not import from src/. This kernel requires the src/ directory to be present.")
-    logger.error("For Kaggle submission, copy src/ to kaggle_kernel/ or inline the dependencies.")
+    logger.error(f"KAGGLE_SRC_DATASET_DIR resolved to: {KAGGLE_SRC_DATASET_DIR}")
+    logger.error(f"sys.path: {sys.path}")
     raise
 
 logger.info(f"Local imports: {LOCAL_IMPORTS}")
@@ -178,7 +201,7 @@ logger.info("\n" + f"{'='*80}")
 logger.info("DATA LOADING")
 logger.info(f"{'='*80}")
 
-if os.path.exists(KAGGLE_SRC_DATASET_DIR):
+if KAGGLE_SRC_DATASET_DIR:
     data_split_file = Path(KAGGLE_SRC_DATASET_DIR) / "data_split.json"
 else:
     data_split_file = Path("data_split.json")
