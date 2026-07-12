@@ -222,7 +222,20 @@ def generate_edge_targets(
             axis=1,
         )
         gt_ids = gt_frame['node_id'].to_list()
-        cand = candidate_coords.numpy() if isinstance(candidate_coords, torch.Tensor) else np.asarray(candidate_coords)
+        # .cpu() before .numpy(): train.py moves nodes_t/nodes_t1 to the GPU
+        # device (for feature-tensor indexing) right before calling
+        # generate_edge_targets() with them -- a bare .numpy() on a CUDA
+        # tensor raises here, caught by train.py's own try/except and
+        # silently skipping edge loss for every batch with real GT at both
+        # frames (confirmed via a real Kaggle run's repeated "Edge target
+        # generation failed ... can't convert cuda:0 device type tensor to
+        # numpy" warning). Matches the pattern already used correctly
+        # elsewhere in train.py (e.g. nodes_t.cpu().numpy()).
+        cand = (
+            candidate_coords.detach().cpu().numpy()
+            if isinstance(candidate_coords, torch.Tensor)
+            else np.asarray(candidate_coords)
+        )
         dists_um = cdist(cand * scale, gt_coords * scale)
         nearest_idx = dists_um.argmin(axis=1)
         nearest_dist = dists_um[np.arange(len(cand)), nearest_idx]
