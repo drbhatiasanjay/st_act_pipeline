@@ -310,37 +310,53 @@ class TrainingLoop:
             logits, features = self.unet3d(x)
 
             # === DETECTION LOSS (teacher forcing) ===
-            # Generate real GT heatmap targets for the batch's real absolute
-            # t_idx. Previously this passed volume_shape=(1,...), which makes
+            # Generate real GT heatmap targets for BOTH the batch's absolute
+            # t_idx AND t_idx+1 -- UNet3D's detection head is 2-channel
+            # (channel 0 = frame_t's own detections, channel 1 = frame_t1's),
+            # so both real timepoints need real supervision from a single
+            # forward pass. Single-channel-only supervision (the original
+            # design) forced validate_epoch() into either reusing one
+            # volume's peaks for both timepoints (corrupting edge scoring,
+            # since peaks_t/peaks_t1 were then identical) or stitching
+            # predictions from two separate forward passes together (a
+            # confirmed train-test feature distribution mismatch, since this
+            # loop's edge loss always slices features_t/features_t1 from the
+            # SAME shared `features` tensor below -- never from two
+            # different forward passes). target_ts=[t_idx] alone previously
+            # also had a real bug: passing volume_shape=(1,...) made
             # generate_heatmap_targets() iterate `for t in range(1)` == only
-            # t=0 -- for any real t_idx != 0 (the overwhelming majority of
-            # batches) heatmap_targets_dict.get(t_idx, ...) silently missed
-            # and fell back to an all-zero target, with no fallback counted
-            # (the call itself "succeeded"). target_ts=[t_idx] makes the
-            # function compute exactly (and only) the real timepoint needed.
+            # t=0, so heatmap_targets_dict.get(t_idx, ...) silently missed
+            # for any real t_idx != 0 and fell back to an all-zero target
+            # with no fallback counted. target_ts=[...] makes the function
+            # compute exactly (and only) the real timepoints needed.
             z, y, x = frame_t.shape[2:]
-            volume_shape = (int(t_idx) + 1, z, y, x)  # T only used for bounds validation now
+            volume_shape = (int(t_idx) + 2, z, y, x)  # T only used for bounds validation now
             try:
                 heatmap_targets_dict, _ = generate_heatmap_targets(
                     sample_id,
                     str(self.data_dir / f"{sample_id}.geff"),
                     volume_shape,
                     target_type='gaussian',
-                    target_ts=[int(t_idx)],
+                    target_ts=[int(t_idx), int(t_idx) + 1],
                     geff_cache=self._geff_cache,
                 )
-                # heatmaps[t] is (1, Z, Y, X) -- add batch dim to match
-                # logits' (B, 1, Z, Y, X) for DetectionLoss/BCEWithLogitsLoss.
-                heatmap_target = heatmap_targets_dict.get(t_idx, torch.zeros((1, z, y, x), dtype=torch.float32))
-                if not isinstance(heatmap_target, torch.Tensor):
-                    heatmap_target = torch.from_numpy(heatmap_target).float()
-                heatmap_target = heatmap_target.unsqueeze(0).to(self.device)
+                # heatmaps[t] is (1, Z, Y, X) -- stack channel 0 (t_idx) and
+                # channel 1 (t_idx+1), then add batch dim to match logits'
+                # (B, 2, Z, Y, X) for DetectionLoss/BCEWithLogitsLoss.
+                zero_channel = torch.zeros((1, z, y, x), dtype=torch.float32)
+                heatmap_ch0 = heatmap_targets_dict.get(t_idx, zero_channel)
+                heatmap_ch1 = heatmap_targets_dict.get(t_idx + 1, zero_channel)
+                if not isinstance(heatmap_ch0, torch.Tensor):
+                    heatmap_ch0 = torch.from_numpy(heatmap_ch0).float()
+                if not isinstance(heatmap_ch1, torch.Tensor):
+                    heatmap_ch1 = torch.from_numpy(heatmap_ch1).float()
+                heatmap_target = torch.cat([heatmap_ch0, heatmap_ch1], dim=0).unsqueeze(0).to(self.device)
             except Exception as e:
                 logger.warning(f"Heatmap generation failed for {sample_id}: {e}, using zero targets")
                 self.epoch_fallback_counts['heatmap_generation_failure'] += 1
-                heatmap_target = torch.zeros((1, 1, z, y, x), dtype=torch.float32, device=self.device)
+                heatmap_target = torch.zeros((1, 2, z, y, x), dtype=torch.float32, device=self.device)
 
-            # detection_loss expects (B, 1, Z, Y, X) for both logits and targets
+            # detection_loss expects (B, 2, Z, Y, X) for both logits and targets
             detection_loss = self.detection_loss_fn(logits, heatmap_target)
 
             # === EDGE LOSS (teacher forcing) ===
@@ -470,6 +486,51 @@ class TrainingLoop:
         logger.info(f"Train epoch average loss: {avg_loss:.6f}")
         return avg_loss
 
+    def _peaks_for_channel(self, detection_probs: torch.Tensor, channel: int, t_idx: int) -> list:
+        """Extract NMS peaks from one channel of a (B, 2, Z, Y, X) detection map.
+
+        An undertrained model's raw sigmoid output sits near 0.5 almost
+        everywhere (near-zero logits), so a fixed threshold can flag a huge
+        fraction of voxels as "peaks" -- ndimage.label() over that much noise
+        then hangs/balloons memory. Same failure mode hit and fixed in
+        scripts/benchmark_heatmap_targets.py this session; apply the same
+        adaptive-threshold guard here.
+        """
+        vol_np = detection_probs[0, channel].cpu().numpy()
+        threshold = self.hyperparams['detection_threshold']
+        positive_fraction = float((vol_np > threshold).mean())
+        max_positive_fraction = self.hyperparams.get('max_positive_voxel_fraction', 0.005)
+        if positive_fraction > max_positive_fraction:
+            adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
+            logger.warning(
+                f"Validation t_idx={t_idx} ch={channel}: threshold={threshold} flags "
+                f"{positive_fraction*100:.2f}% of voxels (undertrained-model miscalibration) "
+                f"-- using adaptive threshold={adaptive_threshold:.4f} instead"
+            )
+            threshold = max(adaptive_threshold, threshold)
+        return extract_peaks_from_volume(
+            vol_np,
+            threshold=threshold,
+            voxel_size=DEFAULT_SCALE,
+            nms_radius_um=self.hyperparams['nms_radius_um']
+        )
+
+    def _nodes_and_features_at_peaks(
+        self, features: torch.Tensor, peaks: list
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build (n, 3) node coords and (n, C) feature vectors at given peak locations."""
+        if len(peaks) == 0:
+            return (
+                torch.zeros((0, 3), dtype=torch.float32, device=self.device),
+                torch.zeros((0, features.shape[1]), dtype=torch.float32, device=self.device),
+            )
+        nodes = torch.tensor(peaks, dtype=torch.float32, device=self.device)
+        zc = torch.clamp(nodes[:, 0].long(), 0, features.shape[2] - 1)
+        yc = torch.clamp(nodes[:, 1].long(), 0, features.shape[3] - 1)
+        xc = torch.clamp(nodes[:, 2].long(), 0, features.shape[4] - 1)
+        feats = features[0, :, zc, yc, xc].t()
+        return nodes, feats
+
     def validate_epoch(self) -> dict[str, float]:
         """
         Run one validation epoch.
@@ -491,49 +552,37 @@ class TrainingLoop:
 
         self.epoch_fallback_counts['evaluation_failure'] = 0
 
-        # Sliding-window state across the val_loader's consecutive
-        # (shuffle=False) batches within a sample. Two bugs fixed together
-        # here (found via a broad audit this session, one flagged by a
-        # parallel Cowork review, one found independently while fixing it):
+        # Each batch is now fully self-contained: UNet3D's detection head is
+        # 2-channel (channel 0 = frame_t's own detections at t_idx, channel
+        # 1 = frame_t1's own detections at t_idx+1, see model.py), so a
+        # single forward pass gives real, DISTINCT peaks for both
+        # timepoints, with features_t/features_t1 both sliced from that
+        # SAME forward pass's shared `features` tensor -- matching exactly
+        # how train_epoch's edge loss extracts features (see the comment
+        # there), unlike an earlier attempt at this fix that cached
+        # detections across batches and ended up pairing features from two
+        # SEPARATE forward passes (a confirmed train-test distribution
+        # mismatch, caught via an adversarial review). This also fixes a
+        # second bug that fix had: the final frame of each sample is no
+        # longer dropped, since channel 1 of the LAST batch gives real
+        # detections for the sample's last timepoint (previously
+        # unreachable -- no batch ever had it as an own/first-frame t_idx).
         #
-        # 1. The old code called extract_peaks_from_volume() TWICE on the
-        #    SAME vol_np for both peaks_t and peaks_t1 -- since UNet3D's
-        #    single detection head is trained (see train_epoch's
-        #    target_ts=[t_idx]) to output detections AT t_idx (frame_t's
-        #    own time), peaks_t and peaks_t1 were deterministically
-        #    identical every batch, scoring "edges" between two copies of
-        #    the same point set. Fixed by carrying the PREVIOUS batch's own
-        #    detections (real peaks at t_idx-1) forward as this batch's
-        #    nodes_t, paired with this batch's own detections (real peaks
-        #    at t_idx) as nodes_t1 -- a genuine consecutive-timepoint pair.
-        # 2. `pred_graph = IndexedRXGraph()` was recreated fresh INSIDE this
-        #    loop and unconditionally overwrote `all_pred_graphs[sample_id]`
-        #    every batch, so only the LAST timepoint pair processed for
-        #    each sample survived into evaluation -- the accumulated track
-        #    graph across the whole sample was silently discarded every
-        #    time. Fixed by creating pred_graph once per sample_id and
-        #    reusing/appending to it across that sample's batches.
-        prev_peaks: list | None = None
-        prev_nodes: torch.Tensor | None = None
-        prev_features: torch.Tensor | None = None
-        prev_node_id_map: dict[int, int] = {}
-        prev_sample_id: str | None = None
-
+        # Known, accepted limitation: this does NOT deduplicate nodes at
+        # intermediate timepoints -- timepoint t_idx+1 gets predicted twice
+        # (once as this batch's channel-1, once as the next batch's own
+        # channel-0), both added as separate graph nodes rather than
+        # merged. This inflates predicted node count roughly 2x at
+        # non-boundary timepoints, which would need a proper nearest-
+        # neighbor merge before this validation score is trustworthy for a
+        # real Task 3.4 go/no-go decision -- acceptable for now to unblock
+        # verifying training itself works, not to finalize scoring.
         with torch.no_grad():
             for _batch_idx, batch in enumerate(self.val_loader):
                 frame_t = batch['frame_t'].to(self.device)
                 frame_t1 = batch['frame_t1'].to(self.device)
                 sample_id = batch['sample_id'][0]
                 t_idx = int(batch.get('t_idx', [0])[0])
-
-                # New sample boundary: no real previous-timepoint detection
-                # exists to pair with, so reset the sliding cache.
-                if sample_id != prev_sample_id:
-                    prev_peaks = None
-                    prev_nodes = None
-                    prev_features = None
-                    prev_node_id_map = {}
-                    prev_sample_id = sample_id
 
                 # IndexedRXGraph.add_node_attr_key() requires an explicit
                 # dtype/default (bare key-name-only raises "dtype is
@@ -552,69 +601,18 @@ class TrainingLoop:
                     all_pred_graphs[sample_id] = pred_graph
                 pred_graph = all_pred_graphs[sample_id]
 
-                # Forward pass
+                # Forward pass -- logits/detection_probs are (B, 2, Z, Y, X)
                 x = torch.cat([frame_t, frame_t1], dim=1)
                 logits, features = self.unet3d(x)
                 detection_probs = torch.sigmoid(logits)
 
-                # Extract nodes via NMS peak-finding. An undertrained model's
-                # raw sigmoid output sits near 0.5 almost everywhere (near-
-                # zero logits), so a fixed threshold can flag a huge fraction
-                # of voxels as "peaks" -- ndimage.label() over that much noise
-                # then hangs/balloons memory. Same failure mode hit and fixed
-                # in scripts/benchmark_heatmap_targets.py this session; apply
-                # the same adaptive-threshold guard here.
-                vol_np = detection_probs[0, 0].cpu().numpy()
-                threshold = self.hyperparams['detection_threshold']
-                positive_fraction = float((vol_np > threshold).mean())
-                max_positive_fraction = self.hyperparams.get('max_positive_voxel_fraction', 0.005)
-                if positive_fraction > max_positive_fraction:
-                    adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
-                    logger.warning(
-                        f"Validation t_idx={t_idx}: threshold={threshold} flags "
-                        f"{positive_fraction*100:.2f}% of voxels (undertrained-model miscalibration) "
-                        f"-- using adaptive threshold={adaptive_threshold:.4f} instead"
-                    )
-                    threshold = max(adaptive_threshold, threshold)
+                peaks_t = self._peaks_for_channel(detection_probs, channel=0, t_idx=t_idx)
+                peaks_t1 = self._peaks_for_channel(detection_probs, channel=1, t_idx=t_idx)
+                nodes_t, features_t = self._nodes_and_features_at_peaks(features, peaks_t)
+                nodes_t1, features_t1 = self._nodes_and_features_at_peaks(features, peaks_t1)
 
-                # current_peaks are real detections AT t_idx (frame_t's own
-                # time -- see the comment above the sliding-window state).
-                current_peaks = extract_peaks_from_volume(
-                    vol_np,
-                    threshold=threshold,
-                    voxel_size=DEFAULT_SCALE,
-                    nms_radius_um=self.hyperparams['nms_radius_um']
-                )
-
-                # Extract THIS iteration's own feature vectors at its own
-                # peaks, unconditionally, against `features` (this
-                # iteration's own forward-pass output) -- cached below for
-                # reuse as "features_t" next iteration. Deliberately NOT
-                # re-indexing a different iteration's features tensor with
-                # cross-iteration peak coordinates: a real bug caught by
-                # re-reading this fix -- since cells move between frames,
-                # doing that would silently pull feature vectors from
-                # wherever those pixels happen to sit in the WRONG frame,
-                # not a crash, just quietly wrong signal into the
-                # edge-prediction transformer.
-                if len(current_peaks) > 0:
-                    current_nodes = torch.tensor(current_peaks, dtype=torch.float32, device=self.device)
-                    z_c = torch.clamp(current_nodes[:, 0].long(), 0, features.shape[2] - 1)
-                    y_c = torch.clamp(current_nodes[:, 1].long(), 0, features.shape[3] - 1)
-                    x_c = torch.clamp(current_nodes[:, 2].long(), 0, features.shape[4] - 1)
-                    current_features = features[0, :, z_c, y_c, x_c].t()
-                else:
-                    current_nodes = torch.zeros((0, 3), dtype=torch.float32, device=self.device)
-                    current_features = torch.zeros((0, features.shape[1]), dtype=torch.float32, device=self.device)
-
-                if prev_peaks is not None and len(prev_peaks) > 0 and len(current_peaks) > 0:
-                    nodes_t, nodes_t1 = prev_nodes, current_nodes
-                    features_t, features_t1 = prev_features, current_features
-
-                    # Get edge predictions
+                if len(peaks_t) > 0 and len(peaks_t1) > 0:
                     edge_probs = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
-
-                    # Greedy edge assignment
                     assignment = greedy_edge_assignment(
                         edge_probs,
                         nodes_t.cpu(),
@@ -624,40 +622,31 @@ class TrainingLoop:
                         max_parents=1
                     )
                     edges = assignment['edges']
-
-                    # nodes_t (peaks at t_idx-1) already have td_ids from
-                    # when they were added as this-batch's "new" nodes in
-                    # the PREVIOUS iteration -- reuse them instead of
-                    # re-adding duplicate nodes for the same detections.
-                    node_id_map_t = prev_node_id_map
                 else:
                     edges = []
-                    node_id_map_t = {}
 
-                # Add this batch's own detections (current_peaks, time
-                # t_idx) as new nodes. Coordinates cast to int to match the
-                # pl.Int64 schema above (mirrors
-                # run_pipeline.py:convert_nx_to_tracksdata()) -- passing
-                # float values against an Int64 schema fails inside
+                # Add both channels' detections as new nodes every batch
+                # (see the known-limitation comment above the loop).
+                # Coordinates cast to int to match the pl.Int64 schema above
+                # (mirrors run_pipeline.py:convert_nx_to_tracksdata()) --
+                # passing float values against an Int64 schema fails inside
                 # evaluate_submission() with "unexpected value ... found
                 # value of type Float64", silently caught by the
                 # eval_failure fallback and masking the real validation
                 # score with zeros.
-                node_id_map_t1 = {}
-                for j, (z, y, x) in enumerate(current_peaks):
-                    td_id = pred_graph.add_node({
+                node_id_map_t = {}
+                for i, (z, y, x) in enumerate(peaks_t):
+                    node_id_map_t[i] = pred_graph.add_node({
                         't': t_idx, 'x': int(round(x)), 'y': int(round(y)), 'z': int(round(z)),
                     })
-                    node_id_map_t1[j] = td_id
+                node_id_map_t1 = {}
+                for j, (z, y, x) in enumerate(peaks_t1):
+                    node_id_map_t1[j] = pred_graph.add_node({
+                        't': t_idx + 1, 'x': int(round(x)), 'y': int(round(y)), 'z': int(round(z)),
+                    })
 
-                # Add edges from greedy assignment
                 for src_idx, tgt_idx, _prob in edges:
                     pred_graph.add_edge(node_id_map_t[src_idx], node_id_map_t1[tgt_idx], {})
-
-                prev_peaks = current_peaks
-                prev_nodes = current_nodes
-                prev_features = current_features
-                prev_node_id_map = node_id_map_t1
 
         # Load each sample's GT graph once (not once per batch -- a sample
         # has many batches, all needing the same GT graph).

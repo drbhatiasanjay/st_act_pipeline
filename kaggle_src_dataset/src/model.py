@@ -13,10 +13,21 @@ class UNet3D(nn.Module):
     - Input: (B, 2, 64, 256, 256) [batch, channels=2 (two frames concatenated), z, y, x]
     - Channels: [32, 64, 128] (from host reference implementation)
     - Downsample strides: (1, 4, 4) - Z untouched, Y/X downsampled 4x
-    - Output logits: (B, 1, 64, 256, 256) per-voxel detection [0,1]
+    - Output logits: (B, 2, 64, 256, 256) per-voxel detection [0,1] -- channel 0 is
+      frame_t's own detections (time t_idx), channel 1 is frame_t+1's (time t_idx+1)
     - Output features: (B, 128, 64, 256, 256) dense feature maps for transformer
 
     Uses asymmetric kernels (1,3,3) on Z to preserve Z resolution.
+
+    Detection head is 2-channel (not 1) so a single forward pass over
+    (frame_t, frame_t1) yields genuinely distinct, real detections for BOTH
+    timepoints sharing one feature context -- a single-channel head (the
+    original design) forced validate_epoch() to either reuse one volume's
+    peaks for both timepoints (identical points, corrupting edge scoring) or
+    stitch together predictions from two separate forward passes (a
+    confirmed train-test feature distribution mismatch: train_epoch's edge
+    loss always slices features_t/features_t1 from ONE shared forward pass,
+    see the comment there). The 2-channel head resolves both at the root.
     """
 
     def __init__(self, in_channels=2, channels=(32, 64, 128), anisotropy_stride=(1, 4, 4)):
@@ -50,11 +61,12 @@ class UNet3D(nn.Module):
         self.dec1 = self._conv_block(channels[1] + channels[0], channels[0], kernel=(1, 3, 3), padding=(0, 1, 1))
 
         # Final output heads
-        # Detection head: per-voxel logits
+        # Detection head: per-voxel logits, 2 channels (frame_t's own
+        # detections, frame_t1's own detections) -- see class docstring.
         self.det_head = nn.Sequential(
             nn.Conv3d(channels[0], channels[0], kernel_size=(1, 3, 3), padding=(0, 1, 1)),
             nn.ReLU(inplace=True),
-            nn.Conv3d(channels[0], 1, kernel_size=1)
+            nn.Conv3d(channels[0], 2, kernel_size=1)
         )
 
     @staticmethod
@@ -76,7 +88,10 @@ class UNet3D(nn.Module):
               where channels 0 is frame_t and channel 1 is frame_t+1
 
         Returns:
-            logits: (B, 1, 64, 256, 256) per-voxel detection logits
+            logits: (B, 2, 64, 256, 256) per-voxel detection logits --
+                channel 0 is frame_t's own detections, channel 1 is
+                frame_t1's own detections, both sharing this one forward
+                pass's feature context.
             features: (B, 128, 64, 256, 256) dense feature maps for transformer
         """
         # Encoder with skip connections
@@ -101,7 +116,7 @@ class UNet3D(nn.Module):
         dec1 = self.dec1(up1)  # (B, 32, 64, 256, 256)
 
         # Detection logits from final decoder output
-        logits = self.det_head(dec1)  # (B, 1, 64, 256, 256)
+        logits = self.det_head(dec1)  # (B, 2, 64, 256, 256)
 
         # For transformer: use bottleneck features at full Z resolution
         # Upsample bottleneck features to full resolution
