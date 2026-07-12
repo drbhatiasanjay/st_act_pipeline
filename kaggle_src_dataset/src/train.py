@@ -483,18 +483,70 @@ class TrainingLoop:
         self.unet3d.eval()
         self.transformer.eval()
 
-        all_pred_graphs = {}
+        import polars as pl
+
+        all_pred_graphs: dict[str, IndexedRXGraph] = {}
         all_gt_graphs = {}
         all_gt_metadata = {}
 
         self.epoch_fallback_counts['evaluation_failure'] = 0
+
+        # Sliding-window state across the val_loader's consecutive
+        # (shuffle=False) batches within a sample. Two bugs fixed together
+        # here (found via a broad audit this session, one flagged by a
+        # parallel Cowork review, one found independently while fixing it):
+        #
+        # 1. The old code called extract_peaks_from_volume() TWICE on the
+        #    SAME vol_np for both peaks_t and peaks_t1 -- since UNet3D's
+        #    single detection head is trained (see train_epoch's
+        #    target_ts=[t_idx]) to output detections AT t_idx (frame_t's
+        #    own time), peaks_t and peaks_t1 were deterministically
+        #    identical every batch, scoring "edges" between two copies of
+        #    the same point set. Fixed by carrying the PREVIOUS batch's own
+        #    detections (real peaks at t_idx-1) forward as this batch's
+        #    nodes_t, paired with this batch's own detections (real peaks
+        #    at t_idx) as nodes_t1 -- a genuine consecutive-timepoint pair.
+        # 2. `pred_graph = IndexedRXGraph()` was recreated fresh INSIDE this
+        #    loop and unconditionally overwrote `all_pred_graphs[sample_id]`
+        #    every batch, so only the LAST timepoint pair processed for
+        #    each sample survived into evaluation -- the accumulated track
+        #    graph across the whole sample was silently discarded every
+        #    time. Fixed by creating pred_graph once per sample_id and
+        #    reusing/appending to it across that sample's batches.
+        prev_peaks: list | None = None
+        prev_node_id_map: dict[int, int] = {}
+        prev_sample_id: str | None = None
 
         with torch.no_grad():
             for _batch_idx, batch in enumerate(self.val_loader):
                 frame_t = batch['frame_t'].to(self.device)
                 frame_t1 = batch['frame_t1'].to(self.device)
                 sample_id = batch['sample_id'][0]
-                t_idx = batch.get('t_idx', [0])[0]
+                t_idx = int(batch.get('t_idx', [0])[0])
+
+                # New sample boundary: no real previous-timepoint detection
+                # exists to pair with, so reset the sliding cache.
+                if sample_id != prev_sample_id:
+                    prev_peaks = None
+                    prev_node_id_map = {}
+                    prev_sample_id = sample_id
+
+                # IndexedRXGraph.add_node_attr_key() requires an explicit
+                # dtype/default (bare key-name-only raises "dtype is
+                # required when not using AttrSchema"), add_node() takes a
+                # single attrs dict and returns an auto-assigned int id,
+                # add_edge() needs those returned int ids plus an attrs
+                # dict. Mirrors the already-proven pattern in
+                # run_pipeline.py:convert_nx_to_tracksdata().
+                if sample_id not in all_pred_graphs:
+                    pred_graph = IndexedRXGraph()
+                    for key in ('t', 'x', 'y', 'z'):
+                        try:
+                            pred_graph.add_node_attr_key(key, pl.Int64, 0)
+                        except ValueError:
+                            pass  # key already exists
+                    all_pred_graphs[sample_id] = pred_graph
+                pred_graph = all_pred_graphs[sample_id]
 
                 # Forward pass
                 x = torch.cat([frame_t, frame_t1], dim=1)
@@ -521,22 +573,18 @@ class TrainingLoop:
                     )
                     threshold = max(adaptive_threshold, threshold)
 
-                peaks_t = extract_peaks_from_volume(
-                    vol_np,
-                    threshold=threshold,
-                    voxel_size=DEFAULT_SCALE,
-                    nms_radius_um=self.hyperparams['nms_radius_um']
-                )
-                peaks_t1 = extract_peaks_from_volume(
+                # current_peaks are real detections AT t_idx (frame_t's own
+                # time -- see the comment above the sliding-window state).
+                current_peaks = extract_peaks_from_volume(
                     vol_np,
                     threshold=threshold,
                     voxel_size=DEFAULT_SCALE,
                     nms_radius_um=self.hyperparams['nms_radius_um']
                 )
 
-                if len(peaks_t) > 0 and len(peaks_t1) > 0:
-                    nodes_t = torch.tensor(peaks_t, dtype=torch.float32, device=self.device)
-                    nodes_t1 = torch.tensor(peaks_t1, dtype=torch.float32, device=self.device)
+                if prev_peaks is not None and len(prev_peaks) > 0 and len(current_peaks) > 0:
+                    nodes_t = torch.tensor(prev_peaks, dtype=torch.float32, device=self.device)
+                    nodes_t1 = torch.tensor(current_peaks, dtype=torch.float32, device=self.device)
 
                     # Extract features at peak locations
                     z_t = torch.clamp(nodes_t[:, 0].long(), 0, features.shape[2] - 1)
@@ -562,47 +610,29 @@ class TrainingLoop:
                         max_parents=1
                     )
                     edges = assignment['edges']
+
+                    # nodes_t (peaks at t_idx-1) already have td_ids from
+                    # when they were added as this-batch's "new" nodes in
+                    # the PREVIOUS iteration -- reuse them instead of
+                    # re-adding duplicate nodes for the same detections.
+                    node_id_map_t = prev_node_id_map
                 else:
-                    nodes_t = torch.zeros((0, 3), dtype=torch.float32, device=self.device)
-                    nodes_t1 = torch.zeros((0, 3), dtype=torch.float32, device=self.device)
                     edges = []
+                    node_id_map_t = {}
 
-                # Build prediction graph. IndexedRXGraph.add_node_attr_key()
-                # requires an explicit dtype/default (bare key-name-only
-                # raises "dtype is required when not using AttrSchema"),
-                # add_node() takes a single attrs dict and returns an
-                # auto-assigned int id (not the kwargs-per-field / string
-                # node_id calling convention used here previously), and
-                # add_edge() needs those returned int ids plus an attrs dict.
-                # Mirrors the already-proven pattern in
-                # run_pipeline.py:convert_nx_to_tracksdata().
-                import polars as pl
-
-                pred_graph = IndexedRXGraph()
-                for key in ('t', 'x', 'y', 'z'):
-                    try:
-                        pred_graph.add_node_attr_key(key, pl.Int64, 0)
-                    except ValueError:
-                        pass  # key already exists
-
-                # Add nodes, tracking local index -> auto-assigned td node id.
-                # Coordinates cast to int to match the pl.Int64 schema above
-                # (mirrors run_pipeline.py:convert_nx_to_tracksdata()) --
-                # passing float values against an Int64 schema fails inside
+                # Add this batch's own detections (current_peaks, time
+                # t_idx) as new nodes. Coordinates cast to int to match the
+                # pl.Int64 schema above (mirrors
+                # run_pipeline.py:convert_nx_to_tracksdata()) -- passing
+                # float values against an Int64 schema fails inside
                 # evaluate_submission() with "unexpected value ... found
-                # value of type Float64", silently caught by the eval_failure
-                # fallback and masking the real validation score with zeros.
-                node_id_map_t = {}
-                for i, (z, y, x) in enumerate(nodes_t.cpu().numpy()):
-                    td_id = pred_graph.add_node({
-                        't': int(t_idx), 'x': int(round(x)), 'y': int(round(y)), 'z': int(round(z)),
-                    })
-                    node_id_map_t[i] = td_id
-
+                # value of type Float64", silently caught by the
+                # eval_failure fallback and masking the real validation
+                # score with zeros.
                 node_id_map_t1 = {}
-                for j, (z, y, x) in enumerate(nodes_t1.cpu().numpy()):
+                for j, (z, y, x) in enumerate(current_peaks):
                     td_id = pred_graph.add_node({
-                        't': int(t_idx + 1), 'x': int(round(x)), 'y': int(round(y)), 'z': int(round(z)),
+                        't': t_idx, 'x': int(round(x)), 'y': int(round(y)), 'z': int(round(z)),
                     })
                     node_id_map_t1[j] = td_id
 
@@ -610,18 +640,21 @@ class TrainingLoop:
                 for src_idx, tgt_idx, _prob in edges:
                     pred_graph.add_edge(node_id_map_t[src_idx], node_id_map_t1[tgt_idx], {})
 
-                all_pred_graphs[sample_id] = pred_graph
+                prev_peaks = current_peaks
+                prev_node_id_map = node_id_map_t1
 
-                # Load GT graph
-                try:
-                    geff_path = self.data_dir / f"{sample_id}.geff"
-                    if geff_path.exists():
-                        gt_graph, gt_metadata = load_geff_ground_truth(str(geff_path))
-                        all_gt_graphs[sample_id] = gt_graph
-                        all_gt_metadata[sample_id] = gt_metadata
-                except Exception as e:
-                    logger.warning(f"Failed to load GT for {sample_id}: {e}")
-                    self.epoch_fallback_counts['evaluation_failure'] += 1
+        # Load each sample's GT graph once (not once per batch -- a sample
+        # has many batches, all needing the same GT graph).
+        for sample_id in all_pred_graphs:
+            try:
+                geff_path = self.data_dir / f"{sample_id}.geff"
+                if geff_path.exists():
+                    gt_graph, gt_metadata = load_geff_ground_truth(str(geff_path))
+                    all_gt_graphs[sample_id] = gt_graph
+                    all_gt_metadata[sample_id] = gt_metadata
+            except Exception as e:
+                logger.warning(f"Failed to load GT for {sample_id}: {e}")
+                self.epoch_fallback_counts['evaluation_failure'] += 1
 
         # Evaluate if we have GT graphs
         if all_gt_graphs:
