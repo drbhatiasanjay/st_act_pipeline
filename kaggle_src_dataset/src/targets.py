@@ -106,20 +106,32 @@ def generate_heatmap_targets(
                     heatmap[0, z_idx, y_idx, x_idx] = 1.0
 
         elif target_type == 'gaussian':
-            # Dilated Gaussian targets
+            # Dilated Gaussian targets. Vectorized over each node's local
+            # bounding box with numpy broadcasting instead of a per-voxel
+            # Python loop -- the previous triple-nested for-loop called
+            # np.exp() individually per voxel (~1,200 voxels/node at
+            # default sigmas), confirmed via a real Kaggle run to be the
+            # dominant per-batch cost (generate_heatmap_targets runs once
+            # per training batch). Same math, same per-node max-combine for
+            # overlapping Gaussians, just computed as one array op per node.
             for node in nodes_at_t:
                 z_c, y_c, x_c = node['z'], node['y'], node['x']
 
-                # Create Gaussian around centroid
-                for z in range(max(0, int(z_c - 3 * sigma_z)), min(Z, int(z_c + 3 * sigma_z) + 1)):
-                    for y in range(max(0, int(y_c - 3 * sigma_yx)), min(Y, int(y_c + 3 * sigma_yx) + 1)):
-                        for x in range(max(0, int(x_c - 3 * sigma_yx)), min(X, int(x_c + 3 * sigma_yx) + 1)):
-                            # Anisotropic Gaussian
-                            dz = (z - z_c) / sigma_z
-                            dy = (y - y_c) / sigma_yx
-                            dx = (x - x_c) / sigma_yx
-                            gauss_val = np.exp(-(dz**2 + dy**2 + dx**2) / 2)
-                            heatmap[0, z, y, x] = max(heatmap[0, z, y, x], gauss_val)
+                z_lo, z_hi = max(0, int(z_c - 3 * sigma_z)), min(Z, int(z_c + 3 * sigma_z) + 1)
+                y_lo, y_hi = max(0, int(y_c - 3 * sigma_yx)), min(Y, int(y_c + 3 * sigma_yx) + 1)
+                x_lo, x_hi = max(0, int(x_c - 3 * sigma_yx)), min(X, int(x_c + 3 * sigma_yx) + 1)
+                if z_lo >= z_hi or y_lo >= y_hi or x_lo >= x_hi:
+                    continue
+
+                zz, yy, xx = np.mgrid[z_lo:z_hi, y_lo:y_hi, x_lo:x_hi]
+                dz = (zz - z_c) / sigma_z
+                dy = (yy - y_c) / sigma_yx
+                dx = (xx - x_c) / sigma_yx
+                gauss_block = np.exp(-(dz**2 + dy**2 + dx**2) / 2).astype(np.float32)
+
+                heatmap[0, z_lo:z_hi, y_lo:y_hi, x_lo:x_hi] = np.maximum(
+                    heatmap[0, z_lo:z_hi, y_lo:y_hi, x_lo:x_hi], gauss_block
+                )
 
         heatmaps[t] = torch.from_numpy(heatmap).float()
 

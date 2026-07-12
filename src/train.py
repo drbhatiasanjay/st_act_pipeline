@@ -413,9 +413,20 @@ class TrainingLoop:
             total_loss += total_loss_item.item()
             num_batches += 1
 
-            if (batch_idx + 1) % max(1, len(self.train_loader) // 5) == 0:
-                logger.info(f"Batch {batch_idx + 1}/{len(self.train_loader)}, "
-                          f"Loss: {total_loss_item.item():.6f}")
+            # Every 5 batches (not 1/5th of the epoch, ~40 batches here) so
+            # a genuinely slow epoch is visible within the first minute --
+            # a real ~75min run was let continue for over 40min before
+            # anyone had a rate/ETA signal to notice it was worth stopping.
+            if (batch_idx + 1) % 5 == 0 or (batch_idx + 1) == len(self.train_loader):
+                elapsed = time.time() - epoch_start_time
+                rate = elapsed / (batch_idx + 1)
+                eta_remaining = rate * (len(self.train_loader) - (batch_idx + 1))
+                logger.info(
+                    f"Batch {batch_idx + 1}/{len(self.train_loader)}, "
+                    f"Loss: {total_loss_item.item():.6f}, "
+                    f"elapsed={elapsed:.1f}s, {rate:.2f}s/batch, "
+                    f"eta_remaining={eta_remaining:.0f}s"
+                )
 
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         self.last_epoch_wall_clock_seconds = time.time() - epoch_start_time
