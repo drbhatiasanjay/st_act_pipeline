@@ -100,9 +100,27 @@ if KAGGLE_MODE:
             sys.executable, "-m", "pip", "install", "-q", "--no-deps", "--no-index",
             f"--find-links={WHEELS_DIR}",
             "tracksdata==0.1.0rc6", "zarr>=3.0.0", "numcodecs>=0.11.0",
-            "geff>=1.0.0", "geff-spec", "polars>=1.36.0", "polars-runtime-32",
+            "geff>=1.0.0", "geff-spec",
             "dask", "bidict", "rustworkx", "psygnal", "donfig", "google-crc32c",
             "typer", "ilpy", "pyscipopt", "blosc2>=2.0.0",
+        ],
+        check=True,
+    )
+
+    # polars needs --force-reinstall, separately from the rest: a real run
+    # (v22-27 of the training kernel) proved plain `pip install polars` --
+    # offline OR from PyPI, doesn't matter -- leaves Kaggle's pre-existing
+    # base-image polars untouched if it already satisfies the version bound,
+    # even though that pre-existing install may be missing its compiled
+    # extension entirely. This exact fix already exists in train_kernel.py;
+    # omitting it here (a real bug, not a hypothetical) reproduced the
+    # identical "Polars binary is missing!" failure on the very first real
+    # run of this script.
+    subprocess.run(
+        [
+            sys.executable, "-m", "pip", "install", "-q", "--no-deps", "--no-index",
+            "--force-reinstall", f"--find-links={WHEELS_DIR}",
+            "polars>=1.36.0", "polars-runtime-32",
         ],
         check=True,
     )
