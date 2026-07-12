@@ -16,15 +16,19 @@ Schema:
     - source_id,target_id: node_ids for edges (-1 for nodes)
 """
 
+import logging
 from pathlib import Path
 
 import pandas as pd
 import tracksdata as td
 
+logger = logging.getLogger(__name__)
+
 
 def export_submission(
     graphs_dict: dict[str, td.graph.BaseGraph],
     output_path: str | Path,
+    required_dataset_ids: list[str] | None = None,
 ) -> str | pd.DataFrame:
     """
     Export tracksdata graphs to a Kaggle-compliant submission CSV.
@@ -37,6 +41,17 @@ def export_submission(
 
     output_path : str or Path
         Path where the CSV file will be written.
+
+    required_dataset_ids : list[str], optional
+        The full set of real test dataset_ids that must appear in the output
+        (per the competition rule "Every dataset in the test set must appear
+        in the submission"). A dataset with zero detected nodes/edges
+        contributes zero rows under this schema (there's no "empty" row
+        type), so it would otherwise silently vanish from the CSV with no
+        warning -- exactly the kind of silent gap this project has
+        repeatedly been bitten by. If given, any required id producing zero
+        rows is logged loudly (not fabricated -- inventing fake detections
+        would be worse than an honest gap).
 
     Returns
     -------
@@ -117,6 +132,17 @@ def export_submission(
             }
             rows.append(row)
             global_id += 1
+
+    if required_dataset_ids is not None:
+        present_dataset_ids = {row['dataset'] for row in rows}
+        missing = sorted(set(required_dataset_ids) - present_dataset_ids)
+        if missing:
+            logger.warning(
+                f"{len(missing)} required test dataset(s) produced ZERO rows and are "
+                f"MISSING from the submission (violates 'every dataset must appear'): "
+                f"{missing}. Not fabricating fake detections -- diagnose why these "
+                f"datasets got zero predictions before submitting."
+            )
 
     # Convert to DataFrame and save
     df = pd.DataFrame(rows)
