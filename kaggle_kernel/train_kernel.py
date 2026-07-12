@@ -109,6 +109,29 @@ if torch.cuda.is_available():
     logger.info(f"GPU: {torch.cuda.get_device_name(0)}")
     logger.info(f"CUDA Version: {torch.version.cuda}")
 
+    # Fail loud in milliseconds, not after Zarr data loading has already
+    # started: a real run got a P100 (compute capability sm_60) allocated
+    # via CLI push (Kaggle's kernels-push API can't request T4, confirmed
+    # earlier this session), and PyTorch's installed build only ships
+    # compiled kernels for sm_70+ -- "no kernel image is available for
+    # execution on the device" only surfaced ~1s into UNet3D's first
+    # conv3d call, after Zarr loading had already spent real time. Compare
+    # the actual hardware's compute capability against what this specific
+    # PyTorch build was compiled for, instead of discovering the mismatch
+    # mid-forward-pass.
+    major, minor = torch.cuda.get_device_capability(device)
+    cc_string = f"sm_{major}{minor}"
+    supported_archs = torch.cuda.get_arch_list()
+    if cc_string not in supported_archs:
+        raise RuntimeError(
+            f"CUDA capability mismatch: {torch.cuda.get_device_name(device)} is "
+            f"{cc_string}, but this PyTorch build only supports: "
+            f"{', '.join(supported_archs)}. Reselect a supported GPU (T4) in the "
+            f"website's Save & Run All dialog -- kernels push via CLI/API cannot "
+            f"request a specific accelerator and may allocate an incompatible one."
+        )
+    logger.info(f"GPU compute capability {cc_string} verified compatible with this PyTorch build.")
+
 # Set random seed
 SEED = 42
 torch.manual_seed(SEED)
