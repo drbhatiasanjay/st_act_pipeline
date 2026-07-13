@@ -579,12 +579,20 @@ class TrainingLoop:
             # a genuinely slow epoch is visible within the first minute --
             # a real ~75min run was let continue for over 40min before
             # anyone had a rate/ETA signal to notice it was worth stopping.
-            if (batch_idx + 1) % 5 == 0 or (batch_idx + 1) == len(self.train_loader):
+            #
+            # effective_total accounts for max_batches_per_epoch: without this,
+            # a capped verification run (e.g. 1500 of a real 14,751-batch
+            # epoch) logged both the batch-count denominator AND eta_remaining
+            # against the full uncapped epoch size, making the ETA wildly
+            # wrong (~6.5h shown for a run that actually finishes in ~40min) --
+            # confirmed live against a real v40 run's log (2026-07-14).
+            effective_total = min(len(self.train_loader), max_batches) if max_batches is not None else len(self.train_loader)
+            if (batch_idx + 1) % 5 == 0 or (batch_idx + 1) == effective_total:
                 elapsed = time.time() - epoch_start_time
                 rate = elapsed / (batch_idx + 1)
-                eta_remaining = rate * (len(self.train_loader) - (batch_idx + 1))
+                eta_remaining = rate * (effective_total - (batch_idx + 1))
                 logger.info(
-                    f"Batch {batch_idx + 1}/{len(self.train_loader)}, "
+                    f"Batch {batch_idx + 1}/{effective_total}, "
                     f"Loss: {total_loss_item.item():.6f}, "
                     f"elapsed={elapsed:.1f}s, {rate:.2f}s/batch, "
                     f"eta_remaining={eta_remaining:.0f}s"
