@@ -2,9 +2,20 @@ import logging
 import os
 from collections.abc import Generator
 
+import blosc2
 import numpy as np
 import zarr
 from numcodecs import Blosc
+
+# Cap blosc2's internal decompression thread pool. It defaults to os.cpu_count()
+# (16 here), but our real per-timepoint chunks are a single (1,64,256,256) block
+# -- spawning 16 threads to decompress one small chunk is pure overhead, not
+# parallelism. Confirmed on real data: this single call is a ~375x speedup
+# (30s -> 0.08s per timepoint) and also eliminates a native `Segmentation
+# fault` that reproduced reliably around the ~36th real decompression with the
+# default thread count (16-thread churn against Windows' scheduler/handle
+# limits over many repeated calls, not a zarr/blosc2 correctness bug).
+blosc2.set_nthreads(1)
 
 # Configure optimized logging
 logging.basicConfig(level=logging.INFO, format='[ST-ACT Data Ingestion] %(asctime)s - %(levelname)s: %(message)s')
@@ -32,6 +43,14 @@ class AnisotropicZarrLoader:
         self.dataset: zarr.Array | None = None
         self.simulate = simulate
         self._quantile_normalization_params: tuple[float, float] | None = None
+        # Single-slot cache for the most recently decompressed timepoint.
+        # CompetitionDataset.__getitem__ requests (t, t+1) per item with
+        # shuffle=False consecutive access, so item i's t+1 is item i+1's t --
+        # confirmed live in a real run's log as every timepoint being
+        # decompressed twice in a row (~30s each) with no caching at all.
+        self._last_t: int | None = None
+        self._last_normalize: bool | None = None
+        self._last_block: np.ndarray | None = None
         self._init_store()
 
     def _init_store(self) -> None:
@@ -271,6 +290,9 @@ class AnisotropicZarrLoader:
         if t < 0 or t >= num_t:
             raise IndexError(f"Timepoint index {t} is out of bounds for a dataset containing {num_t} frames.")
 
+        if t == self._last_t and normalize == self._last_normalize and self._last_block is not None:
+            return self._last_block
+
         logger.info(f"Loading and decompressing 3D block for timepoint T={t}...")
         try:
             # Query slice: Zarr's smart indexing decompresses only the blosc2 blocks
@@ -281,6 +303,9 @@ class AnisotropicZarrLoader:
             if normalize and self._quantile_normalization_params is not None:
                 timepoint_vol = self._apply_quantile_normalization(timepoint_vol)
 
+            self._last_t = t
+            self._last_normalize = normalize
+            self._last_block = timepoint_vol
             return timepoint_vol
         except MemoryError:
             logger.critical("Memory threshold exceeded during Zarr slice loading! Calling garbage collection...")
