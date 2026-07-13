@@ -3,9 +3,11 @@ Unit tests for AnisotropicZarrLoader with real staged data.
 Tests validate correct loading of Zarr v3 OME-NGFF stores with proper anisotropy and quantile normalization.
 """
 
-import pytest
-import numpy as np
 import os
+
+import numpy as np
+import pytest
+
 from src.data_loader import AnisotropicZarrLoader
 
 
@@ -91,6 +93,62 @@ class TestAnisotropicZarrLoaderReal:
         assert q_low < q_high, f"Quantile range invalid: q_low={q_low} >= q_high={q_high}"
         assert q_low >= 0, f"q_low should be non-negative, got {q_low}"
 
+    def test_repeated_call_for_same_timepoint_does_not_redecompress(self, train_data_path):
+        """REGRESSION-relevant: CompetitionDataset.__getitem__ requests (t, t+1)
+        per item with shuffle=False consecutive access, so item i's t+1 is item
+        i+1's t -- confirmed live in a real run's log as every timepoint being
+        decompressed twice in a row (~30s each) with no caching at all. The
+        single-slot cache must make a second identical call a no-op."""
+        loader = AnisotropicZarrLoader(store_path=train_data_path, simulate=False)
+
+        class _CountingDatasetProxy:
+            def __init__(self, real_dataset):
+                self._real = real_dataset
+                self.call_count = 0
+
+            def __getitem__(self, key):
+                self.call_count += 1
+                return self._real[key]
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        proxy = _CountingDatasetProxy(loader.dataset)
+        loader.dataset = proxy
+
+        first = loader.load_timepoint_block(0, normalize=True)
+        second = loader.load_timepoint_block(0, normalize=True)
+
+        assert proxy.call_count == 1, "second identical call must hit the cache, not re-decompress"
+        assert np.array_equal(first, second)
+
+    def test_different_timepoint_evicts_the_cache_and_redecompresses(self, train_data_path):
+        """The cache must not silently return stale data for a different t."""
+        loader = AnisotropicZarrLoader(store_path=train_data_path, simulate=False)
+        t_dim = loader.get_shape()[0]
+        if t_dim < 2:
+            pytest.skip("Need at least 2 timepoints for this test")
+
+        class _CountingDatasetProxy:
+            def __init__(self, real_dataset):
+                self._real = real_dataset
+                self.call_count = 0
+
+            def __getitem__(self, key):
+                self.call_count += 1
+                return self._real[key]
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        proxy = _CountingDatasetProxy(loader.dataset)
+        loader.dataset = proxy
+
+        loader.load_timepoint_block(0, normalize=True)
+        loader.load_timepoint_block(1, normalize=True)
+
+        assert proxy.call_count == 2, "a different timepoint must always trigger a real decompress"
+
     def test_load_multiple_timepoints(self, train_data_path):
         """Test loading multiple timepoints sequentially."""
         loader = AnisotropicZarrLoader(store_path=train_data_path, simulate=False)
@@ -119,7 +177,7 @@ class TestAnisotropicZarrLoaderReal:
         """Test that simulate=False raises error for non-existent path."""
         fake_path = "data/nonexistent_store.zarr"
         with pytest.raises(FileNotFoundError):
-            loader = AnisotropicZarrLoader(store_path=fake_path, simulate=False)
+            AnisotropicZarrLoader(store_path=fake_path, simulate=False)
 
     def test_simulate_false_is_default(self, train_data_path):
         """Test that simulate=False is the default (requires real data)."""
