@@ -739,10 +739,24 @@ class TrainingLoop:
 
         return val_metrics
 
-    def fit(self, num_epochs: int):
-        """Train model for specified number of epochs."""
-        logger.info(f"Starting training for {num_epochs} epochs")
+    def fit(self, num_epochs: int, max_wall_clock_seconds: float | None = None):
+        """Train model for specified number of epochs.
+
+        If max_wall_clock_seconds is set, stops cleanly (with whatever checkpoint
+        already exists on disk) before starting an epoch projected to exceed the
+        budget, rather than letting the platform kill the process mid-epoch. The
+        projection uses the actual measured average epoch time so far, not a
+        pre-run estimate -- this deliberately doesn't assume a specific
+        per-batch rate, since that rate can change across code revisions (e.g.
+        the Zarr per-item loader caching fix) and per-epoch cost may not be
+        train-only (validate_epoch does real inference work once detections
+        stop being trivially empty).
+        """
+        logger.info(f"Starting training for up to {num_epochs} epochs")
         logger.info(f"Hyperparameters: {json.dumps(self.hyperparams, indent=2)}")
+        if max_wall_clock_seconds is not None:
+            logger.info(f"Wall-clock budget: {max_wall_clock_seconds:.0f}s")
+        fit_start_time = time.monotonic()
 
         for epoch in range(num_epochs):
             logger.info(f"\n{'='*60}")
@@ -774,6 +788,18 @@ class TrainingLoop:
 
                 if self.epochs_without_improvement >= self.hyperparams['early_stopping_patience']:
                     logger.info("Early stopping triggered!")
+                    break
+
+            if max_wall_clock_seconds is not None:
+                elapsed = time.monotonic() - fit_start_time
+                avg_epoch_time = elapsed / (epoch + 1)
+                if elapsed + avg_epoch_time > max_wall_clock_seconds:
+                    logger.info(
+                        f"Wall-clock budget ({max_wall_clock_seconds:.0f}s) would likely be "
+                        f"exceeded by another epoch (elapsed={elapsed:.0f}s, "
+                        f"avg_epoch={avg_epoch_time:.0f}s) -- stopping cleanly after "
+                        f"{epoch + 1} epoch(s)."
+                    )
                     break
 
         logger.info(f"\nTraining complete. Best val score: {self.best_val_score:.6f}")

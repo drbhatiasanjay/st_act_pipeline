@@ -1,10 +1,13 @@
 """
 Kaggle training kernel for ST-ACT (Spatio-Temporal Anisotropic Cell Tracker).
 
-Sanity-check training: 3-5 epochs on full 199-sample train set.
-- Validates data loading, training loop, and validation metrics
-- Saves checkpoint and training log for local evaluation
-- Does NOT commit to full training yet; sanity-check first
+Full training: wall-clock-budgeted run (up to 11h of the 12h Kaggle GPU cap)
+on the full 199-sample train/val split.
+- Trains until the wall-clock budget or num_epochs upper bound is hit
+- Saves checkpoint (best val score, guaranteed at least after epoch 1) and
+  training log for local evaluation
+- Superseded the earlier 200-batch-capped sanity check once that validated
+  the pipeline end-to-end (real data, real GPU, real checkpoint save)
 """
 
 import logging
@@ -91,7 +94,7 @@ WORKING_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 logger.info(f"{'='*80}")
-logger.info("ST-ACT KAGGLE SANITY-CHECK TRAINING")
+logger.info("ST-ACT KAGGLE FULL TRAINING")
 logger.info(f"{'='*80}")
 logger.info(f"Kaggle Mode: {KAGGLE_MODE}")
 logger.info(f"Input Dir: {INPUT_DIR}")
@@ -153,15 +156,24 @@ HYPERPARAMS = {
     'nms_radius_um': 5.0,
     'seed': SEED,
     'batch_size': 1,  # Memory-constrained
-    'epochs_for_sanity_check': 3,
-    # A real run (v26) revealed the true per-epoch batch count is ~14,751
-    # (149 train samples x ~99 consecutive-frame pairs each), not the ~199
-    # this session originally assumed -- at ~1.37s/batch, 3 full epochs is
-    # ~17 real hours, not the ~30min a "sanity check" is meant to take.
-    # Cap batches/epoch so this validates the pipeline end-to-end (real
-    # data, real GPU, real checkpoint save) in a practical amount of time
-    # instead. Full (non-sanity-check) training should NOT set this.
-    'max_batches_per_epoch': 200,
+    # Full run: no max_batches_per_epoch cap (that was only for the earlier
+    # sanity check -- real epoch size is ~14,751 batches: 149 train samples x
+    # ~99 consecutive-frame pairs each). Real per-batch rate at sanity-check
+    # time (v26, before the Zarr per-item loader-caching fix in f5fd65c) was
+    # ~1.37s/batch, implying ~5.6h/epoch train-only -- but that number
+    # predates the loader-cache fix and may now be pessimistic. Rather than
+    # guess a fixed epoch count from a possibly-stale rate, num_epochs below
+    # is a generous upper bound and max_wall_clock_seconds does the real
+    # gating, sized from the ACTUAL measured epoch time during this run
+    # (see TrainingLoop.fit()).
+    'num_epochs': 20,
+    # 11h of Kaggle's 12h GPU session cap, leaving a ~1h buffer for
+    # dependency install, notebook-to-HTML conversion, and validate_epoch
+    # cost that may be higher than the sanity run's (that run's val was
+    # near-instant because the undertrained model predicted zero detections
+    # everywhere, making NMS/assignment near-no-ops -- not representative of
+    # a model that's actually learning).
+    'max_wall_clock_seconds': 11 * 3600,
 }
 
 logger.info("\nHyperparameters:")
@@ -357,8 +369,8 @@ logger.info("\n" + f"{'='*80}")
 logger.info("TRAINING LOOP SETUP")
 logger.info(f"{'='*80}")
 
-checkpoint_dir = WORKING_DIR / "checkpoints_sanity"
-log_file = WORKING_DIR / "sanity_training_log.csv"
+checkpoint_dir = WORKING_DIR / "checkpoints"
+log_file = WORKING_DIR / "training_log.csv"
 
 logger.info(f"Checkpoint dir: {checkpoint_dir}")
 logger.info(f"Log file: {log_file}")
@@ -377,16 +389,17 @@ training_loop = TrainingLoop(
 
 logger.info("Training loop initialized")
 
-# === SANITY-CHECK TRAINING ===
+# === FULL TRAINING (WALL-CLOCK BUDGETED) ===
 logger.info("\n" + f"{'='*80}")
-logger.info("SANITY-CHECK TRAINING (LIMITED EPOCHS)")
+logger.info("FULL TRAINING (WALL-CLOCK BUDGETED)")
 logger.info(f"{'='*80}")
 
-num_epochs = HYPERPARAMS['epochs_for_sanity_check']
-logger.info(f"Training for {num_epochs} epochs (sanity-check mode)")
+num_epochs = HYPERPARAMS['num_epochs']
+max_wall_clock_seconds = HYPERPARAMS['max_wall_clock_seconds']
+logger.info(f"Training for up to {num_epochs} epochs, budget={max_wall_clock_seconds:.0f}s")
 
 try:
-    training_loop.fit(num_epochs=num_epochs)
+    training_loop.fit(num_epochs=num_epochs, max_wall_clock_seconds=max_wall_clock_seconds)
 except Exception as e:
     logger.error(f"Training failed: {e}")
     logger.error("Saving partial checkpoint before exit...")
@@ -409,9 +422,16 @@ logger.info(f"{'='*80}")
 
 # Save model summary
 logger.info("Saving model summary...")
+# num_epochs above is the upper bound passed to fit(); the wall-clock budget
+# may have stopped training earlier -- count actual completed epochs from
+# the log file (one data row per completed epoch) rather than assume the cap.
+epochs_completed = 0
+if Path(log_file).exists():
+    with open(log_file) as _f:
+        epochs_completed = max(0, sum(1 for _ in _f) - 1)
 summary_path = WORKING_DIR / "model_summary.txt"
 with open(summary_path, 'w') as f:
-    f.write("ST-ACT KAGGLE SANITY-CHECK TRAINING\n")
+    f.write("ST-ACT KAGGLE FULL TRAINING\n")
     f.write(f"{'='*80}\n\n")
     f.write("MODEL SUMMARY\n")
     f.write(f"UNet3D parameters: {unet3d_params:,}\n")
@@ -420,7 +440,7 @@ with open(summary_path, 'w') as f:
     f.write("TRAINING CONFIGURATION\n")
     for key, val in HYPERPARAMS.items():
         f.write(f"{key}: {val}\n")
-    f.write(f"\nTRAINING EPOCHS: {num_epochs}\n")
+    f.write(f"\nTRAINING EPOCHS COMPLETED: {epochs_completed} (budget upper bound: {num_epochs})\n")
     f.write(f"Training dataset size: {len(train_dataset)}\n")
     f.write(f"Validation dataset size: {len(val_dataset)}\n\n")
     f.write("CHECKPOINTS\n")
@@ -454,11 +474,11 @@ for f in sorted(WORKING_DIR.glob("*")):
         logger.info(f"  {f.name}: {size_mb:.2f} MB")
 
 logger.info("\n" + f"{'='*80}")
-logger.info("SANITY-CHECK TRAINING COMPLETE")
+logger.info("FULL TRAINING COMPLETE")
 logger.info(f"{'='*80}")
 logger.info("\nNext steps:")
 logger.info("1. Download outputs from /kaggle/working/")
-logger.info("2. Check sanity_training_log.csv for metrics and loss curves")
+logger.info("2. Check training_log.csv for metrics and loss curves")
 logger.info("3. Verify validation score is non-zero and metrics are reasonable")
-logger.info("4. If sanity-check looks good, proceed to full training (Wave 4)")
+logger.info("4. Push the best checkpoint to st-act-checkpoint dataset for inference")
 logger.info("5. If issues found, diagnose from logs and fix src/train.py")
