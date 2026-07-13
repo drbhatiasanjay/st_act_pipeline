@@ -30,16 +30,17 @@ plainly rather than inventing minor nitpicks. Do not hedge with vague "consider.
 -- either it's a real problem or it isn't."""
 
 
-def get_diff(diff_ref: str | None) -> str:
+def get_diff(diff_ref: str | None, exclude: list[str]) -> str:
     # encoding="utf-8" explicitly: Windows' default locale encoding (cp1252)
     # chokes on non-ASCII characters (e.g. em-dashes) that real commit
     # diffs in this repo contain -- same class of issue hit earlier this
     # session with Kaggle log downloads needing PYTHONUTF8=1.
-    cmd = ["git", "diff"] + ([diff_ref] if diff_ref else [])
+    pathspec = ["--"] + [f":!{p}" for p in exclude] if exclude else []
+    cmd = ["git", "diff"] + ([diff_ref] if diff_ref else []) + pathspec
     output = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=True).stdout
     if not output.strip():
         # Working tree is clean -- fall back to the staged diff.
-        cmd = ["git", "diff", "--cached"] + ([diff_ref] if diff_ref else [])
+        cmd = ["git", "diff", "--cached"] + ([diff_ref] if diff_ref else []) + pathspec
         output = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", check=True).stdout
     return output
 
@@ -53,6 +54,10 @@ def main() -> None:
         "--diff-ref", default=None,
         help="Base ref for the diff (e.g. HEAD~3); default is working-tree diff against HEAD"
     )
+    parser.add_argument(
+        "--exclude", nargs="*", default=[],
+        help="Pathspec(s) to exclude from --diff (e.g. generated logs) -- git ':!path' syntax applied automatically"
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -63,7 +68,7 @@ def main() -> None:
     context_parts = []
 
     if args.diff:
-        diff_output = get_diff(args.diff_ref)
+        diff_output = get_diff(args.diff_ref, args.exclude)
         context_parts.append(f"## Git diff\n```diff\n{diff_output}\n```")
 
     for fpath in args.files:

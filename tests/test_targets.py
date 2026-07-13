@@ -181,6 +181,29 @@ class TestGenerateEdgeTargets:
 
         assert edge_labels.shape == (n_t * n_t1,)
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires a real CUDA device")
+    def test_cuda_resident_nodes_do_not_crash_on_numpy_conversion(self):
+        """REGRESSION GUARD, gap found by adversarial review: this file's other
+        generate_edge_targets tests only ever pass CPU tensors, so they would NOT
+        catch a regression of the real fix already shipped in match_to_gt()
+        (`candidate_coords.detach().cpu().numpy()`, src/targets.py) -- a bare
+        `.numpy()` works fine on a CPU tensor but raises TypeError on a CUDA one.
+        train.py's real callers always pass GPU-resident nodes_t/nodes_t1, so this
+        is the actual failure mode that shipped once already. Skipped (not
+        xfailed) when no GPU is present, since it can't meaningfully run there --
+        this project's CI/dev machine is CPU-only, but Kaggle's real GPU runs are
+        exactly where this regression would resurface."""
+        require_real_geff()
+        nodes_t = torch.tensor([[3.0, 45.0, 45.0]], device="cuda")
+        nodes_t1 = torch.tensor([[3.0, 46.0, 46.0]], device="cuda")
+
+        edge_labels, metadata = generate_edge_targets(
+            sample_id="44b6_0113de3b", geff_path=REAL_GEFF_PATH,
+            nodes_t=nodes_t, nodes_t1=nodes_t1, t=0,
+        )
+
+        assert edge_labels.shape == (1,)
+
     def test_geff_cache_shared_reduces_real_parse_count(self, monkeypatch):
         require_real_geff()
         call_count = {"n": 0}

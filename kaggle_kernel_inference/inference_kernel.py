@@ -213,6 +213,7 @@ def main():
         dataset.zip_path = None
         dataset.sample_ids = [sample_id]
         dataset.pairs = []
+        dataset._loader_cache = {}
         dataset._build_pair_index()
 
         pred_graph = IndexedRXGraph()
