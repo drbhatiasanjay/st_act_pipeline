@@ -164,6 +164,16 @@ DEATH_COST = 15.0
 DIVISION_REWARD = -8.0
 MAX_GAP_FRAMES = 2
 
+# Post-solve graph refinement (COMPETITOR_RESEARCH_2026-07-13.md items 3/4,
+# verified real techniques from 2 independent top public Kaggle notebooks --
+# see DEFERRED_IMPROVEMENTS.md's priority matrix). Both are low-risk: pruning
+# is a pure graph op with a division-protection safety check, smoothing only
+# mutates coordinates and cannot touch edges/T_pred/division_jaccard.
+MIN_TRACK_LEN = 4  # the two source notebooks disagreed (4 vs 7); tune against our own data later
+KEEP_DIVISION_COMPONENTS = True
+LINEFIT_WEIGHT = 0.76  # confirmed exact value in the source notebook
+LINEFIT_WINDOW = 2
+
 
 def _dataset_full_config() -> dict:
     """Everything that affects a dataset's output -- feeds both cache-key functions.
@@ -298,6 +308,18 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
     logger.info(f"[Dataset {dataset_id}] Smoothing mitosis edges...")
     lineage_graph = tracker.smooth_mitosis_edges(lineage_graph, centroids_by_t, window_size=2)
 
+    # Post-solve graph refinement (competitor-validated, low-risk -- see
+    # DEFERRED_IMPROVEMENTS.md priority matrix). Pruning first (reduces graph
+    # size before spending time smoothing nodes that'll be dropped anyway);
+    # order doesn't affect correctness since smoothing only moves coordinates.
+    nodes_before_prune = lineage_graph.number_of_nodes()
+    lineage_graph = prune_short_tracks(lineage_graph)
+    logger.info(
+        f"[Dataset {dataset_id}] Pruned short tracks: "
+        f"{nodes_before_prune} -> {lineage_graph.number_of_nodes()} nodes"
+    )
+    lineage_graph = linefit_smooth_coordinates(lineage_graph)
+
     timings['tracking'] = time.time() - start_track
     logger.info(f"[Dataset {dataset_id}] Tracking complete ({timings['tracking']:.1f}s): {lineage_graph.number_of_nodes()} nodes, {lineage_graph.number_of_edges()} edges")
 
@@ -321,6 +343,145 @@ def run_dataset(zarr_path: str, dataset_id: str, anisotropy: np.ndarray,
     save_dataset_checkpoint(ckpt_key, td_graph, timings)
 
     return td_graph, timings, False
+
+
+def prune_short_tracks(
+    lineage_graph: nx.DiGraph,
+    min_track_len: int = MIN_TRACK_LEN,
+    keep_division_components: bool = KEEP_DIVISION_COMPONENTS,
+) -> nx.DiGraph:
+    """
+    Component-based short-track pruning, with division protection.
+
+    Drops entire weakly-connected components shorter than min_track_len, EXCEPT
+    any component containing a division event (a node with out-degree >= 2) is
+    always kept regardless of length. This is the real technique two independent
+    top public Kaggle notebooks for this exact competition converged on
+    (COMPETITOR_RESEARCH_2026-07-13.md item 3, verified against the real source,
+    not just Gemini's summary) -- it directly answers this project's own earlier
+    concern (see DEFERRED_IMPROVEMENTS.md's old item 1) that naive isolated-node
+    pruning would risk cutting real births/deaths alongside noise: operating on
+    whole connected components with a structural division safety check avoids
+    that specific failure mode instead of relying on a per-node confidence
+    threshold.
+
+    Reduces the `T_pred` over-prediction penalty in `adjusted_edge_jaccard` by
+    removing likely-spurious short fragments, without touching any node that's
+    part of a real division event.
+
+    Args:
+        lineage_graph: post-solve lineage graph (before tracksdata conversion)
+        min_track_len: components with fewer than this many nodes are dropped,
+            unless keep_division_components exempts them. The two source
+            notebooks disagreed (4 vs 7) -- treat as a tunable, not a constant
+            to copy verbatim; needs empirical tuning against our own real
+            checkpoint data (PRD.md Phase 4).
+        keep_division_components: if True, any component containing a node
+            with out-degree >= 2 is kept regardless of length.
+
+    Returns:
+        A new graph containing only the kept nodes/edges (input is not mutated).
+    """
+    if lineage_graph.number_of_nodes() == 0:
+        return lineage_graph
+
+    keep_nodes: set = set()
+    for component in nx.weakly_connected_components(lineage_graph):
+        has_division = any(lineage_graph.out_degree(n) >= 2 for n in component)
+        if len(component) >= min_track_len or (keep_division_components and has_division):
+            keep_nodes.update(component)
+
+    return lineage_graph.subgraph(keep_nodes).copy()
+
+
+def linefit_smooth_coordinates(
+    lineage_graph: nx.DiGraph,
+    weight: float = LINEFIT_WEIGHT,
+    window: int = LINEFIT_WINDOW,
+) -> nx.DiGraph:
+    """
+    Topology-preserving line-fit coordinate smoothing.
+
+    Mutates only node 'coords' attributes -- never adds/removes nodes or edges,
+    so it cannot affect `T_pred` or `division_jaccard` at all. Verified real
+    technique (COMPETITOR_RESEARCH_2026-07-13.md item 4, w=0.76 confirmed as
+    the exact value used in the source notebook, not approximated). Directly
+    targets the competition's strict 7.0µm `DistanceMatching` gate by removing
+    frame-to-frame jitter along already-correctly-linked tracks.
+
+    For each node, walks up to `window` steps backward/forward through STRICTLY
+    single-predecessor/single-successor chains of CONSECUTIVE-frame edges only
+    (a chain stops at any branch, merge, or gap-closing edge that skips a
+    frame -- including a gap edge would corrupt the linear-fit's dt
+    assumption). Fits a degree-1 polynomial per axis (z, y, x) against relative
+    frame offset over that local neighborhood, then blends the fitted position
+    with the raw one.
+
+    Args:
+        lineage_graph: post-solve lineage graph, mutated in place and returned
+        weight: blend weight toward the fitted line (0=no smoothing, 1=fully
+            replace with the fit). Clamped to [0, 1].
+        window: how many single-successor/predecessor steps to walk in each
+            direction before stopping.
+
+    Returns:
+        The same graph object, with 'coords' updated in place.
+    """
+    if lineage_graph.number_of_edges() == 0:
+        return lineage_graph
+
+    weight = max(0.0, min(1.0, weight))
+    original_coords = {
+        n: np.asarray(attrs["coords"], dtype=np.float64)
+        for n, attrs in lineage_graph.nodes(data=True)
+    }
+
+    # Only strictly-consecutive-frame edges (t -> t+1) define the linear
+    # neighborhood -- gap-closing edges (t -> t+2/t+3) would corrupt the fit.
+    predecessor: dict = {}
+    successor: dict = {}
+    for u, v in lineage_graph.edges():
+        if v[0] == u[0] + 1:
+            successor.setdefault(u, []).append(v)
+            predecessor.setdefault(v, []).append(u)
+
+    updated_coords: dict = {}
+    for node in lineage_graph.nodes():
+        neighborhood = [(0, node)]
+
+        current = node
+        for step in range(1, window + 1):
+            preds = predecessor.get(current, [])
+            if len(preds) != 1:
+                break
+            current = preds[0]
+            neighborhood.append((-step, current))
+
+        current = node
+        for step in range(1, window + 1):
+            succs = successor.get(current, [])
+            if len(succs) != 1:
+                break
+            current = succs[0]
+            neighborhood.append((step, current))
+
+        if len(neighborhood) < 3:
+            continue  # not enough points for a meaningful line fit
+
+        dts = np.array([delta for delta, _ in neighborhood], dtype=np.float64)
+        coords = np.stack([original_coords[n] for _, n in neighborhood])
+        fitted = np.array([
+            np.polyval(np.polyfit(dts, coords[:, axis], 1), 0.0)
+            for axis in range(3)
+        ])
+        if not np.isfinite(fitted).all():
+            continue
+        updated_coords[node] = (1.0 - weight) * original_coords[node] + weight * fitted
+
+    for node, coords in updated_coords.items():
+        lineage_graph.nodes[node]["coords"] = coords
+
+    return lineage_graph
 
 
 def convert_nx_to_tracksdata(nx_graph: nx.DiGraph, dataset_id: str) -> td.graph.BaseGraph:
