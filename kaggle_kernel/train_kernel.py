@@ -182,15 +182,17 @@ HYPERPARAMS = {
     'batch_size': 1,  # Memory-constrained
     # TEMPORARY for this run only: an intermediate ~34min-train verification,
     # sized up from the earlier 200-batch (~5min) check, which showed the
-    # detection-head bias-init + loss-normalization fixes were both correctly
-    # ACTIVE but still tripped the zero-detections circuit-breaker -- 200
-    # batches (1.4% of an epoch) may simply be too few real gradient steps for
-    # spatial feature learning, independent of correctness. 1500 batches x
-    # ~1.37s/batch (confirmed rate from the real v30 full run) =~ 34min train,
-    # before committing another ~5.6h full epoch. REMOVE this line before the
+    # v40 (2026-07-14): 1500 batches with shuffle=True + all 4 fixes (adaptive
+    # loss, bias init, lr=1e-3, shuffle=True) trained cleanly -- healthy,
+    # mildly-decreasing real loss throughout (~1.61 -> ~1.42 by batch 1000),
+    # no collapse -- but validation's circuit breaker still fired (first 10
+    # frozen-model batches predicted zero nodes above detection_threshold=0.5).
+    # Bumping to 5000 (real GPU rate confirmed 1.54s/batch -> ~2.1h train) to
+    # test whether more real steps clear the fixed 0.5 threshold before
+    # committing to a full ~6.3h uncapped epoch. REMOVE this line before the
     # next real full training run (see git history / DEFERRED_IMPROVEMENTS.md
     # for the full-run config this temporarily overrides).
-    'max_batches_per_epoch': 1500,
+    'max_batches_per_epoch': 5000,
     # Full run: no max_batches_per_epoch cap (that was only for the earlier
     # sanity check -- real epoch size is ~14,751 batches: 149 train samples x
     # ~99 consecutive-frame pairs each). Real per-batch rate at sanity-check
