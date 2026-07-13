@@ -206,6 +206,35 @@ scope, not this file.
   by this ratio (in this case ~37x more pairs, 149/4), and don't assume a fast/successful Commit
   run alone proves the real Submit run will finish inside the 12h cap — it's strong evidence, not
   a guarantee, since the real run processes far more data.
+- **Kaggle Training Run Monitoring Checklist** (built 2026-07-13 after a 5.6 GPU-hour run's
+  `val_score=0.0` collapse wasn't discovered until manually grepping a 44,248-line raw log
+  post-completion): check cheapest-first, escalate only if needed.
+  1. **Deployed code SHA** — `train_kernel.py`/`inference_kernel.py` log `Deployed code SHA: <sha>`
+     as the first line of ENVIRONMENT SETUP, read from `GIT_SHA.txt` inside the mounted
+     `st-act-src` dataset. Always push via `python scripts/sync_kaggle_src.py --push -m "..."`,
+     never a manual `cp` + `kaggle datasets version` — the script syncs `src/`, embeds the current
+     `git rev-parse HEAD`, and verifies the sync actually took before allowing a push. A 2-second
+     check of the first log lines (or the progress JSON below) now confirms "is this run using the
+     code I think I committed," instead of an after-the-fact guess from dataset timestamps (a real
+     but ultimately unconfirmed theory raised once this session — see `DEFERRED_IMPROVEMENTS.md`).
+  2. **Progress heartbeat** — `TrainingLoop` overwrites `/kaggle/working/training_progress.json`
+     after every epoch (deployed SHA, epoch, elapsed, train_loss, val_score, predicted node/edge
+     totals, `health_status`). Fetchable mid-run via the already-working `kaggle kernels output`
+     command — no need to wait for completion or pull the full raw log just to check progress.
+  3. **CSV structural-zero columns** — `training_log.csv` has `predicted_nodes_total`,
+     `predicted_edges_total`, `is_structural_zero`. An exact `0.000000` score with
+     `is_structural_zero=True` means the model predicted literally nothing (not a small-but-real
+     score) — a meaningfully different diagnosis than "undertrained but functioning."
+  4. **Circuit breaker** — `validate_epoch()` raises loudly if the first 10 validation batches
+     predict zero nodes total (mirrors `train_epoch()`'s existing >50%-fallback-rate hard-fail
+     pattern). Since validation uses a frozen model, an early zero is structurally certain to
+     persist through the remaining thousands of batches — this turns a potential multi-hour wasted
+     validation pass into a ~15-minute one.
+  5. **Full raw log, last resort** — `kaggle kernels logs <owner>/<kernel-name>` (**not**
+     `kernels output`, which only returns files written to `/kaggle/working/`, not the execution
+     trace). On Windows this needs `PYTHONIOENCODING=utf-8` prefixed or it dies partway through
+     with a `'charmap' codec` error. `kaggle datasets files <slug>` / `kaggle datasets metadata`
+     verify what's actually deployed to a dataset if the SHA marker itself is ever in doubt.
 
 ## Model & effort policy
 

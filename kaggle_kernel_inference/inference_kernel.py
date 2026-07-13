@@ -87,6 +87,17 @@ if KAGGLE_MODE:
         logger.warning(f"Could not list /kaggle/input: {e}")
 
 # === ENVIRONMENT SETUP ===
+# Deployed code identity: same mechanism as train_kernel.py (see
+# DEFERRED_IMPROVEMENTS.md) -- read the SHA embedded at push time by
+# scripts/sync_kaggle_src.py so "is this run using the code I think I
+# committed" is a 2-second log check, not a post-mortem.
+DEPLOYED_SHA = "unknown (GIT_SHA.txt not found -- was this pushed via scripts/sync_kaggle_src.py?)"
+if KAGGLE_SRC_DATASET_DIR:
+    _sha_file = Path(KAGGLE_SRC_DATASET_DIR) / "GIT_SHA.txt"
+    if _sha_file.exists():
+        DEPLOYED_SHA = _sha_file.read_text().strip()
+logger.info(f"Deployed code SHA: {DEPLOYED_SHA}")
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger.info(f"Device: {device}")
 if torch.cuda.is_available():

@@ -163,5 +163,84 @@ class TestNodesAndFeaturesAtPeaks:
         assert torch.equal(feats[0], torch.tensor([1.0, 2.0, 3.0, 4.0]))
 
 
+class _FakeDegenerateUNet3D(torch.nn.Module):
+    """Always returns deeply-negative logits (sigmoid~0 everywhere) regardless
+    of input -- simulates the exact collapsed-model behavior confirmed on a
+    real full-epoch Kaggle run (2026-07-13): sigmoid stuck at [0.0000, 0.0000],
+    zero peaks on every validation batch."""
+
+    def forward(self, x):
+        batch = x.shape[0]
+        logits = torch.full((batch, 2, 8, 16, 16), -100.0)
+        features = torch.zeros(batch, 4, 8, 16, 16)
+        return logits, features
+
+
+def _make_fake_val_batch(t_idx: int) -> dict:
+    return {
+        "frame_t": torch.zeros(1, 1, 8, 16, 16),
+        "frame_t1": torch.zeros(1, 1, 8, 16, 16),
+        "sample_id": ["fake_sample"],
+        "t_idx": [t_idx],
+    }
+
+
+class TestValidateEpochCircuitBreaker:
+    """REGRESSION GUARD for the exact incident this test class is named after:
+    a real 5.6-hour Kaggle run continued through all ~4,950 validation batches
+    after the first few already showed zero detections, because validate_epoch()
+    had no way to notice a structural failure early. validate_epoch() uses a
+    FROZEN model (no weight updates happen during validation) -- if the first N
+    batches predict zero nodes, no later batch can differ, so this must raise
+    fast rather than run to completion confirming what's already certain."""
+
+    def make_degenerate_loop(self, num_batches: int = 15):
+        return make_bare_training_loop(
+            unet3d=_FakeDegenerateUNet3D(),
+            transformer=torch.nn.Identity(),  # never reached -- peaks are always empty
+            device=torch.device("cpu"),
+            hyperparams={
+                "detection_threshold": 0.5,
+                "max_positive_voxel_fraction": 0.005,
+                "nms_radius_um": 5.0,
+                "edge_threshold": 0.5,
+                "max_batches_per_epoch": None,
+            },
+            val_loader=[_make_fake_val_batch(i) for i in range(num_batches)],
+            epoch_fallback_counts={
+                "heatmap_generation_failure": 0,
+                "edge_target_generation_failure": 0,
+                "edge_loss_computation_failure": 0,
+                "evaluation_failure": 0,
+            },
+        )
+
+    def test_raises_within_10_batches_on_a_structurally_zero_model(self):
+        loop = self.make_degenerate_loop(num_batches=15)
+
+        with pytest.raises(RuntimeError, match="ZERO nodes"):
+            loop.validate_epoch()
+
+    def test_does_not_raise_before_the_check_point(self, monkeypatch):
+        """The breaker must check AT batch 10, not before -- a model that's
+        merely slow to warm up shouldn't be killed on batch 1."""
+        loop = self.make_degenerate_loop(num_batches=15)
+        seen_batches = []
+        real_peaks_for_channel = loop._peaks_for_channel
+
+        def counting_peaks_for_channel(*args, **kwargs):
+            seen_batches.append(1)
+            return real_peaks_for_channel(*args, **kwargs)
+
+        monkeypatch.setattr(loop, "_peaks_for_channel", counting_peaks_for_channel)
+
+        with pytest.raises(RuntimeError):
+            loop.validate_epoch()
+
+        # 2 calls per batch (channel 0 and channel 1) x 10 batches processed
+        # before the breaker fires on the 10th
+        assert len(seen_batches) == 20
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

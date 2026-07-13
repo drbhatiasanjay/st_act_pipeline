@@ -97,6 +97,8 @@ class TrainingLoop:
         checkpoint_dir: str = "checkpoints",
         log_file: str = "training_log.csv",
         hyperparams: dict[str, Any] | None = None,
+        deployed_sha: str = "unknown",
+        progress_file: str | Path | None = None,
     ):
         """
         Initialize training loop.
@@ -111,6 +113,13 @@ class TrainingLoop:
             checkpoint_dir: Directory for saving model checkpoints
             log_file: Path for CSV training log
             hyperparams: Training hyperparameters
+            deployed_sha: git commit SHA of the code actually running -- written
+                into the progress file (and logged by the caller) so "is this run
+                using the code I think it is" is a 2-second check, not a
+                post-mortem after a multi-hour run.
+            progress_file: If given, path to overwrite (not append) a small JSON
+                heartbeat after each epoch -- fetchable via `kaggle kernels
+                output` mid-run without pulling the full raw log.
         """
         self.unet3d = unet3d
         self.transformer = transformer
@@ -120,6 +129,8 @@ class TrainingLoop:
         self.data_dir = Path(data_dir)
         self.checkpoint_dir = Path(checkpoint_dir)
         self.log_file = log_file
+        self.deployed_sha = deployed_sha
+        self.progress_file = Path(progress_file) if progress_file else None
 
         # Create checkpoint directory
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -229,6 +240,9 @@ class TrainingLoop:
                 'eval_failures',
                 'num_batches',
                 'epoch_wall_clock_seconds',
+                'predicted_nodes_total',
+                'predicted_edges_total',
+                'is_structural_zero',
             ])
 
     def _log_epoch(self, epoch: int, train_loss: float, val_metrics: dict[str, float]):
@@ -249,7 +263,58 @@ class TrainingLoop:
                 self.epoch_fallback_counts['evaluation_failure'],
                 self.last_epoch_num_batches,
                 f'{self.last_epoch_wall_clock_seconds:.1f}',
+                # Distinguishes "exactly zero" (structural failure -- a badly
+                # trained but functioning model would produce small nonzero
+                # scores, not exact zero) from "small but genuinely
+                # undertrained", per DEFERRED_IMPROVEMENTS.md's monitoring plan.
+                val_metrics.get("predicted_nodes_total", 0),
+                val_metrics.get("predicted_edges_total", 0),
+                val_metrics.get("is_structural_zero", True),
             ])
+
+    def _write_progress_heartbeat(
+        self, epoch: int, num_epochs: int, elapsed_seconds: float, train_loss: float,
+        val_metrics: dict[str, float],
+    ):
+        """
+        Overwrite (not append) a small JSON heartbeat after each epoch.
+
+        Unlike the full raw log (only fetchable via `kaggle kernels logs`, which
+        needs the whole run to be pulled and manually grepped), this is a real
+        file under WORKING_DIR/self.progress_file's parent, fetchable mid-run via
+        the already-working `kaggle kernels output` command -- no need to wait
+        for completion or pull 40k+ log lines to check "is this run healthy".
+        """
+        if self.progress_file is None:
+            return
+
+        if val_metrics.get("is_structural_zero", False):
+            health_status = "zero_detections"
+        elif val_metrics.get("predicted_edges_total", 0) == 0:
+            health_status = "zero_edges"
+        elif val_metrics.get("score", 0.0) < 1e-6:
+            health_status = "undertrained"
+        else:
+            health_status = "healthy"
+
+        payload = {
+            "deployed_sha": self.deployed_sha,
+            "epoch": epoch,
+            "num_epochs_budget": num_epochs,
+            "elapsed_seconds": round(elapsed_seconds, 1),
+            "train_loss": train_loss,
+            "val_score": val_metrics.get("score", 0.0),
+            "predicted_nodes_total": val_metrics.get("predicted_nodes_total", 0),
+            "predicted_edges_total": val_metrics.get("predicted_edges_total", 0),
+            "health_status": health_status,
+        }
+        try:
+            tmp_path = self.progress_file.with_suffix(".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(payload, f, indent=2)
+            tmp_path.replace(self.progress_file)  # atomic overwrite, not append
+        except OSError as e:
+            logger.warning(f"Failed to write progress heartbeat: {e}")
 
     def _get_gt_nodes(self, sample_id: str, t_idx: int) -> torch.Tensor | None:
         """
@@ -596,6 +661,21 @@ class TrainingLoop:
         # verifying training itself works, not to finalize scoring.
         max_batches = self.hyperparams.get('max_batches_per_epoch')
 
+        # Circuit-breaker for a structurally-zero validation pass: validate_epoch()
+        # uses a FROZEN model (no weight updates happen during validation), so if
+        # the first CIRCUIT_BREAKER_CHECK_BATCHES batches predict literally zero
+        # nodes (not "zero that match GT" -- zero raw detections, independent of
+        # GT content), there is no mechanism by which a later batch could differ --
+        # continuing through the remaining ~4,950 batches only wastes GPU time
+        # confirming what's already certain. This is exactly the gap that let a
+        # real run burn its full validation pass (thousands of batches) before the
+        # zero-detection collapse was discovered, hours later, by manually
+        # grepping the raw log. Mirrors train_epoch()'s existing >50%-fallback-rate
+        # hard-fail pattern.
+        CIRCUIT_BREAKER_CHECK_BATCHES = 10
+        total_predicted_nodes = 0
+        total_predicted_edges = 0
+
         with torch.no_grad():
             for _batch_idx, batch in enumerate(self.val_loader):
                 if max_batches is not None and _batch_idx >= max_batches:
@@ -663,6 +743,21 @@ class TrainingLoop:
                     edges = assignment['edges']
                 else:
                     edges = []
+
+                total_predicted_nodes += len(peaks_t) + len(peaks_t1)
+                total_predicted_edges += len(edges)
+
+                if (_batch_idx + 1) == CIRCUIT_BREAKER_CHECK_BATCHES and total_predicted_nodes == 0:
+                    raise RuntimeError(
+                        f"Validation aborted: {CIRCUIT_BREAKER_CHECK_BATCHES} consecutive "
+                        f"validation batches predicted ZERO nodes (sigmoid never crossed "
+                        f"detection_threshold={self.hyperparams['detection_threshold']} anywhere). "
+                        f"validate_epoch() uses a frozen model -- this cannot self-correct within "
+                        f"the same validation pass, so continuing through the remaining "
+                        f"~{len(self.val_loader) - CIRCUIT_BREAKER_CHECK_BATCHES} batches would only "
+                        f"waste GPU time confirming a structural failure that's already certain. "
+                        f"Diagnose the detection head / loss weighting before retrying."
+                    )
 
                 # Add both channels' detections as new nodes every batch
                 # (see the known-limitation comment above the loop).
@@ -738,6 +833,9 @@ class TrainingLoop:
                           f"Adjusted: {val_metrics_clean['adjusted_edge_jaccard']:.6f}, "
                           f"Division: {val_metrics_clean['division_jaccard']:.6f}, "
                           f"Score: {val_metrics_clean['score']:.6f}")
+                val_metrics_clean['predicted_nodes_total'] = total_predicted_nodes
+                val_metrics_clean['predicted_edges_total'] = total_predicted_edges
+                val_metrics_clean['is_structural_zero'] = (total_predicted_nodes == 0)
                 return val_metrics_clean
             except Exception as e:
                 logger.warning(f"Evaluation failed: {e}")
@@ -756,6 +854,9 @@ class TrainingLoop:
                 'score': 0.0,
             }
 
+        val_metrics['predicted_nodes_total'] = total_predicted_nodes
+        val_metrics['predicted_edges_total'] = total_predicted_edges
+        val_metrics['is_structural_zero'] = (total_predicted_nodes == 0)
         return val_metrics
 
     def fit(self, num_epochs: int, max_wall_clock_seconds: float | None = None):
@@ -772,6 +873,7 @@ class TrainingLoop:
         stop being trivially empty).
         """
         logger.info(f"Starting training for up to {num_epochs} epochs")
+        logger.info(f"Deployed code SHA: {self.deployed_sha}")
         logger.info(f"Hyperparameters: {json.dumps(self.hyperparams, indent=2)}")
         if max_wall_clock_seconds is not None:
             logger.info(f"Wall-clock budget: {max_wall_clock_seconds:.0f}s")
@@ -790,6 +892,11 @@ class TrainingLoop:
 
             # Log epoch
             self._log_epoch(epoch + 1, train_loss, val_metrics)
+            self._write_progress_heartbeat(
+                epoch=epoch + 1, num_epochs=num_epochs,
+                elapsed_seconds=time.monotonic() - fit_start_time,
+                train_loss=train_loss, val_metrics=val_metrics,
+            )
 
             # Update learning rate scheduler
             self.scheduler.step(val_metrics.get('adjusted_edge_jaccard', 0.0))

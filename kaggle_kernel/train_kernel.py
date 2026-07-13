@@ -105,6 +105,17 @@ logger.info("\n" + f"{'='*80}")
 logger.info("ENVIRONMENT SETUP")
 logger.info(f"{'='*80}")
 
+# Deployed code identity: read the SHA embedded at push time by
+# scripts/sync_kaggle_src.py -- turns "is this run using the code I think I
+# committed" into a 2-second check of the first few log lines instead of a
+# post-mortem after a multi-hour run (see DEFERRED_IMPROVEMENTS.md).
+DEPLOYED_SHA = "unknown (GIT_SHA.txt not found -- was this pushed via scripts/sync_kaggle_src.py?)"
+if KAGGLE_SRC_DATASET_DIR:
+    sha_file = Path(KAGGLE_SRC_DATASET_DIR) / "GIT_SHA.txt"
+    if sha_file.exists():
+        DEPLOYED_SHA = sha_file.read_text().strip()
+logger.info(f"Deployed code SHA: {DEPLOYED_SHA}")
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger.info(f"Device: {device}")
 logger.info(f"CUDA available: {torch.cuda.is_available()}")
@@ -378,9 +389,11 @@ logger.info(f"{'='*80}")
 
 checkpoint_dir = WORKING_DIR / "checkpoints"
 log_file = WORKING_DIR / "training_log.csv"
+progress_file = WORKING_DIR / "training_progress.json"
 
 logger.info(f"Checkpoint dir: {checkpoint_dir}")
 logger.info(f"Log file: {log_file}")
+logger.info(f"Progress heartbeat file: {progress_file}")
 
 training_loop = TrainingLoop(
     unet3d=unet3d,
@@ -392,6 +405,8 @@ training_loop = TrainingLoop(
     checkpoint_dir=str(checkpoint_dir),
     log_file=str(log_file),
     hyperparams=HYPERPARAMS,
+    deployed_sha=DEPLOYED_SHA,
+    progress_file=progress_file,
 )
 
 logger.info("Training loop initialized")
