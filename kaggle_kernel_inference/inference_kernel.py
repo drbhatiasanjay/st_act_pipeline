@@ -39,6 +39,34 @@ def find_kaggle_input_dir(marker_relpath: str) -> str | None:
     return None
 
 
+def find_best_checkpoint() -> str | None:
+    """Find the most-recently-modified epoch_*.pt under /kaggle/input.
+
+    Deliberately does not assume a fixed filename: save_checkpoint() only
+    writes a new file when val_score improves on the previous best, so the
+    most-recently-modified epoch_*.pt IS the best one -- this lets inference
+    pick up whatever checkpoint the latest training run produced (e.g.
+    epoch_1_val_score_0.0000.pt from the earlier sanity run vs. a real
+    epoch_N_val_score_X.XXXX.pt from the full run) without a code change.
+    """
+    if not os.path.exists("/kaggle/input"):
+        return None
+    candidates = []
+    for dirpath, dirnames, filenames in os.walk("/kaggle/input"):
+        depth = dirpath[len("/kaggle/input"):].count(os.sep)
+        if depth >= MAX_SEARCH_DEPTH:
+            dirnames[:] = []
+            continue
+        for name in filenames:
+            if name.startswith("epoch_") and name.endswith(".pt"):
+                full_path = os.path.join(dirpath, name)
+                candidates.append((os.path.getmtime(full_path), full_path))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda pair: pair[0])
+    return candidates[-1][1]
+
+
 KAGGLE_SRC_DATASET_DIR = find_kaggle_input_dir(os.path.join("src", "dataset.py"))
 if KAGGLE_SRC_DATASET_DIR:
     sys.path.insert(0, KAGGLE_SRC_DATASET_DIR)
@@ -176,10 +204,10 @@ def nodes_and_features(features: torch.Tensor, peaks: list, device: torch.device
 
 def main():
     # === LOAD CHECKPOINT ===
-    checkpoint_dir = find_kaggle_input_dir("epoch_1_val_score_0.0000.pt")
-    if checkpoint_dir is None:
-        raise RuntimeError("st-act-checkpoint dataset not found under /kaggle/input.")
-    checkpoint_path = Path(checkpoint_dir) / "epoch_1_val_score_0.0000.pt"
+    checkpoint_path_str = find_best_checkpoint()
+    if checkpoint_path_str is None:
+        raise RuntimeError("No epoch_*.pt checkpoint found under /kaggle/input.")
+    checkpoint_path = Path(checkpoint_path_str)
     logger.info(f"Loading checkpoint from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
 

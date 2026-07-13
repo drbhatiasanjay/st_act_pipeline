@@ -17,7 +17,7 @@ import torch
 from torch.utils.data import DataLoader
 from tracksdata.graph import IndexedRXGraph
 
-from evaluate_checkpoint import extract_peaks, get_nodes_and_features
+from evaluate_checkpoint import extract_peaks, find_latest_local_checkpoint, get_nodes_and_features
 from src.dataset import CompetitionDataset
 from src.inference import greedy_edge_assignment
 from src.model import SimpleNodeTransformer, UNet3D
@@ -33,7 +33,9 @@ logger = logging.getLogger("generate_submission")
 
 def main():
     device = torch.device("cpu")
-    checkpoint_path = Path("kaggle_sanity_outputs/checkpoints_sanity/epoch_1_val_score_0.0000.pt")
+    checkpoint_path = find_latest_local_checkpoint()
+    if checkpoint_path is None:
+        raise FileNotFoundError("No epoch_*.pt checkpoint found anywhere under the project root")
     logger.info(f"Loading checkpoint from {checkpoint_path}")
     checkpoint = torch.load(checkpoint_path, map_location=device)
 
