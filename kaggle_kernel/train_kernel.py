@@ -156,7 +156,20 @@ logger.info(f"Random seed set: {SEED}")
 
 # Hyperparameters
 HYPERPARAMS = {
-    'learning_rate': 1e-4,
+    # Bumped 1e-4 -> 1e-3 (2026-07-13): with the loss-normalization and
+    # bias-init fixes both confirmed correct in isolation, two real Kaggle
+    # verification runs (200 then 1500 batches) still tripped the
+    # zero-detections circuit-breaker. A local sanity check (same real
+    # UNet3D + DetectionLoss, a trivial single-example overfit task) showed
+    # 1e-4 barely moves sigmoid at all after 50 steps (0.000098->0.000103),
+    # while 1e-3 crosses the 0.5 threshold by step 50 and reaches 0.999 by
+    # step 100 -- grad_clip=1.0 confirmed NOT the bottleneck (natural
+    # pre-clip gradient norm averaged 0.40, well under the clip threshold;
+    # removing clipping entirely changed nothing). 1e-3 chosen over the also-
+    # tested 1e-2 (which converged in ~2 steps) as the more conservative
+    # value less likely to destabilize on the real data's actual noise/
+    # complexity, which this trivial synthetic test can't fully represent.
+    'learning_rate': 1e-3,
     'grad_clip': 1.0,
     'weight_decay': 1e-4,
     'heatmap_loss_weight': 1.0,
