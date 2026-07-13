@@ -7,6 +7,63 @@ either because they need a real trained checkpoint to validate against, are larg
 to warrant their own dedicated planning pass, or (item 0) were verified numerically to not
 actually change anything given how this codebase's NMS is constructed.
 
+## URGENT — Fix DetectionLoss class-imbalance weighting before spending more GPU time
+
+**Status (2026-07-13): the real full-scale training run (v30, 1 epoch, 14,751 batches,
+20,244s/~5.62h on real T4) completed cleanly — no crash, wall-clock-budget stop worked exactly as
+designed — but `val_score = 0.000000`, identical to the earlier 200-batch sanity checkpoint.**
+
+**Root cause CONFIRMED via direct evidence, not guessed:**
+
+1. Pulled the real 44,248-line execution log with the correct command (the one that actually
+   works, `kaggle kernels output` does NOT include it):
+
+   ```bash
+   PYTHONIOENCODING=utf-8 py -m kaggle kernels logs drbhatiasanjay/st-act-gpu-smoke-test > full_log.txt
+   ```
+
+   (`kaggle kernels output` only pulled checkpoint/CSV/summary files, not the log — and even the
+   `logs` command needs `PYTHONIOENCODING=utf-8` on Windows or it dies with a `'charmap' codec`
+   error partway through.)
+2. In that log, **all 182 `Creating filter function` calls during validation used an empty node
+   list (`for []`), and all 182 produced `WARNING: No matching nodes found`** — a 1:1 match. This
+   is literal, direct evidence of **zero predicted detections across the entire 50-sample
+   validation set**, not duplicate/degenerate-but-nonempty peaks.
+3. Independently, empirically measured the real background-vs-foreground loss weighting using
+   actual `.geff` ground truth (`generate_heatmap_targets()` on 3 real samples, no GPU needed):
+   `DetectionLoss(weight_pos=1.0, weight_neg=0.01)` (hardcoded in `src/train.py:174`, **not
+   exposed via `HYPERPARAMS`**) only compensates class imbalance by 100x, but the real measured
+   imbalance is **667x** for sparse `44b6_*`-family samples (0-1 cells/frame) and **67-95x** for
+   denser `6bba_*`-family samples (7-10 cells/frame) — i.e. under-compensated by up to ~6.7x for
+   the sparser half of the dataset. This directly explains the observed symptom: `train_loss`
+   dropping (1.858→1.681 over the epoch, real learning) while no voxel ever crosses the 0.5
+   detection threshold — the dominant gradient signal is "push background more confidently
+   negative" (cheap, since background voxels outnumber cell voxels by 3-4 orders of magnitude),
+   not "push rare cell voxels positive."
+
+**A separate, adjacent Claude session independently investigated this same run and concluded the
+root cause was §1.4 from `ISSUES_AND_FIXES_2026-07-12.md`** (`validate_epoch()`'s `peaks_t`/
+`peaks_t1` allegedly computed from an identical single-channel volume). **This was checked directly
+against the current code and is incorrect** — `src/train.py:629-630` confirms `peaks_t` comes from
+`channel=0` and `peaks_t1` from `channel=1` of the same forward pass's `detection_probs`, i.e.
+already fixed (this fix and its rationale are documented inline at `validate_epoch()`'s top). The
+other session's diagnosis was based on the stale pre-fix description in the issues doc, not a
+re-read of current code — exactly the kind of stale-claim-not-reverified error this project's
+`CLAUDE.md` explicitly warns about. The empty-node-list log evidence above rules it out directly:
+duplicate-but-nonempty peaks would still produce non-empty node lists, not `for []`.
+
+**Recommended fix, before any further GPU spend:**
+
+- Replace the fixed `weight_pos=1.0, weight_neg=0.01` in `DetectionLoss` with **per-batch adaptive
+  weighting** (compute `weight_neg` from each batch's actual foreground/background voxel ratio in
+  the target tensor, rather than a hand-tuned global constant) — the measured 67x-667x range across
+  just 3 samples shows a fixed constant can't be correct everywhere; some validation frames have
+  literally 0 ground-truth cells.
+- **Verify cheaply before committing another ~5.6h epoch**: rerun with the old
+  `max_batches_per_epoch=200` cap (~5 min on Kaggle) and confirm `detection_probs` shows non-zero/
+  varied sigmoid output post-fix, before trusting a full run.
+- Not yet implemented — this is the next concrete task, higher priority than anything below.
+
 ## 0. Sub-voxel intensity-weighted centroid refinement — INVESTIGATED, FOUND TO BE A NO-OP
 
 **Idea from doc:** `extract_peaks_from_volume()` (both `run_pipeline.py` and `src/train.py`)

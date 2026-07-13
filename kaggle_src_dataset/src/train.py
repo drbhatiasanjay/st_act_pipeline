@@ -171,6 +171,9 @@ class TrainingLoop:
         )
 
         # Initialize loss functions
+        # adaptive=True (default): weight_neg below is only the fallback used for
+        # batches with zero GT cells -- real batches get a per-batch-computed
+        # weight_neg instead (see DetectionLoss docstring, src/targets.py).
         self.detection_loss_fn = DetectionLoss(weight_pos=1.0, weight_neg=0.01)
         self.division_loss_fn = DivisionLoss(
             weight_division=self.hyperparams['division_loss_weight'],

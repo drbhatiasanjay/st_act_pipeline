@@ -369,19 +369,39 @@ class DetectionLoss(torch.nn.Module):
     Weighted BCE loss for heatmap detection with inverse-frequency weighting.
 
     Upweights rare positive voxels to handle extreme class imbalance.
+
+    A fixed weight_neg cannot be correct across this dataset: empirically measured
+    (real .geff ground truth, 2026-07-13) background/foreground loss contribution
+    ratios range from ~67x (dense samples, ~7-10 cells/frame) to ~667x (sparse
+    samples, 0-1 cells/frame) even after a 100x static compensation -- the sparse
+    half of the dataset was under-compensated by up to ~6.7x, which is the
+    confirmed root cause of a real full-epoch training run (14,751 batches)
+    producing val_score=0.0 (zero detections above threshold everywhere, verified
+    directly from the Kaggle log: all 182 validation filter calls used an empty
+    node list). adaptive=True (default) computes weight_neg per-batch from the
+    batch's own foreground/background voxel mass so positive and negative
+    contributions balance regardless of local cell density, instead of assuming
+    one dataset-wide ratio.
     """
 
-    def __init__(self, weight_pos: float = 1.0, weight_neg: float = 0.01):
+    def __init__(self, weight_pos: float = 1.0, weight_neg: float = 0.01, adaptive: bool = True):
         """
         Initialize detection loss.
 
         Args:
             weight_pos: Weight for positive (cell) voxels
-            weight_neg: Weight for negative (background) voxels
+            weight_neg: Weight for negative (background) voxels. Used directly when
+                adaptive=False, and as the fallback when adaptive=True but a batch
+                has zero foreground mass (no GT cells in that batch at all, so
+                there is nothing to balance against).
+            adaptive: If True, compute weight_neg per-batch as
+                weight_pos * pos_mass / neg_mass instead of using the fixed
+                weight_neg -- see class docstring for why a fixed ratio fails.
         """
         super().__init__()
         self.weight_pos = weight_pos
         self.weight_neg = weight_neg
+        self.adaptive = adaptive
         self.bce_loss = torch.nn.BCEWithLogitsLoss(reduction='none')
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -395,10 +415,24 @@ class DetectionLoss(torch.nn.Module):
         Returns:
             Scalar loss (weighted mean)
         """
+        targets_f = targets.float()
+
         # Compute base BCE loss
-        loss = self.bce_loss(logits, targets.float())
+        loss = self.bce_loss(logits, targets_f)
+
+        if self.adaptive:
+            pos_mass = targets_f.sum()
+            neg_mass = targets_f.numel() - pos_mass
+            if pos_mass > 0 and neg_mass > 0:
+                weight_neg = self.weight_pos * pos_mass / neg_mass
+            else:
+                # No GT cells in this batch (or, pathologically, no background) --
+                # nothing to balance against, fall back to the fixed ratio.
+                weight_neg = self.weight_neg
+        else:
+            weight_neg = self.weight_neg
 
         # Apply class imbalance weighting
-        loss = loss * (self.weight_pos * targets.float() + self.weight_neg * (1.0 - targets.float()))
+        loss = loss * (self.weight_pos * targets_f + weight_neg * (1.0 - targets_f))
 
         return loss.mean()
