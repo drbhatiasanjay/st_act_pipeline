@@ -23,7 +23,7 @@ import torch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import tracksdata
 
-from src.train import TrainingLoop
+from src.train import TrainingLoop, extract_peaks_from_volume
 
 REAL_TRAIN_DIR = "data/staging/train"
 REAL_SAMPLE_ID = "44b6_0113de3b"
@@ -90,6 +90,79 @@ class TestGetGtNodesGeffCache:
 
         assert result is not None, "a valid timepoint with no GT nodes must return empty tensor, not None"
         assert result.shape == (0, 3)
+
+
+class TestExtractPeaksFromVolumeSubvoxelRefinement:
+    """A `vol == pooled` tied plateau is mathematically guaranteed to be
+    uniform-valued internally (proven: any two adjacent True voxels are each
+    other's local max under a symmetric maximum_filter, forcing equal value;
+    confirmed empirically over 20k random-volume trials with zero
+    counterexamples). So weighting the centroid by `vol` restricted to just
+    the plateau (an earlier, rejected version of this fix) is a no-op --
+    real sub-voxel information only exists in the falloff just OUTSIDE the
+    plateau. These tests use nms_radius_um=2.0 with voxel_size=(1,1,1),
+    giving a real kernel radius of 1 (kernel size 3) -- a degenerate
+    nms_radius_um=1.0 gives kernel size 1 (no actual neighborhood), which
+    trivially marks every above-threshold voxel as its own "peak" and
+    doesn't exercise the tied-plateau behavior these tests target."""
+
+    def test_zero_peaks_returns_empty_list(self):
+        vol = np.zeros((10, 10, 10), dtype=np.float32)
+        assert extract_peaks_from_volume(vol, threshold=0.4, voxel_size=(1, 1, 1), nms_radius_um=2.0) == []
+
+    def test_symmetric_falloff_leaves_centroid_at_geometric_center(self):
+        """Sanity check: refinement must not introduce a bias when the
+        falloff around the plateau is symmetric."""
+        vol = np.zeros((10, 10, 10), dtype=np.float32)
+        vol[4, 4, 4] = 10.0
+        vol[4, 4, 5] = 10.0  # 2-voxel tied plateau along x, geometric center x=4.5
+        vol[4, 4, 3] = 5.0
+        vol[4, 4, 6] = 5.0   # symmetric falloff on both sides
+
+        peaks = extract_peaks_from_volume(vol, threshold=0.4, voxel_size=(1, 1, 1), nms_radius_um=2.0)
+
+        assert len(peaks) == 1
+        assert np.allclose(peaks[0], [4.0, 4.0, 4.5])
+
+    def test_asymmetric_falloff_pulls_centroid_toward_it(self):
+        """REGRESSION-relevant: the actual point of the feature. A brighter
+        falloff on one side of an otherwise-tied plateau must pull the
+        refined centroid measurably off the plain geometric center -- not
+        leave it at the old value (which is what the rejected is_peak-
+        weighted version would have done, since it's mathematically a
+        no-op)."""
+        vol = np.zeros((10, 10, 10), dtype=np.float32)
+        vol[4, 4, 4] = 10.0
+        vol[4, 4, 5] = 10.0  # tied plateau, geometric center x=4.5
+        vol[4, 4, 3] = 2.0   # weak falloff on -x side
+        vol[4, 4, 6] = 8.0   # strong falloff on +x side
+
+        peaks = extract_peaks_from_volume(vol, threshold=0.4, voxel_size=(1, 1, 1), nms_radius_um=2.0)
+
+        assert len(peaks) == 1
+        assert np.allclose(peaks[0], [4.0, 4.0, 4.8])
+        assert not np.allclose(peaks[0], [4.0, 4.0, 4.5]), "must differ from the plain (old) geometric center"
+
+    def test_nearby_peak_does_not_bleed_into_neighbor(self):
+        """Two separate single-voxel peaks close enough that their padded
+        refinement windows overlap must NOT contaminate each other's
+        centroid -- each peak's weight_mask must exclude voxels already
+        claimed by a DIFFERENT peak's label."""
+        vol = np.zeros((10, 10, 10), dtype=np.float32)
+        vol[4, 4, 4] = 10.0  # peak A
+        vol[4, 4, 5] = 3.0   # background dip between the two peaks
+        vol[4, 4, 6] = 10.0  # peak B
+
+        peaks = extract_peaks_from_volume(
+            vol, threshold=0.4, voxel_size=(1, 1, 1), nms_radius_um=2.0, subvoxel_refine_radius=2,
+        )
+
+        assert len(peaks) == 2
+        peaks_sorted = sorted(peaks, key=lambda p: p[2])
+        # Without exclusion, peak A's centroid would be pulled all the way to
+        # x=5.0 (the midpoint) by peak B's plateau bleeding into its window.
+        assert np.allclose(peaks_sorted[0], [4.0, 4.0, 4.230769230769231])
+        assert np.allclose(peaks_sorted[1], [4.0, 4.0, 5.769230769230769])
 
 
 class TestPeaksForChannel:

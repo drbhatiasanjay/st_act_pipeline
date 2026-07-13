@@ -68,6 +68,21 @@ class UNet3D(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv3d(channels[0], 2, kernel_size=1)
         )
+        # RetinaNet-style prior-bias init (found by adversarial review, 2026-07-13,
+        # of the adaptive class-imbalance loss fix -- see DEFERRED_IMPROVEMENTS.md):
+        # PyTorch's default zero bias means sigmoid(0)=0.5 everywhere at init, so
+        # ~99.99% of voxels (real background fraction) start with a large BCE
+        # penalty the network can only reduce by first spending many gradient
+        # steps pushing this bias very negative -- wasted steps that could
+        # instead go toward learning real spatial cell features from step 1.
+        # pi ~= 1e-4 is a deliberately coarse, dataset-wide estimate (real
+        # per-sample foreground fraction measured 1.5e-5 to ~2e-4 across a
+        # handful of real .geff samples) -- this is a starting prior for
+        # training to refine, not a precise per-sample value.
+        pi = 1e-4
+        prior_bias = math.log(pi / (1 - pi))
+        with torch.no_grad():
+            self.det_head[-1].bias.fill_(prior_bias)
 
     @staticmethod
     def _conv_block(in_ch, out_ch, kernel=(1, 3, 3), padding=(0, 1, 1)):
