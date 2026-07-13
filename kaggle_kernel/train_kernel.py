@@ -372,8 +372,16 @@ except Exception as e:
     logger.error(f"Failed to create datasets: {e}")
     raise
 
-# Create data loaders
-train_loader = DataLoader(train_dataset, batch_size=HYPERPARAMS['batch_size'], shuffle=False)
+# Create data loaders. train_loader MUST shuffle: real .geff ground truth exists
+# only at sparse per-sample timepoint ranges (see CLAUDE.md), so with
+# shuffle=False the model walks long, unbroken all-background stretches in the
+# same fixed order every epoch -- confirmed live via a local diagnostic
+# (2026-07-14): loss collapsed to ~0.0001 and max_sigmoid went flat at the
+# init floor for 19+ consecutive steps once a sample's sparse GT ran out.
+# val_loader stays unshuffled deliberately (validation order doesn't need to
+# be randomized, and the circuit-breaker in validate_epoch() checks the first
+# N batches specifically).
+train_loader = DataLoader(train_dataset, batch_size=HYPERPARAMS['batch_size'], shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=HYPERPARAMS['batch_size'], shuffle=False)
 
 logger.info(f"Train loader batches: {len(train_loader)}")
