@@ -194,6 +194,18 @@ scope, not this file.
   open the kernel editor (one tab only), Ctrl+A + delete the existing code, paste the new content
   in via real clipboard paste (never simulated typing — see the autoindent-corruption note above),
   then trigger **Save Version → Save & Run All (Commit)** from the website directly.
+- **`kaggle kernels push` allocates a random GPU (often an incompatible Tesla P100, `sm_60`,
+  unsupported by this project's pinned PyTorch build) unless `machine_shape` is set in
+  `kernel-metadata.json`.** This was hit **6 times in a single session** before anyone checked
+  `kaggle kernels push --help`, which has had a `--accelerator ACC` flag the whole time — the
+  real, permanent fix is setting `"machine_shape": "NvidiaTeslaT4"` directly in
+  `kernel-metadata.json` (both `kaggle_kernel/` and `kaggle_kernel_inference/`), not repeatedly
+  falling back to a manual website Save & Run All with T4 hand-picked in the dialog. Confirmed
+  valid values from the Kaggle CLI docs: `NvidiaTeslaT4`, `NvidiaTeslaP100`, `Tpu1VmV38` (leave
+  empty/omit for CPU-only). **The lesson isn't just the fix — it's to check `--help` /
+  `kernel-metadata.json`'s actual schema after the *second* occurrence of the same class of
+  failure, not the sixth.** A recurring error that "has a known workaround" is still worth 5
+  minutes of `--help` before accepting the workaround as permanent.
 - **This competition is a Code Competition** (Notebook-only submission, internet disabled, 12h
   runtime cap — see `PRD.md`/the real `/rules` page for full details). A critical, easy-to-miss
   consequence: **a plain `Save Version` / `Save & Run All (Commit)` run is NOT the same as a real
