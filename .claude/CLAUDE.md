@@ -242,11 +242,17 @@ scope, not this file.
      pattern). Since validation uses a frozen model, an early zero is structurally certain to
      persist through the remaining thousands of batches — this turns a potential multi-hour wasted
      validation pass into a ~15-minute one.
-  5. **Full raw log, last resort** — `kaggle kernels logs <owner>/<kernel-name>` (**not**
-     `kernels output`, which only returns files written to `/kaggle/working/`, not the execution
-     trace). On Windows this needs `PYTHONIOENCODING=utf-8` prefixed or it dies partway through
-     with a `'charmap' codec` error. `kaggle datasets files <slug>` / `kaggle datasets metadata`
-     verify what's actually deployed to a dataset if the SHA marker itself is ever in doubt.
+  5. **Full raw log, last resort** — use `python scripts/kaggle_check_run.py <owner>/<kernel-name>`
+     instead of the raw CLI: it checks status, and if finished, pulls the log with the
+     `PYTHONIOENCODING=utf-8` workaround already applied, parses it as the real JSON array it is
+     (not raw-text regex scraping), and prints deployed SHA / GPU / first Traceback / circuit-breaker
+     message / last batch progress / final validation result in one shot — replaces the ~5-step
+     manual sequence (`kernels status`, `PYTHONIOENCODING=utf-8` + `kernels logs`, multiple greps)
+     used many times over before this existed. Falls back to the raw commands only if this script's
+     summary is insufficient: `kaggle kernels logs <owner>/<kernel-name>` (**not** `kernels output`,
+     which only returns files written to `/kaggle/working/`, not the execution trace).
+     `kaggle datasets files <slug>` / `kaggle datasets metadata` verify what's actually deployed to
+     a dataset if the SHA marker itself is ever in doubt.
 
 ## Model & effort policy
 

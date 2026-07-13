@@ -19,6 +19,14 @@ import sys
 
 from google import genai
 
+# Windows' default console codepage (cp1252) can't encode characters Gemini's
+# response commonly includes (e.g. U+2248 "~="). Hit this for real (2026-07-13):
+# print(response.text) crashed with UnicodeEncodeError, silently losing an
+# entire review's output. PYTHONIOENCODING=utf-8 works around it per-invocation,
+# but requiring that to be remembered every time is the wrong fix -- reconfigure
+# stdout once here so this script is correct by default on any console.
+sys.stdout.reconfigure(encoding="utf-8")
+
 MODEL = "gemini-3.1-pro-preview"
 
 SYSTEM_PREAMBLE = """You are performing an ADVERSARIAL code review. Your job is to find real
