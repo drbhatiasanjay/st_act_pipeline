@@ -382,6 +382,21 @@ class DetectionLoss(torch.nn.Module):
     batch's own foreground/background voxel mass so positive and negative
     contributions balance regardless of local cell density, instead of assuming
     one dataset-wide ratio.
+
+    CRITICAL, found by adversarial review (2026-07-13) of the first adaptive
+    version and confirmed numerically before trusting it: the first
+    implementation returned loss.mean() (dividing by targets_f.numel(), ~4.19M
+    voxels). Since adaptive weighting makes BOTH the positive and negative
+    contributions proportional to the tiny foreground pixel count for
+    cell-containing batches, .mean() then shrinks the ENTIRE loss by
+    ~pos_mass/numel on top of the balancing already done -- e.g. measured
+    0.0000208 for a real cell-containing batch vs 0.0069 for an empty one, a
+    333x GRADIENT SUPPRESSION on exactly the batches that matter, the opposite
+    of the intended fix. A cheap 200-batch Kaggle verification run confirmed
+    this empirically (sigmoid stuck at [0.0000, 0.0000] even with the "fix"
+    active). Normalizing by the actual sum of applied weights instead keeps
+    loss magnitude stable (~0.69, real BCE-for-p=0.5 scale) regardless of cell
+    density, so gradient flows to positive voxels the way the balancing intends.
     """
 
     def __init__(self, weight_pos: float = 1.0, weight_neg: float = 0.01, adaptive: bool = True):
@@ -420,9 +435,10 @@ class DetectionLoss(torch.nn.Module):
         # Compute base BCE loss
         loss = self.bce_loss(logits, targets_f)
 
+        pos_mass = targets_f.sum()
+        neg_mass = targets_f.numel() - pos_mass
+
         if self.adaptive:
-            pos_mass = targets_f.sum()
-            neg_mass = targets_f.numel() - pos_mass
             if pos_mass > 0 and neg_mass > 0:
                 weight_neg = self.weight_pos * pos_mass / neg_mass
             else:
@@ -433,6 +449,13 @@ class DetectionLoss(torch.nn.Module):
             weight_neg = self.weight_neg
 
         # Apply class imbalance weighting
-        loss = loss * (self.weight_pos * targets_f + weight_neg * (1.0 - targets_f))
+        weights = self.weight_pos * targets_f + weight_neg * (1.0 - targets_f)
+        loss = loss * weights
 
-        return loss.mean()
+        # Normalize by the sum of APPLIED weights, not numel -- see class
+        # docstring's CRITICAL note. loss.mean() would divide by numel
+        # regardless of how the weights were balanced, silently re-introducing
+        # a ~pos_mass/numel gradient suppression on cell-containing batches
+        # even though the pos/neg CONTRIBUTIONS were correctly balanced above.
+        sum_weights = weights.sum().clamp(min=1e-12)
+        return loss.sum() / sum_weights

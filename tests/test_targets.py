@@ -270,7 +270,45 @@ class TestDetectionLoss:
         pos_contrib = 1.0 * pos_mass * bce_per_voxel
         neg_contrib = expected_weight_neg * neg_mass * bce_per_voxel
         assert pos_contrib == pytest.approx(neg_contrib, rel=1e-5)
-        assert loss.item() == pytest.approx((pos_contrib + neg_contrib) / targets.numel(), rel=1e-5)
+        # Normalized by the SUM OF APPLIED WEIGHTS, not numel (see CRITICAL note
+        # in DetectionLoss's docstring -- .mean() was a confirmed, real bug that
+        # shrunk cell-containing batches' gradient by ~pos_mass/numel, silencing
+        # exactly the batches the adaptive weighting was meant to rescue).
+        sum_weights = 1.0 * pos_mass + expected_weight_neg * neg_mass
+        assert loss.item() == pytest.approx((pos_contrib + neg_contrib) / sum_weights, rel=1e-5)
+        # With uniform bce (logits=0 everywhere), perfectly balanced pos/neg
+        # contributions must collapse to exactly bce_per_voxel -- NOT a value
+        # shrunk toward zero by the batch's foreground fraction.
+        assert loss.item() == pytest.approx(bce_per_voxel, rel=1e-5)
+
+    def test_adaptive_does_not_collapse_on_a_realistically_sized_sparse_volume(self):
+        """REGRESSION GUARD for the real confirmed bug: the original adaptive
+        implementation passed on a 100-voxel toy tensor (weight_sum/numel = 0.08,
+        a healthy gradient scale) but silently underflowed to ~0.00002 on a real
+        (1,1,64,256,256)-scale volume with a realistically small number of cell
+        voxels -- a 333x gradient suppression only visible at real scale. Verified
+        via a real Kaggle run: sigmoid stayed at [0.0000, 0.0000] even with the
+        "fix" active. This test uses the real full per-frame voxel count so a
+        regression back to loss.mean() fails here, not just in production."""
+        require_real_geff()
+        heatmaps, _ = generate_heatmap_targets(
+            sample_id="44b6_0113de3b", geff_path=REAL_GEFF_PATH,
+            volume_shape=REAL_VOLUME_SHAPE, target_ts=[30],
+        )
+        targets = heatmaps[30].unsqueeze(0)
+        logits = torch.zeros_like(targets)
+
+        loss_fn = DetectionLoss(weight_pos=1.0, weight_neg=0.01, adaptive=True)
+        loss_cell_batch = loss_fn(logits, targets)
+        loss_empty_batch = loss_fn(logits, torch.zeros_like(targets))
+
+        # Both must sit at the real BCE-for-p=0.5 baseline (~0.693) regardless of
+        # cell density -- loss.mean() would instead show loss_cell_batch collapsed
+        # to near-zero while loss_empty_batch stayed near 0.00693 (0.01x smaller,
+        # not equal), the exact inverted-gradient bug this test guards against.
+        assert loss_cell_batch.item() == pytest.approx(0.693147, rel=1e-3)
+        assert loss_empty_batch.item() == pytest.approx(0.693147, rel=1e-3)
+        assert loss_cell_batch.item() == pytest.approx(loss_empty_batch.item(), rel=1e-3)
 
     def test_adaptive_weight_neg_matches_real_measured_imbalance(self):
         require_real_geff()
@@ -292,31 +330,40 @@ class TestDetectionLoss:
         # A batch with NO ground-truth cells at all (a real, observed case --
         # e.g. timepoint T=10 of 44b6_0113de3b has 0 GT centroids) has nothing to
         # balance against; must fall back to the fixed weight_neg, not divide by
-        # zero or silently produce a NaN/zero loss.
+        # zero or silently produce a NaN/zero loss. With every voxel sharing the
+        # SAME weight_neg, the weighted mean correctly collapses to plain
+        # bce_per_voxel regardless of weight_neg's actual value (a constant
+        # weight cancels out of a weighted average) -- this is the correct
+        # behavior of the fixed normalization, not a bug.
         targets = torch.zeros(1, 1, 4, 4, 4)
         logits = torch.zeros_like(targets)
         loss_fn = DetectionLoss(weight_pos=1.0, weight_neg=0.01, adaptive=True)
         loss = loss_fn(logits, targets)
         assert torch.isfinite(loss)
         bce_per_voxel = loss_fn.bce_loss(logits, targets)[0, 0, 0, 0, 0].item()
-        expected = 0.01 * bce_per_voxel  # every voxel is negative, weight=weight_neg
-        assert loss.item() == pytest.approx(expected, rel=1e-5)
+        assert loss.item() == pytest.approx(bce_per_voxel, rel=1e-5)
 
-    def test_non_adaptive_matches_original_fixed_weighting(self):
-        # Backward-compat: adaptive=False must reproduce the exact pre-fix
-        # behavior, so existing/explicit fixed-ratio usage isn't silently changed.
-        targets = torch.zeros(1, 1, 1, 10, 10)
-        targets[0, 0, 0, 0, :4] = 1.0
-        logits = torch.zeros_like(targets)
+    def test_non_adaptive_uses_fixed_weight_neg_not_per_batch(self):
+        # adaptive=False must use the fixed weight_neg regardless of batch
+        # content (i.e. NOT recompute it from pos_mass/neg_mass) -- verified by
+        # checking two batches with different cell counts get weighted
+        # identically relative to their own bce, not balanced against each other.
+        targets_sparse = torch.zeros(1, 1, 1, 10, 10)
+        targets_sparse[0, 0, 0, 0, :4] = 1.0
+        targets_dense = torch.zeros(1, 1, 1, 10, 10)
+        targets_dense[0, 0, 0, 0, :40] = 1.0
+        logits = torch.zeros(1, 1, 1, 10, 10)
 
         loss_fn = DetectionLoss(weight_pos=1.0, weight_neg=0.01, adaptive=False)
-        loss = loss_fn(logits, targets)
+        bce_per_voxel = loss_fn.bce_loss(logits, targets_sparse)[0, 0, 0, 0, 0].item()
 
-        bce_per_voxel = loss_fn.bce_loss(logits, targets)[0, 0, 0, 0, 0].item()
-        pos_mass = targets.sum().item()
-        neg_mass = targets.numel() - pos_mass
-        expected = (1.0 * pos_mass * bce_per_voxel + 0.01 * neg_mass * bce_per_voxel) / targets.numel()
-        assert loss.item() == pytest.approx(expected, rel=1e-5)
+        for targets in (targets_sparse, targets_dense):
+            pos_mass = targets.sum().item()
+            neg_mass = targets.numel() - pos_mass
+            sum_weights = 1.0 * pos_mass + 0.01 * neg_mass
+            expected = (1.0 * pos_mass * bce_per_voxel + 0.01 * neg_mass * bce_per_voxel) / sum_weights
+            loss = loss_fn(logits, targets)
+            assert loss.item() == pytest.approx(expected, rel=1e-5)
 
 
 if __name__ == "__main__":
