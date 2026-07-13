@@ -634,6 +634,22 @@ class TrainingLoop:
                 nodes_t, features_t = self._nodes_and_features_at_peaks(features, peaks_t)
                 nodes_t1, features_t1 = self._nodes_and_features_at_peaks(features, peaks_t1)
 
+                # Every 5 batches -- mirrors train_epoch()'s progress-logging cadence
+                # (see comment there). Without this, a val_score=0.0 gives no way to
+                # tell "the model detects nothing at all" (sigmoid stuck near 0) apart
+                # from "it detects things but they don't match GT" from the CSV alone
+                # -- exactly the diagnostic gap that made the real root cause of the
+                # 2026-07-13 zero-score run (class-imbalance loss under-weighting)
+                # invisible until the full log was pulled and manually inspected.
+                if (_batch_idx + 1) % 5 == 0:
+                    sig_min = detection_probs.min().item()
+                    sig_max = detection_probs.max().item()
+                    logger.info(
+                        f"Val batch {_batch_idx + 1} | sample={sample_id} t_idx={t_idx} | "
+                        f"sigmoid=[{sig_min:.4f}, {sig_max:.4f}] | "
+                        f"peaks: {len(peaks_t)} (ch0), {len(peaks_t1)} (ch1)"
+                    )
+
                 if len(peaks_t) > 0 and len(peaks_t1) > 0:
                     edge_probs = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
                     assignment = greedy_edge_assignment(

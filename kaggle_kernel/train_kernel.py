@@ -156,6 +156,13 @@ HYPERPARAMS = {
     'nms_radius_um': 5.0,
     'seed': SEED,
     'batch_size': 1,  # Memory-constrained
+    # TEMPORARY for this run only: cheap ~5min verification that the adaptive
+    # class-imbalance loss weighting fix (2026-07-13, DEFERRED_IMPROVEMENTS.md)
+    # actually produces non-zero/varied detection_probs before committing
+    # another ~5.6h full epoch. REMOVE this line before the next real full
+    # training run (see git history / DEFERRED_IMPROVEMENTS.md for the
+    # full-run config this temporarily overrides).
+    'max_batches_per_epoch': 200,
     # Full run: no max_batches_per_epoch cap (that was only for the earlier
     # sanity check -- real epoch size is ~14,751 batches: 149 train samples x
     # ~99 consecutive-frame pairs each). Real per-batch rate at sanity-check
@@ -166,7 +173,7 @@ HYPERPARAMS = {
     # is a generous upper bound and max_wall_clock_seconds does the real
     # gating, sized from the ACTUAL measured epoch time during this run
     # (see TrainingLoop.fit()).
-    'num_epochs': 20,
+    'num_epochs': 1,
     # 11h of Kaggle's 12h GPU session cap, leaving a ~1h buffer for
     # dependency install, notebook-to-HTML conversion, and validate_epoch
     # cost that may be higher than the sanity run's (that run's val was
