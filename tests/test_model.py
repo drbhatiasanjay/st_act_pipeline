@@ -86,6 +86,23 @@ class TestUNet3D:
         # at least one parameter must have a genuinely non-zero gradient
         assert any(g > 0 for g in grad_norms), "all gradients were exactly zero"
 
+    def test_detection_head_bias_initialized_to_foreground_prior_not_zero(self):
+        """REGRESSION GUARD (2026-07-13, found by adversarial review): PyTorch's
+        default zero bias means sigmoid(0)=0.5 everywhere at init, wasting many
+        early gradient steps just discovering the ~1e-4 real background prior
+        before the network can learn real spatial cell features. A future
+        refactor of det_head must not silently drop this init back to zero."""
+        model = make_small_unet()
+
+        final_bias = model.det_head[-1].bias
+        sigmoid_at_init = torch.sigmoid(final_bias)
+
+        assert torch.allclose(sigmoid_at_init, torch.full_like(sigmoid_at_init, 1e-4), atol=1e-5), (
+            f"detection head bias must be initialized to the foreground prior "
+            f"(sigmoid~1e-4), got sigmoid={sigmoid_at_init.tolist()} -- default "
+            f"zero-bias init (sigmoid=0.5) has been silently reintroduced"
+        )
+
 
 class TestSimpleNodeTransformer:
     def make_model(self):
