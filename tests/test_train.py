@@ -104,7 +104,12 @@ class TestExtractPeaksFromVolumeSubvoxelRefinement:
     giving a real kernel radius of 1 (kernel size 3) -- a degenerate
     nms_radius_um=1.0 gives kernel size 1 (no actual neighborhood), which
     trivially marks every above-threshold voxel as its own "peak" and
-    doesn't exercise the tied-plateau behavior these tests target."""
+    doesn't exercise the tied-plateau behavior these tests target.
+
+    Also covers the two competitor-validated additions (background
+    subtraction, max-shift safety cap) layered onto the padded-window
+    refinement -- see COMPETITOR_RESEARCH_2026-07-13.md item 1 and
+    DEFERRED_IMPROVEMENTS.md item 0."""
 
     def test_zero_peaks_returns_empty_list(self):
         vol = np.zeros((10, 10, 10), dtype=np.float32)
@@ -163,6 +168,45 @@ class TestExtractPeaksFromVolumeSubvoxelRefinement:
         # x=5.0 (the midpoint) by peak B's plateau bleeding into its window.
         assert np.allclose(peaks_sorted[0], [4.0, 4.0, 4.230769230769231])
         assert np.allclose(peaks_sorted[1], [4.0, 4.0, 5.769230769230769])
+
+    def test_shift_exceeding_cap_reverts_to_plateau_center(self):
+        """REGRESSION-relevant: the safety bound. The same asymmetric-falloff
+        setup that normally refines to x=4.8 must fall back to the plain
+        plateau centroid (x=4.5) when max_shift_um is set below the actual
+        shift distance."""
+        vol = np.zeros((10, 10, 10), dtype=np.float32)
+        vol[4, 4, 4] = 10.0
+        vol[4, 4, 5] = 10.0
+        vol[4, 4, 3] = 2.0
+        vol[4, 4, 6] = 8.0
+
+        peaks = extract_peaks_from_volume(
+            vol, threshold=0.4, voxel_size=(1, 1, 1), nms_radius_um=2.0, max_shift_um=0.01,
+        )
+
+        assert len(peaks) == 1
+        assert np.allclose(peaks[0], [4.0, 4.0, 4.5]), "must revert to the plateau centroid, not the capped shift"
+
+    def test_background_subtraction_removes_uniform_local_floor(self):
+        """REGRESSION-relevant: the actual point of background subtraction.
+        A uniform intensity floor added across the whole refinement window
+        (e.g. out-of-focus glow, baseline offset) must be subtracted out via
+        the local percentile estimate, recovering the SAME refined centroid
+        as the floor-free case -- not a result diluted/pulled toward the
+        window's own geometric center by the extra uniform mass."""
+        vol = np.zeros((10, 10, 10), dtype=np.float32)
+        vol[3:6, 3:6, 3:7] = 3.0  # uniform floor across the eventual padded window
+        vol[4, 4, 4] = 13.0  # 10 + floor
+        vol[4, 4, 5] = 13.0  # 10 + floor
+        vol[4, 4, 3] = 5.0   # 2 + floor (weak falloff)
+        vol[4, 4, 6] = 11.0  # 8 + floor (strong falloff)
+
+        peaks = extract_peaks_from_volume(
+            vol, threshold=0.4, voxel_size=(1, 1, 1), nms_radius_um=2.0, background_percentile=20.0,
+        )
+
+        assert len(peaks) == 1
+        assert np.allclose(peaks[0], [4.0, 4.0, 4.8]), "floor must be subtracted, matching the floor-free result"
 
 
 class TestPeaksForChannel:

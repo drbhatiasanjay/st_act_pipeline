@@ -61,6 +61,8 @@ def extract_peaks_from_volume(
     voxel_size: tuple = DEFAULT_SCALE,
     nms_radius_um: float = 5.0,
     subvoxel_refine_radius: int = 1,
+    background_percentile: float = 20.0,
+    max_shift_um: float = 2.8,
 ) -> list:
     """
     Real 3D non-max suppression via maximum_filter with centroid collapsing.
@@ -70,11 +72,18 @@ def extract_peaks_from_volume(
     other's local max, forcing equal value) -- weighting the centroid by `vol`
     restricted to just the plateau is mathematically identical to the plain
     geometric centroid (verified: 20k random-volume trials, zero
-    counterexamples). Real sub-voxel information only exists in the falloff
-    just OUTSIDE the plateau, so each plateau's centroid is instead computed
-    over its bounding box padded by `subvoxel_refine_radius` voxels, weighted
-    by real intensity there (excluding voxels claimed by a different peak's
-    label, so nearby peaks don't bleed into each other).
+    counterexamples; also independently confirmed by two real competitor
+    submissions per COMPETITOR_RESEARCH_2026-07-13.md item 1). Real sub-voxel
+    information only exists in the falloff just OUTSIDE the plateau, so each
+    plateau's centroid is instead computed over its bounding box padded by
+    `subvoxel_refine_radius` voxels (excluding voxels claimed by a different
+    peak's label, so nearby peaks don't bleed into each other), with the
+    region's own `background_percentile`-th percentile subtracted first so
+    refinement responds to the residual signal rather than an absolute
+    intensity level that varies sample-to-sample. The refined position is
+    discarded (falls back to the plain plateau centroid) if it would shift
+    the peak by more than `max_shift_um` physical microns, as a safety bound
+    against noise-driven refinement.
 
     Returns list of [z, y, x] peak coordinates.
     """
@@ -90,17 +99,34 @@ def extract_peaks_from_volume(
     for label_id, obj_slice in enumerate(ndimage.find_objects(labeled), start=1):
         if obj_slice is None:
             continue
+        plateau_center = [
+            c + s.start for c, s in
+            zip(ndimage.center_of_mass(labeled[obj_slice] == label_id), obj_slice, strict=False)
+        ]
+
         padded_slice = tuple(
             slice(max(0, s.start - subvoxel_refine_radius), min(dim, s.stop + subvoxel_refine_radius))
             for s, dim in zip(obj_slice, vol.shape, strict=False)
         )
         local_labels = labeled[padded_slice]
+        local_vol = vol[padded_slice]
         # Include this peak's own plateau plus unclaimed background falloff;
         # exclude any voxel already claimed by a DIFFERENT peak's plateau.
         weight_mask = (local_labels == label_id) | (local_labels == 0)
-        weights = np.where(weight_mask, np.maximum(vol[padded_slice], 0), 0.0)
-        local_center = ndimage.center_of_mass(weights)
-        centroids.append([c + s.start for c, s in zip(local_center, padded_slice, strict=False)])
+        included_vals = local_vol[weight_mask]
+        background = np.percentile(included_vals, background_percentile) if included_vals.size else 0.0
+        residual = np.maximum(np.where(weight_mask, local_vol - background, 0.0), 0.0)
+
+        if residual.sum() <= 0:
+            centroids.append(plateau_center)
+            continue
+
+        local_center = ndimage.center_of_mass(residual)
+        refined_center = [c + s.start for c, s in zip(local_center, padded_slice, strict=False)]
+        shift_um = np.sqrt(sum(
+            ((r - p) * s) ** 2 for r, p, s in zip(refined_center, plateau_center, voxel_size, strict=False)
+        ))
+        centroids.append(refined_center if shift_um <= max_shift_um else plateau_center)
     return centroids
 
 

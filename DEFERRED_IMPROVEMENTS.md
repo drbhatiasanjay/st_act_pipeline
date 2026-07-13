@@ -29,7 +29,7 @@ cross-checked next actions.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Topology-preserving line-fit coordinate smoothing | Competitor #4 | Medium — directly targets the strict 7.0µm `DistanceMatching` gate by removing frame-to-frame jitter on already-correctly-linked tracks | **Low** — mutates coordinates only, cannot touch edges/`T_pred`/`division_jaccard`; fully inert w.r.t. everything else on this list | **Low** — one function, dozens of lines, unit-testable today with synthetic tracks | **Zero dependency on real detections** — buildable and testable right now, doesn't need the loss/lr fix confirmed | Not started — recommended first |
 | 2 | Component-based short-track pruning, with division protection | Competitor #3, supersedes old item 1 below | Medium-High — reduces the `T_pred` over-prediction penalty in `adjusted_edge_jaccard` | Medium — division-protection check (any component containing a node with out-degree ≥2 is exempt) must be correct, or real birth/death events get cut alongside noise | Low-Medium — pure graph op on the existing `nx.DiGraph`, testable today | Buildable/testable today on synthetic graphs; `L_min` threshold (competitors disagree: 4 vs. 7) needs tuning against **our own** real checkpoint data, not copied verbatim | Not started |
-| 3 | Windowed, background-subtracted centroid refinement | Competitor #1, supersedes old item 0 below | Medium — precision fix that increases the odds of landing inside the 7µm gate | **Low** — bounded to a max 2.8µm shift; separate post-processing step, doesn't touch NMS/detection logic | Low — reuses existing `labeled` regions | Buildable now, but **only measurable once real (non-zero) detections exist** — gated on the loss/lr fix above (v39). Real target file is `run_pipeline.py` **and** `src/train.py` (both copies of `extract_peaks_from_volume()`, kept in sync per `CLAUDE.md`'s duplication warning) — **not** `src/model.py` (Gemini's original citation was wrong, verified) | Not started, gated on v39 |
+| 3 | Windowed, background-subtracted centroid refinement | Competitor #1, supersedes old item 0 below | Medium — precision fix that increases the odds of landing inside the 7µm gate | **Low** — bounded to a max 2.8µm shift; separate post-processing step, doesn't touch NMS/detection logic | Low — reuses existing `labeled` regions | Real target file is `run_pipeline.py` **and** `src/train.py` (both copies of `extract_peaks_from_volume()`, kept in sync per `CLAUDE.md`'s duplication warning) — **not** `src/model.py` (Gemini's original citation was wrong, verified) | **Implemented** (`22ca3a1` + follow-up commit adding bg-subtraction/shift-cap), 6 unit tests, still only **measurable** once real (non-zero) detections exist — gated on the loss/lr fix above (v39) |
 | 4 | Synthetic gap-node insertion for 1-frame skips | Competitor #2 | Medium-High — directly increases TP in `edge_jaccard` by physically manifesting a missing intermediate-frame detection | Medium-High — **increases `T_pred`**, directly offsetting item 2's decrease; the two must be simulated **jointly** against `src/evaluation.py` on a real checkpoint, not trusted independently, since `adjusted_edge_jaccard` penalizes `T_pred` deviation from `T_true` | Medium — needs new raw-volume-access plumbing at the `run_pipeline.py` orchestration level (the bare `nx.DiGraph` `solve_lineage()` returns doesn't carry volumes forward) | Build after items 2 and 3 are proven; reuses item 3's background-subtraction machinery | Not started, sequenced after 2 & 3 |
 | 5 | Linear momentum (constant-velocity) relinking prior | Competitor #5 | Medium — real physical prior, but reframed: `run_pipeline.py:276` hardcodes `motion_vectors = [[0.0,0.0,0.0]...]`, so this is adding the **first** motion signal ever, not patching a failing learned one (Gemini's original framing was wrong, verified) | **High** — genuine architectural mismatch: our global ILP solves the whole spatio-temporal graph in one shot, so there is no "already-known t-1 assignment" available at cost-computation time the way a sequential linker (what the competitor actually is) has; needs a two-pass solve or a soft-prior cost reformulation | High — real design work, not a parameter add | Defer until items 1-4 are built and validated against real local-eval scores | Deferred, lowest priority of the 5 |
 | — | Multi-scale Difference-of-Gaussians classical detector | Competitor #6 (NOT-APPLICABLE) + old item 2 below | — | — | — | Independently rejected by **both** this file's original review and the competitor-research pass — redundant given a trained `UNet3D` architecture already exists; the real gap was the loss/lr bug, not missing architecture | Not adopted |
@@ -39,6 +39,13 @@ cross-checked next actions.
 (centroid refinement, needs v39-confirmed detections) → 4 (gap synthesis, needs 2 & 3 proven) → 5
 (velocity relinking, highest risk, last). Items 1 and 2 can start immediately in parallel with
 waiting on v39; items 3-5 are hard-gated on it.
+
+**Status update (2026-07-13, later still):** items 1, 2, and 3 are all now **implemented and
+tested** (1 & 2: `47bfb19`; 3: sub-voxel centroid refinement, committed in two steps — an initial
+padded-window fix, then a follow-up adding competitor-validated background subtraction + max-shift
+cap after re-verifying the original `vol`-as-weight approach really was a no-op, per item 0 below).
+None of the three are empirically measurable yet (checkpoint still predicts zero detections,
+gated on v39). Items 4 and 5 remain not started.
 
 ## URGENT — Fix DetectionLoss class-imbalance weighting before spending more GPU time
 
@@ -182,10 +189,17 @@ plan.
 
 ## Net outcome this session
 
-None of this doc's specific recommendations were adopted as code changes. The one
-initially-promising candidate (item 0, sub-voxel refinement) was verified numerically to be a
-no-op before being committed, and reverted rather than shipped. The real, primary value from this
-cross-check was independent external confirmation that bug 1.3 (anisotropy ratio vs. physical
-microns, fixed earlier this session in `f5fd65c`) was correctly diagnosed and fixed — see the
-"Independent Technical Code Review" section of the source document, which describes the identical
-bug and an equivalent fix.
+**Updated 2026-07-13, later still:** the original AI research report's *specific* recommended fix
+(weight `center_of_mass` by `vol` within the tied `is_peak` region) was verified numerically to be
+a no-op and correctly reverted rather than shipped, exactly as this section originally said. But
+sub-voxel refinement itself was NOT abandoned — the priority matrix above (informed by
+`COMPETITOR_RESEARCH_2026-07-13.md`'s real competitor evidence) led to implementing the
+*structurally different* fix this doc's own item 0 predicted would be needed (a separate
+post-processing step over a window around the peak, not a reweighting of the tied region), now
+shipped with competitor-validated background subtraction and a max-shift safety cap. See item 0's
+full writeup below for the no-op proof, which still applies to the *original* report's proposal —
+just not to what was ultimately built. The other continuing value from this cross-check remains
+independent external confirmation that bug 1.3 (anisotropy ratio vs. physical microns, fixed
+earlier this session in `f5fd65c`) was correctly diagnosed and fixed — see the "Independent
+Technical Code Review" section of the source document, which describes the identical bug and an
+equivalent fix.
