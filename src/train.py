@@ -386,6 +386,34 @@ class TrainingLoop:
         except OSError as e:
             logger.warning(f"Failed to write progress heartbeat: {e}")
 
+    def _write_batch_heartbeat(self, batch_idx: int, effective_total: int, loss: float, max_sigmoid: float):
+        """Mid-epoch heartbeat, same atomic-overwrite mechanism as
+        _write_progress_heartbeat() but written every 5 batches during
+        training, not just once per epoch. Every verification run this
+        session used num_epochs=1, so the per-epoch heartbeat never fired
+        until the run had already finished or errored -- zero real mid-run
+        visibility despite the heartbeat mechanism existing. Deliberately a
+        separate, simpler payload (no val_metrics -- those don't exist yet
+        mid-epoch); validate_epoch()'s eventual full heartbeat overwrites
+        this same file once available."""
+        if self.progress_file is None:
+            return
+        payload = {
+            "deployed_sha": self.deployed_sha,
+            "phase": "training",
+            "batch": batch_idx,
+            "batch_total": effective_total,
+            "train_loss": loss,
+            "max_sigmoid": max_sigmoid,
+        }
+        try:
+            tmp_path = self.progress_file.with_suffix(".tmp")
+            with open(tmp_path, "w") as f:
+                json.dump(payload, f, indent=2)
+            tmp_path.replace(self.progress_file)
+        except OSError as e:
+            logger.warning(f"Failed to write batch heartbeat: {e}")
+
     def _get_gt_nodes(self, sample_id: str, t_idx: int) -> torch.Tensor | None:
         """
         Extract GT node coordinates from .geff at a specific timepoint.
@@ -657,6 +685,9 @@ class TrainingLoop:
                     f"max_sigmoid: {max_sigmoid:.8f}, "
                     f"elapsed={elapsed:.1f}s, {rate:.2f}s/batch, "
                     f"eta_remaining={eta_remaining:.0f}s"
+                )
+                self._write_batch_heartbeat(
+                    batch_idx + 1, effective_total, total_loss_item.item(), max_sigmoid,
                 )
 
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
@@ -1008,6 +1039,17 @@ class TrainingLoop:
             # Training
             train_loss = self.train_epoch()
 
+            # Unconditional checkpoint of the just-trained weights, BEFORE
+            # validate_epoch() runs -- validate_epoch()'s circuit breaker can
+            # raise and abort fit() entirely, and save_checkpoint() below
+            # only fires on a val_score improvement, so every verification
+            # run that hit the circuit breaker (v40-v45) lost its trained
+            # weights completely, with no way to even inspect what the
+            # model had learned. This survives that case: real weights are
+            # on disk the moment training finishes, independent of whether
+            # validation ever completes.
+            self._save_last_checkpoint(epoch + 1, train_loss)
+
             # Validation
             val_metrics = self.validate_epoch()
 
@@ -1050,6 +1092,24 @@ class TrainingLoop:
                     break
 
         logger.info(f"\nTraining complete. Best val score: {self.best_val_score:.6f}")
+
+    def _save_last_checkpoint(self, epoch: int, train_loss: float):
+        """Unconditional checkpoint of the current weights, independent of
+        validation outcome -- see the call site in fit() for why this
+        exists. Fixed filename (not val-score-keyed) so it always
+        overwrites in place rather than accumulating; save_checkpoint()'s
+        separate best-score-keyed files are unaffected."""
+        checkpoint_path = self.checkpoint_dir / "last_checkpoint.pt"
+        checkpoint = {
+            'epoch': epoch,
+            'unet3d_state_dict': self.unet3d.state_dict(),
+            'transformer_state_dict': self.transformer.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'train_loss': train_loss,
+            'hyperparams': self.hyperparams,
+        }
+        torch.save(checkpoint, checkpoint_path)
+        logger.info(f"Saved unconditional last-epoch checkpoint: {checkpoint_path}")
 
     def save_checkpoint(self, epoch: int, metrics: dict[str, float]):
         """Save model checkpoint."""
