@@ -604,8 +604,14 @@ class TrainingLoop:
                 self.epoch_fallback_counts['heatmap_generation_failure'] += 1
                 heatmap_target = torch.zeros((1, 2, z, y, x), dtype=torch.float32, device=self.device)
 
-            # detection_loss expects (B, 2, Z, Y, X) for both logits and targets
-            detection_loss = self.detection_loss_fn(logits, heatmap_target)
+            # detection_loss expects (B, 2, Z, Y, X) for both logits and targets.
+            # logits.float(): logits left the autocast(dtype=float16) block above
+            # as a float16 tensor: PyTorch's AMP docs explicitly recommend casting
+            # tensors produced in an autocast region back to float32 once outside
+            # it, since ops run there no longer get autocast's own dtype-safety
+            # policy (BCEWithLogitsLoss itself is autocast-safe either way, but
+            # this call executes in plain eager mode here, not inside autocast).
+            detection_loss = self.detection_loss_fn(logits.float(), heatmap_target)
 
             # === EDGE LOSS (teacher forcing) ===
             edge_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
@@ -922,7 +928,11 @@ class TrainingLoop:
                 x = torch.cat([frame_t, frame_t1], dim=1)
                 with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self._amp_enabled):
                     logits, features = self.unet3d(x)
-                detection_probs = torch.sigmoid(logits)
+                # .float(): same rationale as train_epoch()'s detection_loss call --
+                # logits left the autocast region as float16; detection_probs feeds
+                # _peaks_for_channel()'s threshold comparison, which directly
+                # determines predicted nodes and therefore val_score.
+                detection_probs = torch.sigmoid(logits.float())
 
                 peaks_t = self._peaks_for_channel(detection_probs, channel=0, t_idx=t_idx)
                 peaks_t1 = self._peaks_for_channel(detection_probs, channel=1, t_idx=t_idx)
