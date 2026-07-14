@@ -187,6 +187,29 @@ investigate later, not established fact.
 target/leaderboard baselines, as a Phase 3/4-scale rearchitecture effort with its own dedicated
 plan.
 
+## 4. Heatmap target Gaussian sigma calibration (`src/targets.py`) — OPEN QUESTION, NOT YET RESOLVED
+
+**What was found (2026-07-14):** `generate_heatmap_targets()`'s `anisotropy` parameter is a dead
+no-op (documented as such at its definition now) — the actual target shape is controlled entirely
+by `sigma_z=1.0, sigma_yx=2.0` (voxels), which in real physical microns is 1.625µm (Z) vs 0.8125µm
+(Y/X) — a 2x mismatch. The introducing commit (`28171b6`) explicitly calls this an "Anisotropic
+Gaussian" (deliberate) and claims it "aligns with reference implementation" — checked directly,
+`REFERENCE_IMPLEMENTATION.md` contains zero supporting content for this claim.
+
+**Why NOT changed:** two competing, both-plausible hypotheses, neither verified:
+(a) should be geometrically isotropic in real microns (would need `sigma_z=0.5`), or
+(b) deliberately biased toward Z to model real light-sheet microscopy PSF anisotropy (genuinely
+worse axial resolution than lateral, independent of voxel sampling) — under (b), something like
+the current values could be reasonable or even still too small in Z, not too large. A naive
+"fix" toward (a) without evidence could make training *worse* (starving Z-axis gradient signal),
+not better — caught via an explicit user-requested red-team pass before shipping a confident but
+unverified change. See `CLAUDE.md`'s "Scientific/mathematical claims" section for the full
+incident writeup and the verification protocol it produced.
+
+**Revisit:** only via empirical A/B testing (different `sigma_z`/`sigma_yx` values, compare real
+local eval score via `src/evaluation.py`) once a real checkpoint produces non-zero detections to
+measure against — not resolvable by reasoning/domain-literature alone without real data.
+
 ## Net outcome this session
 
 **Updated 2026-07-13, later still:** the original AI research report's *specific* recommended fix

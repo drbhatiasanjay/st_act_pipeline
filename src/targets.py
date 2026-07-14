@@ -59,7 +59,27 @@ def generate_heatmap_targets(
         volume_shape: (T, Z, Y, X) shape of the volume. T is only used to
             validate bounds when target_ts is given; when target_ts is None
             (default), heatmaps are computed for every t in range(T).
-        anisotropy: (z_ratio, y_ratio, x_ratio) for physical scaling
+        anisotropy: CURRENTLY UNUSED -- accepted for API compatibility with
+            scripts/benchmark_heatmap_targets.py (which passes it believing
+            it has an effect) but never referenced in this function body.
+            The actual Gaussian shape is controlled entirely by sigma_z/
+            sigma_yx below. Do not assume passing a different anisotropy
+            here changes anything -- verified false 2026-07-14 (see
+            CLAUDE.md's "Scientific/mathematical claims" section for the
+            full incident: the original commit calls this an "Anisotropic
+            Gaussian" and claims alignment with REFERENCE_IMPLEMENTATION.md,
+            but that document contains no supporting content, and whether
+            sigma_z=1.0/sigma_yx=2.0 -- physically 1.625um Z vs 0.8125um Y/X,
+            a 2x mismatch either way you slice it -- is correct is a genuine
+            open question, not yet empirically resolved. Two competing
+            hypotheses: (a) should be geometrically isotropic in real
+            microns (would need sigma_z=0.5), or (b) deliberately biased
+            toward Z to model real light-sheet PSF anisotropy (worse axial
+            resolution than lateral, independent of voxel sampling) -- (b)
+            would argue the current values, or something like them, are
+            reasonable. Do NOT change sigma_z/sigma_yx without empirical
+            A/B validation against real local eval score -- see
+            DEFERRED_IMPROVEMENTS.md.
         target_type: 'point' or 'gaussian'
         sigma_z: Gaussian sigma for Z axis (voxels)
         sigma_yx: Gaussian sigma for Y/X axes (voxels)
