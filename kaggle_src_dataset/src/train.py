@@ -251,6 +251,20 @@ class TrainingLoop:
             patience=3
         )
 
+        # Mixed precision (2026-07-14): v46 (GroupNorm added to UNet3D, see
+        # commit 0e1e186) hit a real CUDA OOM on the T4 during backward()
+        # ("Tried to allocate 2.00 GiB. ... 13.20 GiB memory in use" of the
+        # T4's 14.56 GiB) -- v45 (same batch_size=1, no normalization) had
+        # fit fine, so GroupNorm's added activation-memory overhead pushed
+        # it over. autocast halves stored-activation memory for the
+        # backward pass; GradScaler prevents fp16 gradient underflow.
+        # enabled=False on CPU (self.device.type != 'cuda') so every local
+        # CPU trace/test (scripts/local_smoke_train.py, tests/) is
+        # unaffected -- torch.autocast(device_type='cpu', dtype=float16) is
+        # not the intended use case and GradScaler is CUDA-only.
+        self._amp_enabled = (self.device.type == 'cuda')
+        self.scaler = torch.amp.GradScaler(self.device.type, enabled=self._amp_enabled)
+
         # Initialize loss functions
         # adaptive=True (default): weight_neg below is only the fallback used for
         # batches with zero GT cells -- real batches get a per-batch-computed
@@ -500,8 +514,16 @@ class TrainingLoop:
             # Concatenate frames: (B, 2, Z, Y, X)
             x = torch.cat([frame_t, frame_t1], dim=1)
 
-            # Forward pass through UNet3D
-            logits, features = self.unet3d(x)
+            # Forward pass through UNet3D. autocast halves the stored
+            # activation memory UNet3D's forward pass holds for backward()
+            # -- by far the dominant memory consumer (full (128,64,256,256)
+            # -scale feature maps) vs. the transformer's tiny point-feature
+            # ops below, so wrapping just this call captures the large
+            # majority of the saving needed. See self.scaler's __init__
+            # comment for why this exists (real CUDA OOM on v46 after
+            # GroupNorm was added).
+            with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self._amp_enabled):
+                logits, features = self.unet3d(x)
 
             # === DETECTION LOSS (teacher forcing) ===
             # Generate real GT heatmap targets for BOTH the batch's absolute
@@ -620,11 +642,15 @@ class TrainingLoop:
                 self.hyperparams['heatmap_loss_weight'] * detection_loss
             )
 
-            # Backward pass
+            # Backward pass. scaler.scale()/unscale_() are no-ops when
+            # self._amp_enabled is False (GradScaler(enabled=False)), so
+            # this is safe on CPU too.
             self.optimizer.zero_grad()
-            total_loss_item.backward()
+            self.scaler.scale(total_loss_item).backward()
 
-            # Gradient clipping
+            # Gradient clipping. unscale_() first so clip_grad_norm_ sees
+            # real (not scaler-multiplied) gradient magnitudes.
+            self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(
                 list(self.unet3d.parameters()) + list(self.transformer.parameters()),
                 self.hyperparams['grad_clip']
@@ -645,7 +671,8 @@ class TrainingLoop:
                 for param_group in self.optimizer.param_groups:
                     param_group['lr'] = warmup_lr
 
-            self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
             self._global_step += 1
 
             total_loss += total_loss_item.item()
@@ -856,9 +883,13 @@ class TrainingLoop:
                     all_pred_graphs[sample_id] = pred_graph
                 pred_graph = all_pred_graphs[sample_id]
 
-                # Forward pass -- logits/detection_probs are (B, 2, Z, Y, X)
+                # Forward pass -- logits/detection_probs are (B, 2, Z, Y, X).
+                # Same autocast rationale as train_epoch() above -- extra
+                # memory headroom during eval too, no scaler needed here
+                # (no backward pass, already under torch.no_grad()).
                 x = torch.cat([frame_t, frame_t1], dim=1)
-                logits, features = self.unet3d(x)
+                with torch.autocast(device_type=self.device.type, dtype=torch.float16, enabled=self._amp_enabled):
+                    logits, features = self.unet3d(x)
                 detection_probs = torch.sigmoid(logits)
 
                 peaks_t = self._peaks_for_channel(detection_probs, channel=0, t_idx=t_idx)
