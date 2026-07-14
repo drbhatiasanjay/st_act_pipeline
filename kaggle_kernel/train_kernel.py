@@ -209,10 +209,14 @@ HYPERPARAMS = {
     # committing to a full ~6.3h uncapped epoch. REMOVE this line before the
     # next real full training run (see git history / DEFERRED_IMPROVEMENTS.md
     # for the full-run config this temporarily overrides).
-    # Reduced from 5000 -- this is a fresh hypothesis test (lr=1e-2, never
-    # tried on real data), not confirming a known-good config, so starting
-    # smaller/cheaper again for a fast read before committing more.
-    'max_batches_per_epoch': 1000,
+    # Back to 5000 (2026-07-14): lr=3e-3 already confirmed stable at 1000
+    # batches (v44, no NaN) but validation still showed zero detections --
+    # inconclusive at that budget since v42's comparable 1e-3 result used
+    # 5x more steps. Scaling to the same 5000-batch budget for a fair
+    # comparison, now with per-batch max_sigmoid logging (see train.py) so
+    # this run shows the real trend directly instead of another isolated
+    # before/after snapshot.
+    'max_batches_per_epoch': 5000,
     # Full run: no max_batches_per_epoch cap (that was only for the earlier
     # sanity check -- real epoch size is ~14,751 batches: 149 train samples x
     # ~99 consecutive-frame pairs each). Real per-batch rate at sanity-check
