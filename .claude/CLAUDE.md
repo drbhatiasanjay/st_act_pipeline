@@ -100,6 +100,20 @@ scope, not this file.
   run to completion producing a checkpoint trained on garbage with no error, ever. If you see this
   `RuntimeError`, it means the pipeline is actually broken (not just occasional missing data);
   diagnose the root cause before retrying, don't raise the threshold to make it go away.
+- **`AnisotropicZarrLoader` (`src/data_loader.py`) caps `blosc2.set_nthreads(1)` at module level
+  — do not remove this.** blosc2 defaulted to `os.cpu_count()` (16) decompression threads for a
+  single `(1,64,256,256)`-chunk timepoint read, which is pure thread-spawn overhead for one small
+  chunk, not real parallelism. Confirmed on real data: capping to 1 thread is a **~375x speedup**
+  (30s → 0.08s per timepoint) and also eliminated a native `Segmentation fault` that reproduced
+  reliably around the ~36th real decompression at the default thread count (16-thread churn
+  against Windows' scheduler/handle limits over many repeated calls — a real crash, not a
+  zarr/blosc2 correctness bug). This also directly affects real Kaggle GPU run wall-clock time,
+  not just local debugging — if a future run still seems slow at the data-loading stage, verify
+  this cap is still in place before assuming the bottleneck is elsewhere. Separately,
+  `AnisotropicZarrLoader` also now caches the single most-recently-decompressed timepoint
+  (keyed on `(t, normalize)`) — `CompetitionDataset`'s `(t, t+1)` consecutive-pair access pattern
+  under `shuffle=False` was decompressing every shared timepoint twice (item *i*'s `t+1` is item
+  *i+1*'s `t`) with no caching at all.
 
 ## Operational lessons — read before running long jobs or delegating to sub-agents
 
@@ -123,9 +137,27 @@ scope, not this file.
   the actual filesystem directly for what really landed before assuming failure or re-running
   from scratch — real, committable progress was recoverable both times.
 - **Before launching another background command, check for and clean up stray processes from
-  earlier attempts** (`tasklist`/`taskkill` on Windows) — redundant concurrent runs waste CPU/RAM
-  and muddy timing measurements. This happened once (5 stray `python.exe` pytest processes
-  running simultaneously from unconfirmed earlier launches).
+  earlier attempts** (`tasklist`/`taskkill` on Windows, or `Get-Process python` in PowerShell) —
+  redundant concurrent runs waste CPU/RAM and muddy timing measurements. This happened once (5
+  stray `python.exe` pytest processes running simultaneously from unconfirmed earlier launches).
+  **A second, more severe instance (2026-07-14): running a second heavy torch job (an "isolated"
+  timing test) while a real background diagnostic was still alive caused a genuine native
+  `Segmentation fault`** in the *second* process — real CPU/thread-pool contention between two
+  concurrent torch processes on a many-core Windows machine, not a bug in the model/training code
+  itself. This wasted real debugging time because the crash looked identical to an earlier,
+  unrelated, already-fixed segfault (see the `blosc2` thread-count bug below), and was initially
+  misdiagnosed as a persistent problem. **Always check for an already-running heavy job (`Get-
+  Process python`) before launching another one that does real forward/backward passes or heavy
+  I/O** — a truly isolated rerun (nothing else running) completed the identical work cleanly with
+  no crash. Separately: **never pipe a long-running Python subprocess through `grep`/another
+  filter without also capturing its own exit code** (e.g. `cmd | grep -v pattern; echo
+  ${PIPESTATUS[0]}` or just avoid the pipe) — a bare `$?` after a pipeline reflects the *last*
+  command's exit code, so a segfault in the piped-from Python process is silently invisible and a
+  crashed run can misleadingly report success. This exact masking happened once this session: a
+  diagnostic silently died mid-run behind a `| grep -v ...` filter and was reported "completed
+  (exit code 0)" with zero real output. Prefer `python -u script.py > logfile.log 2>&1; echo "EXIT:
+  $?"` (unbuffered, redirected to a real file, exit code captured directly) for any diagnostic
+  whose success/failure matters.
 - **For any long/expensive per-unit batch job (multiple datasets, multiple timepoints, etc.),
   build in from the start**: incremental crash-safe progress logging (not just end-of-run
   summaries), live ETA, per-unit result caching keyed by the config that produced it, and
@@ -253,6 +285,63 @@ scope, not this file.
      which only returns files written to `/kaggle/working/`, not the execution trace).
      `kaggle datasets files <slug>` / `kaggle datasets metadata` verify what's actually deployed to
      a dataset if the SHA marker itself is ever in doubt.
+
+## Scientific/mathematical claims — verification protocol, read before asserting correctness or bugs
+
+This project involves real physics (light-sheet microscopy PSF, voxel anisotropy) and real
+mathematical formulas (Jaccard-based scoring, Gaussian target generation) where a confident-sounding
+but unverified claim is easy to produce and easy to mistake for solid analysis.
+
+**The incident this section exists because of (2026-07-14):** asked to audit whether
+`src/targets.py`'s heatmap Gaussian sigma values (`sigma_z=1.0, sigma_yx=2.0` voxels) were
+"physically correct," a confident claim was made that they should instead be derived from geometric
+isotropy (`sigma_z=0.5` voxels) — presented as a fix-worthy bug — **without first checking**: (1)
+git history, which showed the values were a **deliberate** design choice (commit `28171b6`,
+explicitly labeled "Anisotropic Gaussian"), not an oversight; (2) a real competing domain-scientific
+explanation (light-sheet microscopy genuinely has worse axial/Z resolution than lateral, from real
+PSF physics, independent of voxel sampling — a real imaged cell's blob can legitimately be wider in
+Z in physical microns, meaning the proposed "geometric isotropy correction" could be wrong in the
+opposite direction, not a fix); (3) whether the proposed fix could make training *worse*, not better
+(shrinking `sigma_z` to 0.5 voxels could starve Z-axis gradient signal). This was only caught because
+the user explicitly demanded a red-team pass — the first-pass answer would otherwise have shipped as
+confident, unverified, and potentially harmful, exactly the class of mistake this project has
+independently caught from Gemini (a disproven memory-leak theory) and Fable (a false "already fixed"
+claim) — this incident proves the same failure mode applies to first-pass reasoning done directly in
+the main session, not just to dispatched agents/models.
+
+**Protocol for any claim about mathematical/physical correctness** (unit conversions, anisotropy,
+loss-function calibration, statistical formulas, domain-specific ML design choices) **before
+presenting it as established fact or a fix-worthy bug:**
+
+1. **Check git history for the code in question before assuming something is an oversight** —
+   `git log -p -- <file>` (or `git log --oneline -- <file>` then inspect the introducing commit) for
+   the specific value/parameter. A "looks wrong to me" is not evidence it was never considered;
+   deliberate choices often look arbitrary out of context.
+2. **Check the actual cited justification, don't take an existing comment's claim on faith** — if a
+   comment or commit message says "matches reference implementation" or similar, grep the actual
+   referenced document for supporting content before repeating the claim as if verified.
+3. **Actively look for a competing domain-scientific explanation, not just "this looks
+   asymmetric/wrong."** Real physical/biological systems frequently are NOT the naive-symmetric case
+   a first-principles guess assumes (real microscopy PSF anisotropy, real ellipsoidal cell shapes,
+   etc.) — asymmetry in the code may be modeling asymmetry in reality, not a bug.
+4. **Before proposing a fix, explicitly ask "what happens if this fix is wrong in the opposite
+   direction?"** A "correction" based on an unverified assumption can make a metric or training
+   signal worse, not better. State this risk in the same message as the proposed fix, not only when
+   pushed to red-team it.
+5. **State confidence honestly and separately for "there is a real issue here" vs. "I know the
+   correct fix."** These are different claims requiring different evidence. It is fine — often
+   correct — to flag a genuine gap (e.g., an unused/dead parameter implying false rigor) while
+   explicitly declining to prescribe a numeric fix without further evidence (real domain data,
+   empirical A/B testing against local eval score). Do not conflate "found something worth looking
+   at" with "solved it."
+6. **Apply the same rigor to your own first-pass reasoning that this project already demands of a
+   sub-agent's or external model's claim.** The standing rule "never trust a sub-agent's claim
+   without independently re-running/verifying it" applies equally when the claim originates from
+   your own reasoning, not just from a dispatched agent — this incident is the proof case.
+7. Claims meeting the "hard judgment call" bar in the Model & effort policy below
+   (anisotropy/unit-scale math, loss-function calibration, "does this architecture even support X")
+   should get the effort level that policy specifies — treating a hard scientific question with
+   quick/default effort is itself a way this failure mode recurs.
 
 ## Model & effort policy
 
