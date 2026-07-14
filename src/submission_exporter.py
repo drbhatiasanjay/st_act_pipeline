@@ -83,10 +83,18 @@ def export_submission(
             # Extract node attributes (t, z, y, x)
             # tracksdata stores these as node attributes (accessible via dict-like interface)
             node_attrs = graph.nodes[node]
-            t = int(node_attrs['t'])
-            z = int(node_attrs['z'])
-            y = int(node_attrs['y'])
-            x = int(node_attrs['x'])
+            # round(), not bare int(): a smoothed/upstream float coordinate
+            # can land infinitesimally below its true integer value from
+            # floating-point noise -- int() truncates toward zero and
+            # silently exports one voxel too low. Same bug class as
+            # run_pipeline.py:convert_nx_to_tracksdata (fixed ace1a60); this
+            # is the literal last site before a coordinate becomes a scored
+            # row, so it needs its own defense rather than relying on every
+            # upstream caller already rounding correctly.
+            t = int(round(node_attrs['t']))
+            z = int(round(node_attrs['z']))
+            y = int(round(node_attrs['y']))
+            x = int(round(node_attrs['x']))
 
             # Create node row: [id, dataset, row_type, node_id, t, z, y, x, source_id=-1, target_id=-1]
             row = {

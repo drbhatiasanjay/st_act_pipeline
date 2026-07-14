@@ -75,6 +75,45 @@ class TestExportSubmission:
 
         return graph
 
+    def test_export_rounds_fractional_coordinates_not_truncates(self, temp_csv):
+        """REGRESSION-relevant: export_submission() must round(), not bare
+        int(), when reading node attrs. int() truncates toward zero, so a
+        coordinate landing infinitesimally below its true integer value
+        (e.g. 29.999999999998, the exact class of float-precision noise a
+        line-fit smoothing step can introduce -- see
+        run_pipeline.py:convert_nx_to_tracksdata, fixed in ace1a60) would
+        silently export as z=29 instead of z=30.
+
+        Uses a Float64-typed node attr schema (not the Int64 schema
+        create_synthetic_graph() uses elsewhere in this file) -- this is
+        deliberate: an IndexedRXGraph with an Int64-typed attr key hard-
+        crashes on read if a genuine float was ever inserted (verified
+        directly), so the exact silent-truncation bug this test targets is
+        only reachable via a Float64-typed schema, which a future caller
+        populating this graph directly from raw (float) peak coordinates
+        could plausibly choose without realizing the schema choice matters.
+        This test intentionally does NOT go through
+        run_pipeline.py:convert_nx_to_tracksdata -- the point is verifying
+        export_submission() has its own defense, independent of what any
+        upstream caller does."""
+        graph = td.graph.IndexedRXGraph()
+        for key in ('z', 'y', 'x'):
+            try:
+                graph.add_node_attr_key(key, pl.Float64, 0.0)
+            except ValueError:
+                pass
+
+        graph.add_node({'t': 0, 'z': 29.999999999998, 'y': 5.0, 'x': 5.0})
+
+        csv_path = temp_csv / 'test_fractional_coords.csv'
+        export_submission({'dataset_A': graph}, csv_path)
+
+        df = pd.read_csv(csv_path)
+        assert len(df) == 1
+        assert df.iloc[0]['z'] == 30, (
+            f"z must round to 30, not truncate to 29 -- got {df.iloc[0]['z']}"
+        )
+
     def test_export_single_node_no_edges(self, temp_csv):
         """Test export of a single node with no edges."""
         # Create synthetic graph with 1 node at (t=0, z=5, y=10, x=15)
