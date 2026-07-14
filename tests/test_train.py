@@ -348,6 +348,7 @@ class TestValidateEpochCircuitBreaker:
             unet3d=_FakeDegenerateUNet3D(),
             transformer=torch.nn.Identity(),  # never reached -- peaks are always empty
             device=torch.device("cpu"),
+            _amp_enabled=False,  # validate_epoch()'s autocast() call reads this
             hyperparams={
                 "detection_threshold": 0.5,
                 "max_positive_voxel_fraction": 0.005,
