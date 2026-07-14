@@ -33,7 +33,7 @@ from pathlib import Path
 def run_status(slug: str) -> str:
     result = subprocess.run(
         ["py", "-m", "kaggle", "kernels", "status", slug],
-        capture_output=True, text=True, check=True,
+        capture_output=True, encoding="utf-8", errors="replace", check=True,
     )
     # e.g. `owner/slug has status "KernelWorkerStatus.RUNNING"`
     match = re.search(r'"KernelWorkerStatus\.(\w+)"', result.stdout)
@@ -41,12 +41,22 @@ def run_status(slug: str) -> str:
 
 
 def pull_log_lines(slug: str, save_path: Path) -> list[str]:
-    """Fetch the real log and return it as a flat list of clean text lines."""
+    """Fetch the real log and return it as a flat list of clean text lines.
+
+    NOTE: PYTHONIOENCODING=utf-8 in the child env alone is NOT enough here --
+    that only controls how the CHILD process (kaggle CLI) encodes its own
+    output. subprocess.run(text=True) decodes those bytes back on the PARENT
+    side using Python's own locale encoding (cp1252 on Windows) by default,
+    regardless of the child's env -- confirmed as a real crash
+    (UnicodeDecodeError on a real Kaggle log) before fixing it here.
+    encoding="utf-8" passed directly to subprocess.run is what actually fixes
+    the parent-side decode.
+    """
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         ["py", "-m", "kaggle", "kernels", "logs", slug],
-        capture_output=True, text=True, env=env, check=True,
+        capture_output=True, encoding="utf-8", errors="replace", env=env, check=True,
     )
     save_path.write_text(result.stdout, encoding="utf-8")
 
