@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint
 
 
 class UNet3D(nn.Module):
@@ -132,26 +133,43 @@ class UNet3D(nn.Module):
                 pass's feature context.
             features: (B, 128, 64, 256, 256) dense feature maps for transformer
         """
+        # Gradient checkpointing (2026-07-14): recomputes each conv block's
+        # activations during backward instead of storing them, cutting peak
+        # memory regardless of which ops are involved -- unlike autocast
+        # (tried first, see git history), which explicitly keeps
+        # normalization layers in fp32 and barely moved the needle on the
+        # real v46/v47 CUDA OOM (13.20->12.97 GiB, ~230MB, far short of the
+        # ~2GB needed). Only during training with grad enabled: checkpoint()
+        # forces an extra no-grad forward pass that's pure overhead with no
+        # memory benefit during eval (validate_epoch runs under
+        # torch.no_grad() already, so there's nothing to recompute).
+        use_checkpoint = self.training and torch.is_grad_enabled()
+
+        def _block(module, inp):
+            if use_checkpoint:
+                return torch.utils.checkpoint.checkpoint(module, inp, use_reentrant=False)
+            return module(inp)
+
         # Encoder with skip connections
-        enc0 = self.enc0(x)  # (B, 32, 64, 256, 256)
+        enc0 = _block(self.enc0, x)  # (B, 32, 64, 256, 256)
 
         pool1 = self.pool1(enc0)  # (B, 32, 64, 64, 64)
-        enc1 = self.enc1(pool1)  # (B, 64, 64, 64, 64)
+        enc1 = _block(self.enc1, pool1)  # (B, 64, 64, 64, 64)
 
         pool2 = self.pool2(enc1)  # (B, 64, 64, 16, 16)
-        enc2 = self.enc2(pool2)  # (B, 128, 64, 16, 16)
+        enc2 = _block(self.enc2, pool2)  # (B, 128, 64, 16, 16)
 
         # Bottleneck
-        bottleneck = self.bottleneck(enc2)  # (B, 128, 64, 16, 16)
+        bottleneck = _block(self.bottleneck, enc2)  # (B, 128, 64, 16, 16)
 
         # Decoder with skip connections
         up2 = self.up2(bottleneck)  # (B, 128, 64, 64, 64)
         up2 = torch.cat([up2, enc1], dim=1)  # (B, 192, 64, 64, 64)
-        dec2 = self.dec2(up2)  # (B, 64, 64, 64, 64)
+        dec2 = _block(self.dec2, up2)  # (B, 64, 64, 64, 64)
 
         up1 = self.up1(dec2)  # (B, 64, 64, 256, 256)
         up1 = torch.cat([up1, enc0], dim=1)  # (B, 96, 64, 256, 256)
-        dec1 = self.dec1(up1)  # (B, 32, 64, 256, 256)
+        dec1 = _block(self.dec1, up1)  # (B, 32, 64, 256, 256)
 
         # Detection logits from final decoder output
         logits = self.det_head(dec1)  # (B, 2, 64, 256, 256)
