@@ -207,9 +207,27 @@ class TrainingLoop:
             # take. Kaggle callers should set this explicitly to validate
             # the pipeline end-to-end fast instead.
             'max_batches_per_epoch': None,
+            # Linear LR warmup over the first warmup_steps real training
+            # batches, ramping from warmup_start_lr up to the configured
+            # learning_rate, then holding at learning_rate for the rest of
+            # training (ReduceLROnPlateau still applies per-epoch on top,
+            # unchanged). Default 0 = no warmup, preserving existing
+            # behavior for every caller that doesn't set this. Standard
+            # fix for Adam-family early-training instability at higher lr
+            # (not exotic -- e.g. the warmup schedules in Vaswani et al.
+            # 2017 and BERT); added 2026-07-14 after lr=1e-2 was confirmed
+            # to diverge (Loss: nan within ~100 real batches, v43) without
+            # warmup.
+            'warmup_steps': 0,
+            'warmup_start_lr': 1e-4,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
+
+        # Tracks real batches trained across the whole run (not reset per
+        # epoch) so warmup only ramps once, at the very start of training,
+        # regardless of num_epochs.
+        self._global_step = 0
 
         # Set random seed
         torch.manual_seed(self.hyperparams['seed'])
@@ -404,6 +422,20 @@ class TrainingLoop:
             logger.warning(f"Failed to get GT nodes for {sample_id} at t={t_idx}: {e}")
             return None
 
+    @staticmethod
+    def _compute_warmup_lr(global_step: int, warmup_steps: int, start_lr: float, target_lr: float) -> float:
+        """Linear ramp from start_lr to target_lr over warmup_steps calls.
+
+        Uses (global_step+1)/warmup_steps, not global_step/warmup_steps: the
+        latter never reaches fraction=1.0 (caught locally, 2026-07-14 -- a
+        bare global_step/warmup_steps ramp topped out at 90% of target_lr
+        for warmup_steps=10 and silently stayed there forever, since the
+        caller stops invoking this once global_step==warmup_steps without
+        fraction ever having reached 1.0).
+        """
+        fraction = (global_step + 1) / warmup_steps
+        return start_lr + (target_lr - start_lr) * fraction
+
     def train_epoch(self) -> float:
         """
         Run one training epoch.
@@ -570,7 +602,23 @@ class TrainingLoop:
                 self.hyperparams['grad_clip']
             )
 
+            # Linear LR warmup: ramp param_groups[0]['lr'] from warmup_start_lr
+            # up to the configured learning_rate over the first warmup_steps
+            # real batches, applied BEFORE optimizer.step() so this step
+            # actually uses the ramped rate. No-op when warmup_steps=0 (the
+            # default) -- self.optimizer already has the target lr from
+            # __init__ in that case, so this branch never fires.
+            warmup_steps = self.hyperparams['warmup_steps']
+            if warmup_steps > 0 and self._global_step < warmup_steps:
+                warmup_lr = self._compute_warmup_lr(
+                    self._global_step, warmup_steps,
+                    self.hyperparams['warmup_start_lr'], self.hyperparams['learning_rate'],
+                )
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = warmup_lr
+
             self.optimizer.step()
+            self._global_step += 1
 
             total_loss += total_loss_item.item()
             num_batches += 1
