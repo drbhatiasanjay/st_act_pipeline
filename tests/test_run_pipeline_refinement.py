@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from run_pipeline import linefit_smooth_coordinates, prune_short_tracks
+from run_pipeline import convert_nx_to_tracksdata, linefit_smooth_coordinates, prune_short_tracks
 
 
 def make_linear_track(node_ids: list[tuple[int, int]], coords: list) -> nx.DiGraph:
@@ -185,6 +185,128 @@ class TestLinefitSmoothCoordinates:
         g = nx.DiGraph()
         result = linefit_smooth_coordinates(g, weight=0.76, window=2)
         assert result.number_of_nodes() == 0
+
+
+class TestPostSolveIntegration:
+    """Dry-run of the real production composition (run_pipeline.py's main
+    orchestration): prune_short_tracks -> linefit_smooth_coordinates ->
+    convert_nx_to_tracksdata, on one synthetic graph containing every real
+    topology the pipeline has to handle simultaneously. Each function has
+    its own isolated unit tests already -- this specifically catches bugs
+    at the HANDOFF between them (e.g. pruning leaving something linefit's
+    neighbor-walk can't handle, or coords surviving smoothing in a form
+    convert_nx_to_tracksdata can't int()-cast), which no existing test
+    covers (verified: grepped tests/test_pipeline_integration.py, predates
+    these functions and doesn't reference them)."""
+
+    def _make_mixed_graph(self) -> nx.DiGraph:
+        g = nx.DiGraph()
+
+        # Track A: long real track (6 nodes, survives pruning), with a
+        # jittered midpoint to verify smoothing actually still fires after
+        # composing with pruning.
+        for t in range(6):
+            coords = [float(t), 0.0, 0.0]
+            if t == 3:
+                coords = [3.0, 5.0, 0.0]  # real jitter
+            g.add_node((t, 0), coords=np.array(coords))
+        for t in range(5):
+            g.add_edge((t, 0), (t + 1, 0))
+
+        # Track B: short spurious track (2 nodes, no division) -- must be
+        # fully pruned before reaching convert_nx_to_tracksdata.
+        g.add_node((0, 1), coords=np.array([10.0, 10.0, 10.0]))
+        g.add_node((1, 1), coords=np.array([10.0, 10.0, 11.0]))
+        g.add_edge((0, 1), (1, 1))
+
+        # Track C: short track WITH a division (3 nodes total, way below
+        # min_track_len=4) -- must survive pruning via division protection.
+        g.add_node((0, 2), coords=np.array([20.0, 0.0, 0.0]))
+        g.add_node((1, 2), coords=np.array([21.0, 0.0, 0.0]))
+        g.add_node((1, 3), coords=np.array([21.0, 1.0, 0.0]))
+        g.add_edge((0, 2), (1, 2))
+        g.add_edge((0, 2), (1, 3))  # out-degree 2 at (0,2): division
+
+        # Track D: a gap-closing edge (t=0 -> t=2, skipping t=1) mixed into
+        # an otherwise-long-enough track, to verify it survives the full
+        # composition without corrupting linefit's dt assumption or
+        # crashing convert_nx_to_tracksdata's edge mapping.
+        g.add_node((0, 4), coords=np.array([30.0, 0.0, 0.0]))
+        g.add_node((2, 4), coords=np.array([30.0, 0.0, 2.0]))
+        g.add_node((3, 4), coords=np.array([30.0, 0.0, 3.0]))
+        g.add_node((4, 4), coords=np.array([30.0, 0.0, 4.0]))
+        g.add_edge((0, 4), (2, 4))  # gap-closing edge
+        g.add_edge((2, 4), (3, 4))
+        g.add_edge((3, 4), (4, 4))
+
+        return g
+
+    def test_full_composition_runs_without_crashing(self):
+        g = self._make_mixed_graph()
+
+        pruned = prune_short_tracks(g)
+        smoothed = linefit_smooth_coordinates(pruned)
+        td_graph = convert_nx_to_tracksdata(smoothed, dataset_id="synthetic_test")
+
+        assert td_graph is not None
+
+    def test_short_spurious_track_absent_end_to_end(self):
+        g = self._make_mixed_graph()
+        pruned = prune_short_tracks(g)
+        smoothed = linefit_smooth_coordinates(pruned)
+        td_graph = convert_nx_to_tracksdata(smoothed, dataset_id="synthetic_test")
+
+        node_ts = td_graph.node_attrs(attr_keys=['t'])['t'].to_list()
+        # Track B lived at t=0,1 with z=10 -- if it survived, some node
+        # would have z=10. Track A/C/D all use different z ranges (0-4,
+        # 20-21, 30), so this is a real, specific check, not a proxy.
+        node_zs = td_graph.node_attrs(attr_keys=['z'])['z'].to_list()
+        assert 10 not in node_zs, "short spurious track (Track B) must not survive to export"
+        assert len(node_ts) == 6 + 3 + 4, "Track A (6) + Track C (3, division-protected) + Track D (4)"
+
+    def test_division_track_present_end_to_end(self):
+        g = self._make_mixed_graph()
+        pruned = prune_short_tracks(g)
+        smoothed = linefit_smooth_coordinates(pruned)
+        td_graph = convert_nx_to_tracksdata(smoothed, dataset_id="synthetic_test")
+
+        node_zs = td_graph.node_attrs(attr_keys=['z'])['z'].to_list()
+        assert 20 in node_zs, "Track C's division must survive pruning end-to-end"
+
+    def test_gap_closing_edge_survives_composition(self):
+        g = self._make_mixed_graph()
+        pruned = prune_short_tracks(g)
+        smoothed = linefit_smooth_coordinates(pruned)
+        td_graph = convert_nx_to_tracksdata(smoothed, dataset_id="synthetic_test")
+
+        node_zs = td_graph.node_attrs(attr_keys=['z'])['z'].to_list()
+        assert node_zs.count(30) == 4, "Track D's 4 nodes (incl. gap-closed pair) must all survive"
+        assert td_graph.num_edges() >= 5 + 2 + 3, (
+            "Track A (5 edges) + Track C (2 edges) + Track D (3 edges, incl. gap edge)"
+        )
+
+    def test_jittered_node_actually_smoothed_end_to_end(self):
+        """Confirms pruning doesn't remove Track A's smoothable midpoint and
+        that linefit's output coords still reach convert_nx_to_tracksdata
+        (as ints) rather than being dropped or left as raw arrays."""
+        g = self._make_mixed_graph()
+        pruned = prune_short_tracks(g)
+        smoothed = linefit_smooth_coordinates(pruned)
+
+        smoothed_y = smoothed.nodes[(3, 0)]["coords"][1]
+        assert smoothed_y < 5.0, "jittered node must move toward the fitted line post-composition"
+
+        td_graph = convert_nx_to_tracksdata(smoothed, dataset_id="synthetic_test")
+        # int() truncation of the smoothed (now sub-integer) y-coordinate
+        # must not raise or silently produce something nonsensical.
+        matching_node = [
+            i for i, (t, z) in enumerate(zip(
+                td_graph.node_attrs(attr_keys=['t'])['t'].to_list(),
+                td_graph.node_attrs(attr_keys=['z'])['z'].to_list(),
+                strict=True,
+            )) if t == 3 and z == 3
+        ]
+        assert len(matching_node) == 1
 
 
 if __name__ == "__main__":

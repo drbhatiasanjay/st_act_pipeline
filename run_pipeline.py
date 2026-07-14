@@ -564,12 +564,21 @@ def convert_nx_to_tracksdata(nx_graph: nx.DiGraph, dataset_id: str) -> td.graph.
         t, node_idx = node
         coords = attrs.get('coords', [0, 0, 0])
 
-        # Add node and track the returned node_id
+        # Add node and track the returned node_id. round(), not int(): a
+        # smoothed float coordinate (linefit_smooth_coordinates) can land
+        # infinitesimally below its true integer value from floating-point
+        # noise in the line-fit solve (e.g. 29.999999999998 for a
+        # perfectly constant input) -- int() truncates toward zero and
+        # silently exports it one voxel too low; round() is unambiguously
+        # correct here. Caught via a dry-run integration test composing
+        # prune_short_tracks -> linefit_smooth_coordinates ->
+        # convert_nx_to_tracksdata (2026-07-14), not by any isolated
+        # per-function unit test.
         attrs_dict = {
             't': int(t),
-            'z': int(coords[0]),
-            'y': int(coords[1]),
-            'x': int(coords[2])
+            'z': round(coords[0]),
+            'y': round(coords[1]),
+            'x': round(coords[2])
         }
         td_node_id = td_g.add_node(attrs_dict)
         node_mapping[(t, node_idx)] = td_node_id
