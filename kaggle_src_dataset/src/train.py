@@ -13,11 +13,13 @@ import csv
 import json
 import logging
 import math
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import requests
 import torch
 import torch.nn as nn
 from scipy import ndimage
@@ -42,6 +44,34 @@ from src.targets import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Live mid-run progress channel, independent of `kaggle kernels output`/`kernels
+# logs` (both confirmed unreliable/stale while a kernel is RUNNING -- see
+# CLAUDE.md's Kaggle Training Run Monitoring Checklist). ntfy.sh needs no
+# account/signup; the topic slug is the only "secret" (anyone who knows it can
+# read the channel), so it's a random slug, not a guessable project name.
+# Verified working from an actual Kaggle sandbox kernel (enable_internet=true
+# in kernel-metadata.json) before wiring this in -- see the throwaway
+# st-act-ntfy-verify-throwaway kernel.
+NTFY_TOPIC = "st-act-train-23d0805beb57a749"
+
+
+def _post_ntfy_heartbeat(payload: dict) -> None:
+    """
+    Fire-and-forget POST of a heartbeat payload to ntfy.sh, off the main
+    thread. Must never be able to add wall-clock cost to real training: a
+    silently-stalling (not just refused) connection would otherwise block
+    the calling thread for the full timeout on every call -- at 1000+ batch
+    heartbeats/epoch that's a real risk, not a theoretical one, so this runs
+    in a daemon thread rather than inline with a bare try/except.
+    """
+    def _send():
+        try:
+            requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=json.dumps(payload), timeout=5)
+        except Exception:
+            pass  # network hiccups must never affect training -- this is a nice-to-have
+
+    threading.Thread(target=_send, daemon=True).start()
 
 
 def pool_kernel_from_um(um: float, voxel_size: tuple) -> tuple:
@@ -399,6 +429,7 @@ class TrainingLoop:
             tmp_path.replace(self.progress_file)  # atomic overwrite, not append
         except OSError as e:
             logger.warning(f"Failed to write progress heartbeat: {e}")
+        _post_ntfy_heartbeat(payload)
 
     def _write_batch_heartbeat(self, batch_idx: int, effective_total: int, loss: float, max_sigmoid: float):
         """Mid-epoch heartbeat, same atomic-overwrite mechanism as
@@ -427,6 +458,7 @@ class TrainingLoop:
             tmp_path.replace(self.progress_file)
         except OSError as e:
             logger.warning(f"Failed to write batch heartbeat: {e}")
+        _post_ntfy_heartbeat(payload)
 
     def _get_gt_nodes(self, sample_id: str, t_idx: int) -> torch.Tensor | None:
         """
