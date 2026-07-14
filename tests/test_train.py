@@ -12,6 +12,7 @@ actual call site train_epoch()/validate_epoch() use.
 
 Run: py -m pytest tests/test_train.py -v
 """
+import json
 import os
 import sys
 from pathlib import Path
@@ -23,6 +24,7 @@ import torch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import tracksdata
 
+import src.train as train_module
 from src.train import TrainingLoop, extract_peaks_from_volume
 
 REAL_TRAIN_DIR = "data/staging/train"
@@ -390,6 +392,80 @@ class TestValidateEpochCircuitBreaker:
         # 2 calls per batch (channel 0 and channel 1) x 10 batches processed
         # before the breaker fires on the 10th
         assert len(seen_batches) == 20
+
+
+class _SyncThread:
+    """Test double for threading.Thread that runs the target synchronously on
+    .start() instead of spawning a real thread -- lets tests assert on the
+    outcome without sleeping/joining a real background thread."""
+
+    def __init__(self, target, daemon=True):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+class TestPostNtfyHeartbeat:
+    """Regression coverage for the live ntfy.sh progress channel added to
+    close the "kaggle kernels output returns stale/empty data mid-run" gap
+    (see CLAUDE.md's Kaggle Training Run Monitoring Checklist). Verified
+    against a real Kaggle sandbox kernel before being wired in; these tests
+    mock requests.post so no real network call happens in CI."""
+
+    def test_posts_exact_payload_to_ntfy_topic(self, monkeypatch):
+        calls = []
+
+        def fake_post(url, data=None, timeout=None):
+            calls.append((url, data, timeout))
+
+        monkeypatch.setattr(train_module.requests, "post", fake_post)
+        monkeypatch.setattr(train_module.threading, "Thread", _SyncThread)
+
+        train_module._post_ntfy_heartbeat({"epoch": 1, "train_loss": 0.5})
+
+        assert len(calls) == 1
+        url, data, timeout = calls[0]
+        assert url == f"https://ntfy.sh/{train_module.NTFY_TOPIC}"
+        assert json.loads(data) == {"epoch": 1, "train_loss": 0.5}
+        assert timeout == 5
+
+    def test_network_failure_never_raises(self, monkeypatch):
+        def fake_post(*args, **kwargs):
+            raise ConnectionError("simulated network failure")
+
+        monkeypatch.setattr(train_module.requests, "post", fake_post)
+        monkeypatch.setattr(train_module.threading, "Thread", _SyncThread)
+
+        # Must not raise -- a network hiccup can never be allowed to affect
+        # a real training run just to report progress.
+        train_module._post_ntfy_heartbeat({"epoch": 1})
+
+    def test_write_batch_heartbeat_triggers_ntfy_post(self, monkeypatch, tmp_path):
+        calls = []
+        monkeypatch.setattr(
+            train_module, "_post_ntfy_heartbeat", lambda payload: calls.append(payload)
+        )
+        loop = make_bare_training_loop(
+            progress_file=tmp_path / "progress.json", deployed_sha="abc123",
+        )
+
+        loop._write_batch_heartbeat(batch_idx=5, effective_total=100, loss=0.42, max_sigmoid=0.1)
+
+        assert len(calls) == 1
+        assert calls[0]["batch"] == 5
+        assert calls[0]["train_loss"] == 0.42
+
+    def test_write_batch_heartbeat_skips_ntfy_when_no_progress_file(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            train_module, "_post_ntfy_heartbeat", lambda payload: calls.append(payload)
+        )
+        loop = make_bare_training_loop(progress_file=None)
+
+        loop._write_batch_heartbeat(batch_idx=5, effective_total=100, loss=0.42, max_sigmoid=0.1)
+
+        assert calls == []
 
 
 if __name__ == "__main__":
