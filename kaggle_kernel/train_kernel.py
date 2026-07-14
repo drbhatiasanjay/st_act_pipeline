@@ -187,6 +187,21 @@ HYPERPARAMS = {
     # sqrt(1e-3*1e-2) ~= 3e-3, as the principled next point in this
     # log-scale search rather than guessing -- neither endpoint's extreme.
     'learning_rate': 3e-3,
+    # warmup_steps=300 (2026-07-15): v48 (GroupNorm + gradient checkpointing,
+    # same lr=3e-3, warmup_steps=0 default) showed max_sigmoid collapsing
+    # fast within the FIRST ~30 real batches (8e-5 -> ~1.6e-5), then sitting
+    # roughly flat near that floor for the remaining ~4970 batches -- a fast
+    # early crash into an apparent saturation trap, not a slow continuous
+    # drift (confirmed via fine-grained, every-5-batch log inspection, not
+    # the coarser every-200-batch view that looked like gradual decay).
+    # TrainingLoop's linear warmup (src/train.py, built 2026-07-14 in direct
+    # response to v43's lr=1e-2 divergence) was already implemented and
+    # tested but never actually enabled on any real run through v48 --
+    # this is the first run to turn it on. 300 steps is ~10x past where the
+    # collapse originates, giving the model room to find a stable operating
+    # point before the full 3e-3 rate applies. warmup_start_lr uses
+    # TrainingLoop's existing default (1e-4).
+    'warmup_steps': 300,
     'grad_clip': 1.0,
     'weight_decay': 1e-4,
     'heatmap_loss_weight': 1.0,
