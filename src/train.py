@@ -591,9 +591,22 @@ class TrainingLoop:
                 elapsed = time.time() - epoch_start_time
                 rate = elapsed / (batch_idx + 1)
                 eta_remaining = rate * (effective_total - (batch_idx + 1))
+                # max_sigmoid: the only direct evidence of whether training is
+                # actually moving the model's real output, as opposed to loss
+                # (an indirect proxy the adaptive per-batch weighting makes
+                # hard to compare across batches) or validation-time-only
+                # sigmoid (previously the sole source, but only ever sampled
+                # AFTER training stops -- this shows the live trend instead).
+                # A single local step was directly measured to move this by
+                # only ~9e-7 (2026-07-14) -- logging every training batch is
+                # what actually answers whether that compounds over a real
+                # run or plateaus, not a one-off before/after snapshot.
+                with torch.no_grad():
+                    max_sigmoid = torch.sigmoid(logits).max().item()
                 logger.info(
                     f"Batch {batch_idx + 1}/{effective_total}, "
                     f"Loss: {total_loss_item.item():.6f}, "
+                    f"max_sigmoid: {max_sigmoid:.8f}, "
                     f"elapsed={elapsed:.1f}s, {rate:.2f}s/batch, "
                     f"eta_remaining={eta_remaining:.0f}s"
                 )
