@@ -194,6 +194,12 @@ def peaks_for_channel(detection_probs: torch.Tensor, channel: int, hyperparams: 
         threshold = max(
             float(np.percentile(vol_np, 100 * (1 - max_positive_fraction))), threshold
         )
+    elif positive_fraction == 0.0:
+        # Opposite failure mode: raw confidence never crosses the fixed
+        # threshold anywhere -- see src/train.py::_peaks_for_channel for the
+        # full rationale (same duplicated logic). Without this, a real
+        # submission run would silently emit zero detections forever.
+        threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
     return extract_peaks_from_volume(
         vol_np, threshold=threshold, voxel_size=DEFAULT_SCALE,
         nms_radius_um=hyperparams['nms_radius_um']

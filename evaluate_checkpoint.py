@@ -49,7 +49,16 @@ def find_latest_local_checkpoint(search_root: Path = Path(".")) -> Path | None:
     return candidates[-1] if candidates else None
 
 
-def run_evaluation(split_type: str, dataset_id_filter: list = None):
+def run_evaluation(split_type: str, dataset_id_filter: list = None, max_pairs: int | None = None):
+    """
+    max_pairs: cap the number of (frame_t, frame_t1) pairs evaluated per call.
+    Exists to work around the project's known unresolved native Windows
+    segfault (see CLAUDE.md), which has reproduced 3/3 times in this exact
+    script at batch ~33 -- staying under that threshold lets
+    evaluate_submission() actually execute instead of losing all progress on
+    every attempt. Real score, real (partial) coverage -- not a full-sample
+    number, but the actual scoring code runs end to end.
+    """
     device = torch.device("cpu")
     checkpoint_path = find_latest_local_checkpoint()
 
@@ -89,6 +98,10 @@ def run_evaluation(split_type: str, dataset_id_filter: list = None):
         filtered_pairs = [p for p in dataset.pairs if p[0] in dataset_id_filter]
         dataset.pairs = filtered_pairs
         logger.info(f"Filtered dataset pairs to {len(dataset.pairs)} for sample(s) {dataset_id_filter}")
+
+    if max_pairs is not None and len(dataset.pairs) > max_pairs:
+        dataset.pairs = dataset.pairs[:max_pairs]
+        logger.info(f"Capped to first {max_pairs} pairs (max_pairs)")
 
     if len(dataset) == 0:
         logger.warning(f"No pairs found to evaluate for split {split_type} and filter {dataset_id_filter}")
@@ -257,6 +270,16 @@ def extract_peaks(detection_probs: torch.Tensor, channel: int, t_idx: int, hyper
             f"-- using adaptive threshold={adaptive_threshold:.4f} instead"
         )
         threshold = max(adaptive_threshold, threshold)
+    elif positive_fraction == 0.0:
+        # Opposite failure mode: raw confidence never crosses the fixed
+        # threshold anywhere -- see src/train.py::_peaks_for_channel for the
+        # full rationale (same duplicated logic).
+        adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
+        logger.warning(
+            f"t_idx={t_idx} ch={channel}: threshold={threshold} flags 0% of voxels "
+            f"(severe under-confidence) -- using adaptive threshold={adaptive_threshold:.6f} instead"
+        )
+        threshold = adaptive_threshold
 
     return extract_peaks_from_volume(
         vol_np,

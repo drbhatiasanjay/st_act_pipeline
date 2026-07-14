@@ -807,6 +807,21 @@ class TrainingLoop:
                 f"-- using adaptive threshold={adaptive_threshold:.4f} instead"
             )
             threshold = max(adaptive_threshold, threshold)
+        elif positive_fraction == 0.0:
+            # Opposite failure mode: raw confidence never crosses the fixed
+            # threshold ANYWHERE in the volume (e.g. RetinaNet-style prior-bias
+            # init, pi=1e-4, still under-trained past absolute 0.5) --
+            # extract_peaks_from_volume would silently return zero peaks
+            # forever otherwise, regardless of real relative peak structure in
+            # the raw probabilities. Lower the bar to the top
+            # max_positive_fraction percentile instead of leaving it fixed.
+            adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
+            logger.warning(
+                f"Validation t_idx={t_idx} ch={channel}: threshold={threshold} flags "
+                f"0% of voxels (severe under-confidence) -- using adaptive "
+                f"threshold={adaptive_threshold:.6f} instead"
+            )
+            threshold = adaptive_threshold
         return extract_peaks_from_volume(
             vol_np,
             threshold=threshold,
