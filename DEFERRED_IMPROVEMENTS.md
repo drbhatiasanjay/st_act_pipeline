@@ -210,6 +210,36 @@ incident writeup and the verification protocol it produced.
 local eval score via `src/evaluation.py`) once a real checkpoint produces non-zero detections to
 measure against — not resolvable by reasoning/domain-literature alone without real data.
 
+## 5. UNet3D has zero cross-Z-slice convolution anywhere — OPEN QUESTION, NOT YET RESOLVED
+
+**What was found (2026-07-14):** every conv layer in the production `UNet3D` (`src/model.py`,
+imported everywhere via `from src.model import UNet3D`) uses `kernel_size=(1,3,3)` — encoder,
+bottleneck, decoder, and detection head, with no exception. This means output at any given Z-slice
+depends *only* on that same input Z-slice; there is architecturally zero cross-Z information
+sharing anywhere in the network. Confirmed by reading every layer definition, not inferred.
+
+**Why not changed:** no rationale either way exists in git history (`f744a8e`, the introducing
+commit, is a generic "implement UNet3D backbone" message). A separate, dead-code class in the same
+file (`STACTCentroidPredictor`, only ever referenced in a `__main__` self-test block, never
+imported by the real pipeline) *does* mix kernel patterns ((1,3,3) then (3,3,3)) with an explicit
+"anisotropic design" comment — interesting context, but it's an abandoned earlier prototype, not
+proof the production network is missing an intended feature. Real cells (~5-10µm, spanning
+multiple 1.625µm-thick Z-slices) could plausibly benefit from cross-slice context the network
+structurally cannot use today — or the choice could be deliberate (avoiding noisy/uncertain
+Z-mixing given coarse real Z-sampling, or a computational-cost tradeoff). Genuinely unresolved
+either way from source-reading alone.
+
+**Why deferred, not investigated further right now:** unlike the heatmap sigma question (a
+target-generation parameter, cheap to A/B test), changing this requires retraining the network
+from scratch to evaluate — a much larger cost, and we do not yet have a single working checkpoint
+to establish a baseline against. Not worth the retrain cost until the current shuffle-fix
+verification run (`v42`) confirms the existing architecture can produce real detections at all.
+
+**Revisit:** only after a real checkpoint exists and a genuine architecture-vs-target-quality
+diagnosis is warranted (e.g. if detection recall plateaus well below target despite confirmed
+real learning) — as its own dedicated, evidence-gated experiment (e.g. add one `kernel=(3,3,3)`
+layer at the bottleneck only, retrain, compare local eval score), not a blind architecture change.
+
 ## Net outcome this session
 
 **Updated 2026-07-13, later still:** the original AI research report's *specific* recommended fix
