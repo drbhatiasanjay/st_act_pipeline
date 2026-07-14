@@ -178,7 +178,15 @@ HYPERPARAMS = {
     # on real data either. Testing it for real now that 1e-3 has failed
     # across two real-data experiments; the circuit breaker + heartbeat
     # infrastructure will catch instability quickly and cheaply if it occurs.
-    'learning_rate': 1e-2,
+    # 1e-2 confirmed for real (v43, 2026-07-14): Loss: nan starting
+    # somewhere between batch 5 and 100, never recovered through the
+    # remaining ~900 batches -- genuine numeric divergence, not just a
+    # theoretical risk. Both tested endpoints are now real, verified
+    # failures: 1e-3 (no movement across 5035 real steps) and 1e-2 (NaN
+    # within ~100 real steps). Testing the geometric mean of the two,
+    # sqrt(1e-3*1e-2) ~= 3e-3, as the principled next point in this
+    # log-scale search rather than guessing -- neither endpoint's extreme.
+    'learning_rate': 3e-3,
     'grad_clip': 1.0,
     'weight_decay': 1e-4,
     'heatmap_loss_weight': 1.0,
