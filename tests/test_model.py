@@ -103,6 +103,38 @@ class TestUNet3D:
             f"zero-bias init (sigmoid=0.5) has been silently reintroduced"
         )
 
+    def test_conv_blocks_use_groupnorm_with_bias_free_convs(self):
+        """REGRESSION GUARD (2026-07-14): a real 25-step local trace without
+        normalization showed catastrophic single-step saturation (sigmoid
+        jumping to 1.0, loss spiking to 11+) that gradient clipping
+        (already active, max_norm=1.0) did not prevent; the identical trace
+        with GroupNorm inserted after every conv never saturated (max loss
+        1.85, the ordinary step-0 value). A future refactor of _conv_block
+        must not silently drop GroupNorm back out."""
+        model = make_small_unet()
+
+        for block_name in ["enc0", "enc1", "enc2", "bottleneck", "dec2", "dec1"]:
+            block = getattr(model, block_name)
+            norm_layers = [m for m in block if isinstance(m, torch.nn.GroupNorm)]
+            conv_layers = [m for m in block if isinstance(m, torch.nn.Conv3d)]
+            assert len(conv_layers) == 2, f"{block_name} must have exactly 2 conv layers"
+            assert len(norm_layers) == 2, f"{block_name} must have a GroupNorm after each of its 2 convs"
+            for conv in conv_layers:
+                assert conv.bias is None, (
+                    f"{block_name}'s conv layers must be bias=False -- GroupNorm's own "
+                    f"learnable shift makes conv bias redundant"
+                )
+
+    def test_det_head_has_no_normalization(self):
+        """det_head must stay a plain conv stack (not normalized) -- it produces
+        raw logits directly, and its final-layer bias carries the deliberate
+        RetinaNet-style foreground-prior init (see the test above); inserting
+        normalization there would interact with that init in an unverified way."""
+        model = make_small_unet()
+        norm_layers = [m for m in model.det_head if isinstance(m, torch.nn.GroupNorm)]
+        assert len(norm_layers) == 0, "det_head must not contain normalization layers"
+        assert model.det_head[-1].bias is not None, "det_head's final conv must keep its bias (the prior init)"
+
 
 class TestSimpleNodeTransformer:
     def make_model(self):

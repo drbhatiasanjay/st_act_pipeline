@@ -86,11 +86,34 @@ class UNet3D(nn.Module):
 
     @staticmethod
     def _conv_block(in_ch, out_ch, kernel=(1, 3, 3), padding=(0, 1, 1)):
-        """Double convolution block with anisotropic kernels."""
+        """Double convolution block with anisotropic kernels.
+
+        GroupNorm after every conv (2026-07-14, see DEFERRED_IMPROVEMENTS.md
+        item 6): a real 25-step local trace at batch_size=1 without any
+        normalization showed a catastrophic single-step overshoot (loss
+        11.29, sigmoid saturating to 1.0 across the whole volume) followed by
+        an equally violent overcorrection -- gradient clipping (already
+        active, clip_grad_norm_ max_norm=1.0) did not prevent it. The
+        identical trace with GroupNorm inserted here never saturated (max
+        loss 1.85, the ordinary step-0 value). conv bias=False is standard
+        once a norm layer follows -- GroupNorm's own learnable shift makes
+        the conv bias redundant. groups=min(8, out_ch) keeps per-group
+        channel counts reasonable at the smallest width (32) while matching
+        the pattern used by a real public kernel for this competition
+        (pilkwang/biohub-cell-tracking-blend-preprocessings' DeepCenterUNet3D
+        block; verified by pulling that kernel directly, not assumed). ReLU
+        is kept (not that kernel's SiLU) to isolate normalization as the one
+        changed variable -- see DEFERRED_IMPROVEMENTS.md for the still-open
+        question of whether this alone is sufficient for sustained learning,
+        not just avoiding the instability.
+        """
+        groups = min(8, out_ch)
         return nn.Sequential(
-            nn.Conv3d(in_ch, out_ch, kernel_size=kernel, padding=padding),
+            nn.Conv3d(in_ch, out_ch, kernel_size=kernel, padding=padding, bias=False),
+            nn.GroupNorm(groups, out_ch),
             nn.ReLU(inplace=True),
-            nn.Conv3d(out_ch, out_ch, kernel_size=kernel, padding=padding),
+            nn.Conv3d(out_ch, out_ch, kernel_size=kernel, padding=padding, bias=False),
+            nn.GroupNorm(groups, out_ch),
             nn.ReLU(inplace=True)
         )
 
