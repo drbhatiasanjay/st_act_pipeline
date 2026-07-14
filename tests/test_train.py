@@ -209,6 +209,38 @@ class TestExtractPeaksFromVolumeSubvoxelRefinement:
         assert np.allclose(peaks[0], [4.0, 4.0, 4.8]), "floor must be subtracted, matching the floor-free result"
 
 
+class TestComputeWarmupLr:
+    """REGRESSION GUARD: an earlier version of this ramp used
+    global_step/warmup_steps (not (global_step+1)/warmup_steps), which never
+    actually reached target_lr -- it topped out at target_lr's 90% for
+    warmup_steps=10 and silently stayed there for the rest of training.
+    Caught via direct local testing before shipping (2026-07-14)."""
+
+    def test_first_step_is_above_start_lr_not_exactly_start_lr(self):
+        lr = TrainingLoop._compute_warmup_lr(global_step=0, warmup_steps=10, start_lr=1e-4, target_lr=1e-2)
+        assert lr > 1e-4
+
+    def test_last_warmup_step_reaches_exactly_target_lr(self):
+        """The critical regression case: global_step=9 is the LAST call
+        made under warmup_steps=10 (the caller stops once
+        global_step==warmup_steps) -- this step must land exactly on
+        target_lr, not some fraction short of it."""
+        lr = TrainingLoop._compute_warmup_lr(global_step=9, warmup_steps=10, start_lr=1e-4, target_lr=1e-2)
+        assert lr == pytest.approx(1e-2)
+
+    def test_ramp_is_monotonically_increasing(self):
+        lrs = [
+            TrainingLoop._compute_warmup_lr(global_step=s, warmup_steps=10, start_lr=1e-4, target_lr=1e-2)
+            for s in range(10)
+        ]
+        assert lrs == sorted(lrs)
+        assert len(set(lrs)) == 10, "every step must produce a distinct lr, not a flat/repeated ramp"
+
+    def test_single_step_warmup_reaches_target_immediately(self):
+        lr = TrainingLoop._compute_warmup_lr(global_step=0, warmup_steps=1, start_lr=1e-4, target_lr=1e-2)
+        assert lr == pytest.approx(1e-2)
+
+
 class TestPeaksForChannel:
     def make_loop_with_hyperparams(self, **hyperparam_overrides):
         hyperparams = {
