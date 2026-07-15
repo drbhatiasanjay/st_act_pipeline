@@ -1,1 +1,4 @@
-epoch,train_loss,val_edge_jaccard,val_adjusted_edge_jaccard,val_division_jaccard,val_score,learning_rate,heatmap_failures,edge_target_failures,edge_loss_failures,eval_failures
+epoch,train_loss,val_edge_jaccard,val_adjusted_edge_jaccard,val_division_jaccard,val_score,learning_rate,heatmap_failures,edge_target_failures,edge_loss_failures,eval_failures,num_batches,epoch_wall_clock_seconds
+1,1.795228,0.000000,0.000000,0.000000,0.000000,1.00e-04,0,0,0,0,200,277.2
+2,1.745277,0.000000,0.000000,0.000000,0.000000,1.00e-04,0,0,0,0,200,254.8
+3,1.643237,0.000000,0.000000,0.000000,0.000000,1.00e-04,0,0,0,0,200,256.3

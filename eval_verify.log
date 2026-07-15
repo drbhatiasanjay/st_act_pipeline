@@ -1,0 +1,64 @@
+Enabling faulthandler explicitly...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:01,223 - INFO: Using device: cpu
+[ST-ACT Data Ingestion] 2026-07-16 00:07:01,225 - INFO: Loading checkpoint checkpoint_dataset/epoch_1_v48_groupnorm_gradckpt_lr3e3.pt
+[ST-ACT Data Ingestion] 2026-07-16 00:07:01,394 - INFO: Initializing models...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,173 - INFO: Creating CompetitionDataset for split 'validation'
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,174 - INFO: Loaded 50 samples for split 'validation' from data_split.json
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,174 - INFO: Opening real Zarr v3 store at 'data\staging\train\44b6_0b24845f.zarr'
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,309 - INFO: Resolved nested OME-NGFF array at path '0/' in Zarr group.
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,309 - INFO: Extracted quantile params: 0.1=1095.0000000000025, 0.9=2520.8333333333353
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,309 - INFO: Successfully opened Zarr volume: data\staging\train\44b6_0b24845f.zarr
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,310 - INFO: Volume Shape: (100, 64, 256, 256) | Chunks: (1, 64, 256, 256) | Dtype: uint16
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,310 - INFO: Quantile normalization parameters found: q_low=1095.0000000000025, q_high=2520.8333333333353
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,316 - INFO: Built index: 99 (frame_t, frame_t+1) pairs
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,317 - INFO: Built index: 198 (frame_t, frame_t+1) pairs
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,317 - INFO: Filtered dataset pairs to 198 for sample(s) ['44b6_0b24845f']
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,317 - INFO: Capped to first 45 pairs (max_pairs)
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,317 - INFO: Using hyperparameters from checkpoint: {'learning_rate': 0.003, 'grad_clip': 1.0, 'weight_decay': 0.0001, 'heatmap_loss_weight': 1.0, 'division_loss_weight': 2.5, 'early_stopping_patience': 10, 'edge_threshold': 0.5, 'detection_threshold': 0.5, 'nms_radius_um': 5.0, 'seed': 42, 'max_batches_per_epoch': 5000, 'warmup_steps': 0, 'warmup_start_lr': 0.0001, 'batch_size': 1, 'num_epochs': 1, 'max_wall_clock_seconds': 39600}
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,318 - INFO: Running inference over 45 batches...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,356 - INFO: Loading and decompressing 3D block for timepoint T=0...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:02,506 - INFO: Loading and decompressing 3D block for timepoint T=1...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:14,698 - WARNING: t_idx=0 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:15,466 - WARNING: t_idx=0 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:17,802 - INFO: Batch 01/45 | t_idx=00 | Sigmoid: [0.0000, 0.0000] | Peaks: 167 (ch0), 171 (ch1) | Edges: 0 | Mem: 0.0MB | Took 15.07s
+[ST-ACT Data Ingestion] 2026-07-16 00:07:17,836 - INFO: Loading and decompressing 3D block for timepoint T=2...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:25,827 - WARNING: t_idx=1 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:26,638 - WARNING: t_idx=1 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:28,789 - INFO: Batch 02/45 | t_idx=01 | Sigmoid: [0.0000, 0.0000] | Peaks: 145 (ch0), 174 (ch1) | Edges: 0 | Mem: 0.0MB | Took 10.78s
+[ST-ACT Data Ingestion] 2026-07-16 00:07:28,791 - INFO: Loading and decompressing 3D block for timepoint T=3...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:35,880 - WARNING: t_idx=2 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:36,346 - WARNING: t_idx=2 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:37,534 - INFO: Batch 03/45 | t_idx=02 | Sigmoid: [0.0000, 0.0000] | Peaks: 174 (ch0), 195 (ch1) | Edges: 0 | Mem: 0.0MB | Took 8.55s
+[ST-ACT Data Ingestion] 2026-07-16 00:07:37,535 - INFO: Loading and decompressing 3D block for timepoint T=4...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:43,472 - WARNING: t_idx=3 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:43,940 - WARNING: t_idx=3 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:45,272 - INFO: Batch 04/45 | t_idx=03 | Sigmoid: [0.0000, 0.0000] | Peaks: 172 (ch0), 206 (ch1) | Edges: 0 | Mem: 0.0MB | Took 7.61s
+[ST-ACT Data Ingestion] 2026-07-16 00:07:45,272 - INFO: Loading and decompressing 3D block for timepoint T=5...
+[ST-ACT Data Ingestion] 2026-07-16 00:07:52,609 - WARNING: t_idx=4 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:53,093 - WARNING: t_idx=4 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:07:54,450 - INFO: Batch 05/45 | t_idx=04 | Sigmoid: [0.0000, 0.0000] | Peaks: 170 (ch0), 181 (ch1) | Edges: 0 | Mem: 0.0MB | Took 9.05s
+[ST-ACT Data Ingestion] 2026-07-16 00:07:55,343 - INFO: Loading and decompressing 3D block for timepoint T=6...
+[ST-ACT Data Ingestion] 2026-07-16 00:08:02,273 - WARNING: t_idx=5 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:02,800 - WARNING: t_idx=5 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:04,573 - INFO: Batch 06/45 | t_idx=05 | Sigmoid: [0.0000, 0.0000] | Peaks: 179 (ch0), 209 (ch1) | Edges: 0 | Mem: 0.0MB | Took 9.06s
+[ST-ACT Data Ingestion] 2026-07-16 00:08:04,574 - INFO: Loading and decompressing 3D block for timepoint T=7...
+[ST-ACT Data Ingestion] 2026-07-16 00:08:11,365 - WARNING: t_idx=6 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:11,994 - WARNING: t_idx=6 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:13,932 - INFO: Batch 07/45 | t_idx=06 | Sigmoid: [0.0000, 0.0000] | Peaks: 153 (ch0), 235 (ch1) | Edges: 0 | Mem: 0.0MB | Took 9.21s
+[ST-ACT Data Ingestion] 2026-07-16 00:08:13,933 - INFO: Loading and decompressing 3D block for timepoint T=8...
+[ST-ACT Data Ingestion] 2026-07-16 00:08:20,723 - WARNING: t_idx=7 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:21,213 - WARNING: t_idx=7 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:22,498 - INFO: Batch 08/45 | t_idx=07 | Sigmoid: [0.0000, 0.0000] | Peaks: 178 (ch0), 174 (ch1) | Edges: 0 | Mem: 0.0MB | Took 8.36s
+[ST-ACT Data Ingestion] 2026-07-16 00:08:22,498 - INFO: Loading and decompressing 3D block for timepoint T=9...
+[ST-ACT Data Ingestion] 2026-07-16 00:08:28,992 - WARNING: t_idx=8 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:29,474 - WARNING: t_idx=8 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:30,746 - INFO: Batch 09/45 | t_idx=08 | Sigmoid: [0.0000, 0.0000] | Peaks: 184 (ch0), 167 (ch1) | Edges: 0 | Mem: 0.0MB | Took 8.14s
+[ST-ACT Data Ingestion] 2026-07-16 00:08:30,746 - INFO: Loading and decompressing 3D block for timepoint T=10...
+[ST-ACT Data Ingestion] 2026-07-16 00:08:38,875 - WARNING: t_idx=9 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:39,498 - WARNING: t_idx=9 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:40,733 - INFO: Batch 10/45 | t_idx=09 | Sigmoid: [0.0000, 0.0000] | Peaks: 181 (ch0), 153 (ch1) | Edges: 0 | Mem: 0.0MB | Took 9.86s
+[ST-ACT Data Ingestion] 2026-07-16 00:08:41,018 - INFO: Loading and decompressing 3D block for timepoint T=11...
+[ST-ACT Data Ingestion] 2026-07-16 00:08:48,482 - WARNING: t_idx=10 ch=0: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:48,985 - WARNING: t_idx=10 ch=1: threshold=0.5 flags 0% of voxels (severe under-confidence) -- using adaptive threshold=0.000000 instead
+[ST-ACT Data Ingestion] 2026-07-16 00:08:50,011 - INFO: Batch 11/45 | t_idx=10 | Sigmoid: [0.0000, 0.0000] | Peaks: 172 (ch0), 135 (ch1) | Edges: 0 | Mem: 0.0MB | Took 8.69s
+[ST-ACT Data Ingestion] 2026-07-16 00:08:50,012 - INFO: Loading and decompressing 3D block for timepoint T=12...

@@ -1,0 +1,30 @@
+ST-ACT KAGGLE SANITY-CHECK TRAINING
+================================================================================
+
+MODEL SUMMARY
+UNet3D parameters: 775,714
+Transformer parameters: 1,647,361
+Total parameters: 2,423,075
+
+TRAINING CONFIGURATION
+learning_rate: 0.0001
+grad_clip: 1.0
+weight_decay: 0.0001
+heatmap_loss_weight: 1.0
+division_loss_weight: 2.5
+early_stopping_patience: 10
+edge_threshold: 0.5
+detection_threshold: 0.5
+nms_radius_um: 5.0
+seed: 42
+batch_size: 1
+epochs_for_sanity_check: 3
+max_batches_per_epoch: 200
+
+TRAINING EPOCHS: 3
+Training dataset size: 14751
+Validation dataset size: 4950
+
+CHECKPOINTS
+Best checkpoint: /kaggle/working/checkpoints_sanity/epoch_1_val_score_0.0000.pt
+Best validation score: 0.000000
