@@ -1,5 +1,31 @@
 # Deferred Improvements — Revisit After Full-Scale Training
 
+## PARKED (2026-07-15): symmetric adaptive threshold for greedy_edge_assignment
+
+Detection-side zero-detection bug (asymmetric `_peaks_for_channel`/`extract_peaks` adaptive
+threshold, only ever raised the bar, never lowered it) was a real pipeline bug, fixed in all 3
+call sites (`4a26f02`) and verified: real v48 checkpoint went 0 -> 6929 predicted nodes.
+
+That fix exposed a second symptom: score is still 0.0 because `greedy_edge_assignment`
+(`src/inference.py:145`, single source of truth, 5 call sites) also uses a fixed `threshold=0.5`
+on `SimpleNodeTransformer`'s edge probabilities with zero adaptive fallback -- undertrained
+transformer never crosses 0.5, so 0 edges every batch.
+
+**Decided NOT to apply the same fix here, and parked instead of silently patching:**
+`tests/test_inference.py::test_edges_below_threshold_are_rejected` deliberately asserts a single
+low-probability candidate (0.3) is correctly rejected -- a real, already-tested precision/recall
+case, not a bug. Unlike detection (where "some real signal exists but never crosses an absolute
+bar" was the actual failure mode regardless of training quality), the edge case is legitimately
+downstream of the model being undertrained: once the transformer is genuinely trained, true
+parent/child edges should produce probabilities well above 0.5 on their own. Adaptively lowering
+the bar now would accept noise edges as "detections," inflating false positives and hurting real
+edge_jaccard rather than helping -- masking training-quality signal instead of fixing a bug.
+
+Revisit only if, after real training progress, edge probabilities are confirmed (not assumed) to
+still legitimately cluster just under 0.5 for true positives -- i.e. only once there's a real,
+trained-enough checkpoint to validate the tradeoff against, same gating condition as the other
+items in this file.
+
 Cross-checked against an external AI-generated research report ("Cell Tracking Research Plan.md",
 provided by user 2026-07-12) comparing SOTA cell-tracking approaches against this pipeline. The
 items below were reviewed and found real/plausible but are explicitly **not** implemented —
