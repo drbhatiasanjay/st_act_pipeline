@@ -398,10 +398,25 @@ class DetectionLoss(torch.nn.Module):
     confirmed root cause of a real full-epoch training run (14,751 batches)
     producing val_score=0.0 (zero detections above threshold everywhere, verified
     directly from the Kaggle log: all 182 validation filter calls used an empty
-    node list). adaptive=True (default) computes weight_neg per-batch from the
-    batch's own foreground/background voxel mass so positive and negative
-    contributions balance regardless of local cell density, instead of assuming
-    one dataset-wide ratio.
+    node list). adaptive=True (default) computes weight_pos and weight_neg
+    per-batch from the batch's own foreground/background voxel mass, instead of
+    assuming one dataset-wide ratio.
+
+    UPDATED (2026-07-15): the previous adaptive formula (`weight_neg = weight_pos
+    * pos_mass / neg_mass`) targeted exact PARITY -- total positive-voxel loss
+    contribution equal to total negative-voxel contribution, 1:1. This was shipped
+    2026-07-13 and has been active in every real run since (v39 through v49), but
+    real Kaggle v49 (1140 real steps, shuffle=True) still showed max_sigmoid net
+    *declining*, not rising -- current evidence parity alone is insufficient, not
+    just a theoretical concern. REFERENCE_IMPLEMENTATION.md:301-303 (the host's
+    own vendored reference implementation, quoted directly, not guessed) uses
+    `weight_pos=1/n_pos`, `weight_neg=0.01/n_neg` -- normalizing EACH class by its
+    own count rather than balancing them against each other. Working out the
+    totals: positive contribution ~= avg_pos_loss (unscaled by count), negative
+    contribution ~= 0.01 * avg_neg_loss -- i.e. the reference deliberately biases
+    ~100x TOWARD the positive class, not parity. Matching that formula here
+    (weight_pos = self.weight_pos / pos_mass, weight_neg = self.weight_neg /
+    neg_mass) instead of the old parity target.
 
     CRITICAL, found by adversarial review (2026-07-13) of the first adaptive
     version and confirmed numerically before trusting it: the first
@@ -460,16 +475,25 @@ class DetectionLoss(torch.nn.Module):
 
         if self.adaptive:
             if pos_mass > 0 and neg_mass > 0:
-                weight_neg = self.weight_pos * pos_mass / neg_mass
+                # Per-class-count normalization (matches
+                # REFERENCE_IMPLEMENTATION.md:301-303's weight_pos=1/n_pos,
+                # weight_neg=0.01/n_neg), NOT parity -- see class docstring's
+                # 2026-07-15 update for why parity (the old weight_neg =
+                # weight_pos * pos_mass / neg_mass) was insufficient in
+                # practice despite being theoretically balanced.
+                weight_pos_applied = self.weight_pos / pos_mass
+                weight_neg = self.weight_neg / neg_mass
             else:
                 # No GT cells in this batch (or, pathologically, no background) --
-                # nothing to balance against, fall back to the fixed ratio.
+                # nothing to normalize against, fall back to the fixed ratio.
+                weight_pos_applied = self.weight_pos
                 weight_neg = self.weight_neg
         else:
+            weight_pos_applied = self.weight_pos
             weight_neg = self.weight_neg
 
         # Apply class imbalance weighting
-        weights = self.weight_pos * targets_f + weight_neg * (1.0 - targets_f)
+        weights = weight_pos_applied * targets_f + weight_neg * (1.0 - targets_f)
         loss = loss * weights
 
         # Normalize by the sum of APPLIED weights, not numel -- see class

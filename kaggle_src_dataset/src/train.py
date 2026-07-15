@@ -265,14 +265,25 @@ class TrainingLoop:
             torch.cuda.manual_seed(self.hyperparams['seed'])
         np.random.seed(self.hyperparams['seed'])
 
-        # Collect all model parameters for optimizer
-        all_params = list(unet3d.parameters()) + list(transformer.parameters())
+        # Collect model parameters, split into decay/no-decay groups (2026-07-15):
+        # AdamW previously applied weight_decay uniformly to ALL parameters,
+        # including the detection head's deliberately negative RetinaNet-style
+        # prior bias (src/model.py, prior_bias = log(1e-4/(1-1e-4)) ~= -9.21).
+        # Standard practice excludes bias and norm-layer params from weight
+        # decay -- decaying a 1D bias/norm param toward 0 fights whatever it was
+        # deliberately initialized to represent, and provides no regularization
+        # benefit those params don't have overfitting-prone weight matrices.
+        named_params = list(unet3d.named_parameters()) + list(transformer.named_parameters())
+        decay_params = [p for name, p in named_params if p.ndim > 1]
+        no_decay_params = [p for name, p in named_params if p.ndim <= 1]
 
         # Initialize optimizer and scheduler
         self.optimizer = AdamW(
-            all_params,
+            [
+                {'params': decay_params, 'weight_decay': self.hyperparams['weight_decay']},
+                {'params': no_decay_params, 'weight_decay': 0.0},
+            ],
             lr=self.hyperparams['learning_rate'],
-            weight_decay=self.hyperparams['weight_decay']
         )
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
@@ -807,6 +818,21 @@ class TrainingLoop:
                 f"-- using adaptive threshold={adaptive_threshold:.4f} instead"
             )
             threshold = max(adaptive_threshold, threshold)
+        elif positive_fraction == 0.0:
+            # Opposite failure mode: raw confidence never crosses the fixed
+            # threshold ANYWHERE in the volume (e.g. RetinaNet-style prior-bias
+            # init, pi=1e-4, still under-trained past absolute 0.5) --
+            # extract_peaks_from_volume would silently return zero peaks
+            # forever otherwise, regardless of real relative peak structure in
+            # the raw probabilities. Lower the bar to the top
+            # max_positive_fraction percentile instead of leaving it fixed.
+            adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
+            logger.warning(
+                f"Validation t_idx={t_idx} ch={channel}: threshold={threshold} flags "
+                f"0% of voxels (severe under-confidence) -- using adaptive "
+                f"threshold={adaptive_threshold:.6f} instead"
+            )
+            threshold = adaptive_threshold
         return extract_peaks_from_volume(
             vol_np,
             threshold=threshold,
