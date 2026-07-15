@@ -237,20 +237,24 @@ class TestGenerateEdgeTargets:
 
 class TestDetectionLoss:
     """
-    Regression tests for the adaptive per-batch class-imbalance weighting fix
-    (2026-07-13). A real full-epoch Kaggle training run (14,751 batches) produced
-    val_score=0.0 -- confirmed root cause: the old fixed weight_neg=0.01 only
-    compensates class imbalance by 100x, but the real measured imbalance (via
-    generate_heatmap_targets on real .geff data) ranges from ~67x (dense samples)
-    to ~667x (sparse samples), so sparse frames were under-compensated by up to
-    ~6.7x -- the model's cheapest way to reduce loss was to push background more
-    confidently negative rather than ever cross the detection threshold on a real
-    cell voxel. A weak assertion (e.g. "loss is some float") would not catch a
-    regression back to the old fixed-ratio behavior -- these assert the actual
-    balancing math and the exact fallback path.
+    Regression tests for the adaptive per-batch class-imbalance weighting.
+
+    UPDATED (2026-07-15): the original adaptive fix (2026-07-13) targeted exact
+    PARITY between total positive and total negative loss contribution
+    (weight_neg = weight_pos * pos_mass / neg_mass). That shipped and was active
+    in every real run since (v39-v49), but real Kaggle v49 (1140 real steps,
+    shuffle=True) still showed max_sigmoid net *declining*, not rising -- current
+    evidence parity alone is insufficient, not just a theoretical concern.
+    REFERENCE_IMPLEMENTATION.md:301-303 (the host's own vendored reference,
+    quoted directly) uses weight_pos=1/n_pos, weight_neg=0.01/n_neg -- each class
+    normalized by its OWN count, which works out to ~100x bias TOWARD the
+    positive class, not parity. These tests now assert that per-class-count
+    normalization instead of parity. A weak assertion (e.g. "loss is some
+    float") would not catch a regression back to either the old fixed-ratio or
+    the old parity-targeting behavior -- these assert the actual math.
     """
 
-    def test_adaptive_balances_pos_and_neg_contribution(self):
+    def test_adaptive_biases_toward_positive_class_matching_reference(self):
         # 4 positive (target=1) voxels out of 100 -> a real, checkable imbalance
         # ratio, not toy 50/50 data that wouldn't exercise the weighting at all.
         targets = torch.zeros(1, 1, 1, 10, 10)
@@ -262,24 +266,26 @@ class TestDetectionLoss:
 
         pos_mass = targets.sum().item()
         neg_mass = targets.numel() - pos_mass
-        expected_weight_neg = 1.0 * pos_mass / neg_mass
-        # With uniform bce per voxel (logits=0), pos and neg contributions should
-        # be exactly equal under the adaptive weight -- this is the actual claim
-        # the fix makes, not just "loss changed from before".
+        # Per-class-count normalization, matching REFERENCE_IMPLEMENTATION.md's
+        # weight_pos=1/n_pos, weight_neg=0.01/n_neg -- NOT parity.
+        expected_weight_pos = 1.0 / pos_mass
+        expected_weight_neg = 0.01 / neg_mass
         bce_per_voxel = loss_fn.bce_loss(logits, targets)[0, 0, 0, 0, 0].item()
-        pos_contrib = 1.0 * pos_mass * bce_per_voxel
+        pos_contrib = expected_weight_pos * pos_mass * bce_per_voxel
         neg_contrib = expected_weight_neg * neg_mass * bce_per_voxel
-        assert pos_contrib == pytest.approx(neg_contrib, rel=1e-5)
+        # Total positive contribution collapses to plain bce_per_voxel
+        # (weight_pos * pos_mass = 1.0, unscaled by count) while negative
+        # contribution is exactly 0.01x that -- ~100x bias toward positive,
+        # the actual claim of the reference-matching fix, not parity.
+        assert pos_contrib == pytest.approx(bce_per_voxel, rel=1e-5)
+        assert neg_contrib == pytest.approx(0.01 * bce_per_voxel, rel=1e-5)
+        assert pos_contrib == pytest.approx(100 * neg_contrib, rel=1e-5)
         # Normalized by the SUM OF APPLIED WEIGHTS, not numel (see CRITICAL note
         # in DetectionLoss's docstring -- .mean() was a confirmed, real bug that
         # shrunk cell-containing batches' gradient by ~pos_mass/numel, silencing
         # exactly the batches the adaptive weighting was meant to rescue).
-        sum_weights = 1.0 * pos_mass + expected_weight_neg * neg_mass
+        sum_weights = expected_weight_pos * pos_mass + expected_weight_neg * neg_mass
         assert loss.item() == pytest.approx((pos_contrib + neg_contrib) / sum_weights, rel=1e-5)
-        # With uniform bce (logits=0 everywhere), perfectly balanced pos/neg
-        # contributions must collapse to exactly bce_per_voxel -- NOT a value
-        # shrunk toward zero by the batch's foreground fraction.
-        assert loss.item() == pytest.approx(bce_per_voxel, rel=1e-5)
 
     def test_adaptive_does_not_collapse_on_a_realistically_sized_sparse_volume(self):
         """REGRESSION GUARD for the real confirmed bug: the original adaptive
@@ -319,12 +325,14 @@ class TestDetectionLoss:
         targets = heatmaps[30].unsqueeze(0)
         pos_mass = targets.sum().item()
         neg_mass = targets.numel() - pos_mass
-        # Real measured ratio for this exact sample/timepoint was ~667x under the
-        # old fixed weight_neg=0.01 (see DEFERRED_IMPROVEMENTS.md) -- assert the
-        # adaptive weight_neg this specific real batch produces is in that
-        # ballpark, not just "some small positive number".
-        adaptive_weight_neg = 1.0 * pos_mass / neg_mass
-        assert 1e-5 < adaptive_weight_neg < 2e-5
+        # Per-class-count normalization (weight_neg = 0.01/neg_mass), matching
+        # REFERENCE_IMPLEMENTATION.md:301-303 -- unlike the old parity formula,
+        # this no longer depends on pos_mass at all, only neg_mass (real volume
+        # size, ~4.19M voxels), so it's a deterministic, checkable formula, not
+        # a ballpark range tied to per-sample cell density.
+        adaptive_weight_neg = 0.01 / neg_mass
+        assert adaptive_weight_neg == pytest.approx(0.01 / neg_mass, rel=1e-9)
+        assert 1e-9 < adaptive_weight_neg < 1e-8
 
     def test_adaptive_falls_back_to_fixed_weight_on_zero_cell_batch(self):
         # A batch with NO ground-truth cells at all (a real, observed case --

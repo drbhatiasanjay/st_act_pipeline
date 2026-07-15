@@ -265,14 +265,25 @@ class TrainingLoop:
             torch.cuda.manual_seed(self.hyperparams['seed'])
         np.random.seed(self.hyperparams['seed'])
 
-        # Collect all model parameters for optimizer
-        all_params = list(unet3d.parameters()) + list(transformer.parameters())
+        # Collect model parameters, split into decay/no-decay groups (2026-07-15):
+        # AdamW previously applied weight_decay uniformly to ALL parameters,
+        # including the detection head's deliberately negative RetinaNet-style
+        # prior bias (src/model.py, prior_bias = log(1e-4/(1-1e-4)) ~= -9.21).
+        # Standard practice excludes bias and norm-layer params from weight
+        # decay -- decaying a 1D bias/norm param toward 0 fights whatever it was
+        # deliberately initialized to represent, and provides no regularization
+        # benefit those params don't have overfitting-prone weight matrices.
+        named_params = list(unet3d.named_parameters()) + list(transformer.named_parameters())
+        decay_params = [p for name, p in named_params if p.ndim > 1]
+        no_decay_params = [p for name, p in named_params if p.ndim <= 1]
 
         # Initialize optimizer and scheduler
         self.optimizer = AdamW(
-            all_params,
+            [
+                {'params': decay_params, 'weight_decay': self.hyperparams['weight_decay']},
+                {'params': no_decay_params, 'weight_decay': 0.0},
+            ],
             lr=self.hyperparams['learning_rate'],
-            weight_decay=self.hyperparams['weight_decay']
         )
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
