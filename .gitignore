@@ -3,10 +3,27 @@
 *.zarr/
 *.geff/
 
-# Trained model weights
+# Trained model weights (any directory, not just /models/ -- checkpoint_dataset/,
+# checkpoints_smoke_test/, kaggle_sanity_outputs/ have all accumulated real .pt
+# files this session that /models/-only patterns below missed)
 /models/*.pth
 /models/*.pt
 /models/*.ckpt
+/checkpoint_dataset/
+/checkpoints_smoke_test/
+/kaggle_sanity_outputs/checkpoints_sanity/
+/kaggle_sanity_outputs/partial_checkpoint.pt
+
+# Vendored offline install wheels -- regenerable via pip, binary bloat
+/wheels_offline/*.whl
+
+# Unrelated separate project accidentally sitting in this directory (Node/TS
+# web app, node_modules etc.) -- not part of st_act_pipeline
+/stpipelinecode/
+
+# Editor / crash artifacts
+.cursor/
+bash.exe.stackdump
 
 # Python
 __pycache__/
