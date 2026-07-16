@@ -439,18 +439,21 @@ except Exception as e:
 # same fixed order every epoch -- confirmed live via a local diagnostic
 # (2026-07-14): loss collapsed to ~0.0001 and max_sigmoid went flat at the
 # init floor for 19+ consecutive steps once a sample's sparse GT ran out.
-# val_loader MUST ALSO shuffle -- the original "order doesn't matter, and the
-# circuit-breaker checks the first N batches specifically" reasoning was
-# wrong: verified directly (2026-07-14) that the first validation sample
-# (44b6_0b24845f) has ZERO real GT nodes for t=0 through t=10 (first real
-# node at t=11), so with shuffle=False the circuit-breaker's first 10
-# batches are structurally guaranteed to have nothing to detect, regardless
-# of model quality -- this is exactly what v40 (1500 batches) and v41 (5000
-# batches) both hit, unchanged, proving the check wasn't measuring the model
-# at all. Same root-cause class as the train_loader fix above, just on the
-# validation side.
+# val_loader MUST NOT shuffle -- P0-3 fix (2026-07-17), reversing the earlier
+# 2026-07-14 shuffle=True decision below. That decision was made to defeat the
+# OLD mid-loop first-10-batches circuit breaker's order-dependent false-
+# positive risk (verified: the first validation sample, 44b6_0b24845f, has
+# ZERO real GT nodes for t=0 through t=10, so shuffle=False made those first
+# 10 batches structurally guaranteed empty regardless of model quality). P0-3
+# replaced that circuit breaker with a post-pass check over the complete
+# run's unique node total (no longer order-sensitive -- see
+# TrainingLoop.validate_epoch()), AND requires chronological per-sample
+# window order for src/prediction_graph.py's canonical-node-identity
+# assembler to work at all (it raises RuntimeError on out-of-order windows).
+# shuffle=True would now cause validate_epoch() to hard-fail on essentially
+# every batch, not just risk a stale false-positive.
 train_loader = DataLoader(train_dataset, batch_size=HYPERPARAMS['batch_size'], shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=HYPERPARAMS['batch_size'], shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=HYPERPARAMS['batch_size'], shuffle=False)
 
 logger.info(f"Train loader batches: {len(train_loader)}")
 logger.info(f"Val loader batches: {len(val_loader)}")

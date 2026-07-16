@@ -10,10 +10,8 @@ import time
 from pathlib import Path
 
 import numpy as np
-import polars as pl
 import torch
 from torch.utils.data import DataLoader
-from tracksdata.graph import IndexedRXGraph
 
 from src.dataset import CompetitionDataset
 from src.evaluation import (
@@ -25,6 +23,7 @@ from src.inference import greedy_edge_assignment
 
 # Import project modules
 from src.model import SimpleNodeTransformer, UNet3D
+from src.prediction_graph import PredictionGraphAssembler
 from src.split_utils import (
     get_split_identity,
     load_and_validate_split,
@@ -142,9 +141,16 @@ def run_evaluation(
         logger.warning(f"No pairs found to evaluate for split {split_type} and filter {dataset_id_filter}")
         return
 
+    # shuffle=False is mandatory (not just historical convenience): P0-3's
+    # PredictionGraphAssembler requires strict chronological per-sample
+    # window order and raises RuntimeError otherwise.
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-    all_pred_graphs = {}
+    # P0-3 fix (2026-07-17): replaces the unconditional dual-frame add_node()
+    # block that previously created two distinct graph nodes for timepoint
+    # t_idx+1 (once as one batch's channel-1, once as the next batch's own
+    # channel-0) -- see src/prediction_graph.py's module docstring.
+    assembler = PredictionGraphAssembler()
     all_gt_graphs = {}
     all_gt_metadata = {}
 
@@ -155,11 +161,6 @@ def run_evaluation(
         'nms_radius_um': 5.0,
     })
     logger.info(f"Using hyperparameters from checkpoint: {hyperparams}")
-
-    # Store adaptive threshold statistics
-    total_peaks_t = 0
-    total_peaks_t1 = 0
-    total_edges = 0
 
     logger.info(f"Running inference over {len(loader)} batches...")
 
@@ -173,15 +174,8 @@ def run_evaluation(
             sample_id = batch['sample_id'][0]
             t_idx = int(batch.get('t_idx', [0])[0])
 
-            if sample_id not in all_pred_graphs:
-                pred_graph = IndexedRXGraph()
-                for key in ('t', 'x', 'y', 'z'):
-                    try:
-                        pred_graph.add_node_attr_key(key, pl.Int64, 0)
-                    except ValueError:
-                        pass
-                all_pred_graphs[sample_id] = pred_graph
-            pred_graph = all_pred_graphs[sample_id]
+            # Fail loud, immediately, on any out-of-order window for this sample.
+            assembler.validate_window_order(sample_id, t_idx)
 
             # Forward pass
             x = torch.cat([frame_t, frame_t1], dim=1)
@@ -194,14 +188,21 @@ def run_evaluation(
             peaks_t = extract_peaks(detection_probs, channel=0, t_idx=t_idx, hyperparams=hyperparams)
             peaks_t1 = extract_peaks(detection_probs, channel=1, t_idx=t_idx, hyperparams=hyperparams)
 
-            total_peaks_t += len(peaks_t)
-            total_peaks_t1 += len(peaks_t1)
+            # Canonical graph identity (P0-3): see
+            # PredictionGraphAssembler.process_window()'s docstring -- frame
+            # t_idx's source set is peaks_t only for this sample's first
+            # window, otherwise the already-canonical nodes from the prior
+            # window's channel-1 output (peaks_t counted diagnostically only).
+            source_ids, source_coords, target_ids, target_coords = assembler.process_window(
+                sample_id, t_idx, peaks_t, peaks_t1,
+            )
 
-            # Extract features at peaks
-            nodes_t, features_t = get_nodes_and_features(features, peaks_t, device)
-            nodes_t1, features_t1 = get_nodes_and_features(features, peaks_t1, device)
+            # Extract features at the CANONICAL coordinates from this
+            # window's feature tensor (not necessarily peaks_t/peaks_t1).
+            nodes_t, features_t = get_nodes_and_features(features, source_coords, device)
+            nodes_t1, features_t1 = get_nodes_and_features(features, target_coords, device)
 
-            if len(peaks_t) > 0 and len(peaks_t1) > 0:
+            if len(source_coords) > 0 and len(target_coords) > 0:
                 edge_probs = transformer(nodes_t, nodes_t1, features_t, features_t1)
                 assignment = greedy_edge_assignment(
                     edge_probs,
@@ -215,33 +216,26 @@ def run_evaluation(
             else:
                 edges = []
 
-            total_edges += len(edges)
-
-            # Add nodes and edges to the prediction graph
-            node_id_map_t = {}
-            for i, (z, y, x_coord) in enumerate(peaks_t):
-                node_id_map_t[i] = pred_graph.add_node({
-                    't': t_idx, 'x': int(round(x_coord)), 'y': int(round(y)), 'z': int(round(z)),
-                })
-            node_id_map_t1 = {}
-            for j, (z, y, x_coord) in enumerate(peaks_t1):
-                node_id_map_t1[j] = pred_graph.add_node({
-                    't': t_idx + 1, 'x': int(round(x_coord)), 'y': int(round(y)), 'z': int(round(z)),
-                })
-
-            for src_idx, tgt_idx, _prob in edges:
-                pred_graph.add_edge(node_id_map_t[src_idx], node_id_map_t1[tgt_idx], {})
+            assembler.add_edges(sample_id, source_ids, target_ids, edges)
 
             batch_elapsed = time.time() - batch_start_time
             logger.info(
                 f"Batch {batch_idx+1:02d}/{len(loader)} | t_idx={t_idx:02d} | "
                 f"Sigmoid: [{p_min:.4f}, {p_max:.4f}] | "
-                f"Peaks: {len(peaks_t)} (ch0), {len(peaks_t1)} (ch1) | "
+                f"Raw peaks: {len(peaks_t)} (ch0), {len(peaks_t1)} (ch1) | "
+                f"Canonical: {len(source_coords)} (frame {t_idx}), {len(target_coords)} (frame {t_idx + 1}) | "
                 f"Edges: {len(edges)} | Took {batch_elapsed:.2f}s"
             )
 
     total_elapsed = time.time() - total_start_time
-    logger.info(f"Inference complete in {total_elapsed:.2f}s. Total peaks_t: {total_peaks_t}, peaks_t1: {total_peaks_t1}, edges: {total_edges}")
+    diag = assembler.diagnostics()
+    logger.info(
+        f"Inference complete in {total_elapsed:.2f}s. "
+        f"Unique nodes: {diag['predicted_nodes_total']}, unique edges: {diag['predicted_edges_total']} | "
+        f"Raw peaks (diagnostic only, NOT the graph node count): "
+        f"ch0={diag['raw_channel0_peaks_total']}, ch1={diag['raw_channel1_peaks_total']}"
+    )
+    all_pred_graphs = assembler.pred_graphs()
 
     # Load GT graphs
     for sample_id in all_pred_graphs:

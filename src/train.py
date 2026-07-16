@@ -26,7 +26,6 @@ from scipy import ndimage
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
-from tracksdata.graph import IndexedRXGraph
 
 from src.evaluation import (
     DEFAULT_MAX_DISTANCE,
@@ -35,6 +34,7 @@ from src.evaluation import (
     load_geff_ground_truth,
 )
 from src.inference import greedy_edge_assignment
+from src.prediction_graph import PredictionGraphAssembler
 from src.split_utils import validate_resume_checkpoint_split_identity
 from src.targets import (
     DetectionLoss,
@@ -935,9 +935,6 @@ class TrainingLoop:
         self.unet3d.eval()
         self.transformer.eval()
 
-        import polars as pl
-
-        all_pred_graphs: dict[str, IndexedRXGraph] = {}
         all_gt_graphs = {}
         all_gt_metadata = {}
 
@@ -959,31 +956,18 @@ class TrainingLoop:
         # detections for the sample's last timepoint (previously
         # unreachable -- no batch ever had it as an own/first-frame t_idx).
         #
-        # Known, accepted limitation: this does NOT deduplicate nodes at
-        # intermediate timepoints -- timepoint t_idx+1 gets predicted twice
-        # (once as this batch's channel-1, once as the next batch's own
-        # channel-0), both added as separate graph nodes rather than
-        # merged. This inflates predicted node count roughly 2x at
-        # non-boundary timepoints, which would need a proper nearest-
-        # neighbor merge before this validation score is trustworthy for a
-        # real Task 3.4 go/no-go decision -- acceptable for now to unblock
-        # verifying training itself works, not to finalize scoring.
+        # P0-3 fix (2026-07-17): graph node identity for overlapping windows
+        # is now owned by src/prediction_graph.py's PredictionGraphAssembler
+        # (see its module docstring) instead of unconditionally add_node()'ing
+        # both channels every batch -- that previously created two distinct
+        # graph nodes for timepoint t_idx+1 (once as this batch's channel-1,
+        # once as the next batch's own channel-0), inflating predicted node
+        # count ~2x at non-boundary timepoints. This REQUIRES chronological
+        # per-sample window order (self.val_loader must use shuffle=False --
+        # see kaggle_kernel/train_kernel.py) -- the assembler raises
+        # RuntimeError on any duplicate/backward/gapped t_idx per sample.
+        assembler = PredictionGraphAssembler()
         max_batches = self.hyperparams.get('max_batches_per_epoch')
-
-        # Circuit-breaker for a structurally-zero validation pass: validate_epoch()
-        # uses a FROZEN model (no weight updates happen during validation), so if
-        # the first CIRCUIT_BREAKER_CHECK_BATCHES batches predict literally zero
-        # nodes (not "zero that match GT" -- zero raw detections, independent of
-        # GT content), there is no mechanism by which a later batch could differ --
-        # continuing through the remaining ~4,950 batches only wastes GPU time
-        # confirming what's already certain. This is exactly the gap that let a
-        # real run burn its full validation pass (thousands of batches) before the
-        # zero-detection collapse was discovered, hours later, by manually
-        # grepping the raw log. Mirrors train_epoch()'s existing >50%-fallback-rate
-        # hard-fail pattern.
-        CIRCUIT_BREAKER_CHECK_BATCHES = 10
-        total_predicted_nodes = 0
-        total_predicted_edges = 0
 
         with torch.no_grad():
             for _batch_idx, batch in enumerate(self.val_loader):
@@ -996,22 +980,10 @@ class TrainingLoop:
                 sample_id = batch['sample_id'][0]
                 t_idx = int(batch.get('t_idx', [0])[0])
 
-                # IndexedRXGraph.add_node_attr_key() requires an explicit
-                # dtype/default (bare key-name-only raises "dtype is
-                # required when not using AttrSchema"), add_node() takes a
-                # single attrs dict and returns an auto-assigned int id,
-                # add_edge() needs those returned int ids plus an attrs
-                # dict. Mirrors the already-proven pattern in
-                # run_pipeline.py:convert_nx_to_tracksdata().
-                if sample_id not in all_pred_graphs:
-                    pred_graph = IndexedRXGraph()
-                    for key in ('t', 'x', 'y', 'z'):
-                        try:
-                            pred_graph.add_node_attr_key(key, pl.Int64, 0)
-                        except ValueError:
-                            pass  # key already exists
-                    all_pred_graphs[sample_id] = pred_graph
-                pred_graph = all_pred_graphs[sample_id]
+                # Fail loud, immediately, on any out-of-order window for this
+                # sample -- sequential canonical-node ownership is only valid
+                # under strict chronological order (P0-3).
+                assembler.validate_window_order(sample_id, t_idx)
 
                 # Forward pass -- logits/detection_probs are (B, 2, Z, Y, X).
                 # Same autocast rationale as train_epoch() above -- extra
@@ -1028,8 +1000,28 @@ class TrainingLoop:
 
                 peaks_t = self._peaks_for_channel(detection_probs, channel=0, t_idx=t_idx)
                 peaks_t1 = self._peaks_for_channel(detection_probs, channel=1, t_idx=t_idx)
-                nodes_t, features_t = self._nodes_and_features_at_peaks(features, peaks_t)
-                nodes_t1, features_t1 = self._nodes_and_features_at_peaks(features, peaks_t1)
+
+                # Canonical graph identity (P0-3): frame t_idx's source set is
+                # peaks_t ONLY if this is the first window this sample has
+                # ever produced -- otherwise it's the ALREADY-canonical nodes
+                # from the prior window's channel-1 output, and peaks_t (this
+                # window's channel-0 re-observation of the same real
+                # timepoint) is ignored for node creation (counted
+                # diagnostically only -- see PredictionGraphAssembler.
+                # process_window()'s docstring for why: the real model is not
+                # guaranteed to return identical overlapping predictions).
+                # Frame t_idx+1 is always newly owned here from peaks_t1.
+                source_ids, source_coords, target_ids, target_coords = assembler.process_window(
+                    sample_id, t_idx, peaks_t, peaks_t1,
+                )
+
+                # Sample THIS window's features at the canonical coordinates
+                # (not necessarily peaks_t/peaks_t1 -- source_coords may be
+                # carried over from a prior window's forward pass, but this
+                # window's feature tensor is still a valid array to index
+                # into at those same (z,y,x) locations).
+                nodes_t, features_t = self._nodes_and_features_at_peaks(features, source_coords)
+                nodes_t1, features_t1 = self._nodes_and_features_at_peaks(features, target_coords)
 
                 # Every 5 batches -- mirrors train_epoch()'s progress-logging cadence
                 # (see comment there). Without this, a val_score=0.0 gives no way to
@@ -1044,10 +1036,11 @@ class TrainingLoop:
                     logger.info(
                         f"Val batch {_batch_idx + 1} | sample={sample_id} t_idx={t_idx} | "
                         f"sigmoid=[{sig_min:.4f}, {sig_max:.4f}] | "
-                        f"peaks: {len(peaks_t)} (ch0), {len(peaks_t1)} (ch1)"
+                        f"raw peaks: {len(peaks_t)} (ch0), {len(peaks_t1)} (ch1) | "
+                        f"canonical: {len(source_coords)} (frame {t_idx}), {len(target_coords)} (frame {t_idx + 1})"
                     )
 
-                if len(peaks_t) > 0 and len(peaks_t1) > 0:
+                if len(source_coords) > 0 and len(target_coords) > 0:
                     edge_probs = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
                     assignment = greedy_edge_assignment(
                         edge_probs,
@@ -1061,43 +1054,43 @@ class TrainingLoop:
                 else:
                     edges = []
 
-                total_predicted_nodes += len(peaks_t) + len(peaks_t1)
-                total_predicted_edges += len(edges)
-
-                if (_batch_idx + 1) == CIRCUIT_BREAKER_CHECK_BATCHES and total_predicted_nodes == 0:
-                    raise RuntimeError(
-                        f"Validation aborted: {CIRCUIT_BREAKER_CHECK_BATCHES} consecutive "
-                        f"validation batches predicted ZERO nodes (sigmoid never crossed "
-                        f"detection_threshold={self.hyperparams['detection_threshold']} anywhere). "
-                        f"validate_epoch() uses a frozen model -- this cannot self-correct within "
-                        f"the same validation pass, so continuing through the remaining "
-                        f"~{len(self.val_loader) - CIRCUIT_BREAKER_CHECK_BATCHES} batches would only "
-                        f"waste GPU time confirming a structural failure that's already certain. "
-                        f"Diagnose the detection head / loss weighting before retrying."
-                    )
-
-                # Add both channels' detections as new nodes every batch
-                # (see the known-limitation comment above the loop).
-                # Coordinates cast to int to match the pl.Int64 schema above
-                # (mirrors run_pipeline.py:convert_nx_to_tracksdata()) --
-                # passing float values against an Int64 schema fails inside
+                # Coordinates cast to int to match the pl.Int64 schema
+                # PredictionGraphAssembler registers (mirrors
+                # run_pipeline.py:convert_nx_to_tracksdata()) -- passing float
+                # values against an Int64 schema fails inside
                 # evaluate_submission() with "unexpected value ... found
                 # value of type Float64", silently caught by the
                 # eval_failure fallback and masking the real validation
                 # score with zeros.
-                node_id_map_t = {}
-                for i, (z, y, x) in enumerate(peaks_t):
-                    node_id_map_t[i] = pred_graph.add_node({
-                        't': t_idx, 'x': int(round(x)), 'y': int(round(y)), 'z': int(round(z)),
-                    })
-                node_id_map_t1 = {}
-                for j, (z, y, x) in enumerate(peaks_t1):
-                    node_id_map_t1[j] = pred_graph.add_node({
-                        't': t_idx + 1, 'x': int(round(x)), 'y': int(round(y)), 'z': int(round(z)),
-                    })
+                assembler.add_edges(sample_id, source_ids, target_ids, edges)
 
-                for src_idx, tgt_idx, _prob in edges:
-                    pred_graph.add_edge(node_id_map_t[src_idx], node_id_map_t1[tgt_idx], {})
+        # Circuit-breaker for a structurally-zero validation pass, evaluated
+        # AFTER full coverage (P0-3 fix, 2026-07-17): the previous version
+        # aborted early once the first 10 batches predicted zero nodes,
+        # relying on shuffle=True so those 10 batches weren't just one
+        # sample's real, legitimately-empty boundary frames. P0-3 requires
+        # chronological (shuffle=False) order, under which the first N
+        # batches ARE exactly one sample's early frames -- an early-boundary
+        # abort would now misfire on real empty frames, not a structurally
+        # dead model. So this check now runs once, over the complete
+        # evaluated coverage's UNIQUE node total (post canonical-identity
+        # dedup, not raw per-channel peak counts) -- still fails loud on a
+        # genuinely zero-detection model, just never on an early false
+        # positive from chronological ordering.
+        diagnostics = assembler.diagnostics()
+        total_predicted_nodes = diagnostics['predicted_nodes_total']
+        total_predicted_edges = diagnostics['predicted_edges_total']
+        if total_predicted_nodes == 0:
+            raise RuntimeError(
+                f"Validation aborted: the complete validation pass predicted ZERO "
+                f"unique graph nodes (sigmoid never crossed "
+                f"detection_threshold={self.hyperparams['detection_threshold']} anywhere, "
+                f"across all {len(self.val_loader)} batches). validate_epoch() uses a "
+                f"frozen model -- this cannot self-correct within the same validation "
+                f"pass. Diagnose the detection head / loss weighting before retrying."
+            )
+
+        all_pred_graphs = assembler.pred_graphs()
 
         # Load each sample's GT graph once (not once per batch -- a sample
         # has many batches, all needing the same GT graph).

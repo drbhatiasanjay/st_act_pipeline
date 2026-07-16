@@ -444,21 +444,73 @@ def _make_fake_val_batch(t_idx: int) -> dict:
     }
 
 
+class _FakeLateBloomerUNet3D(torch.nn.Module):
+    """Returns zero-detection logits for its first `zero_calls` forward()
+    calls, then a real high-confidence spike afterward -- simulates a sample
+    whose early chronological frames are genuinely empty (no cells yet /
+    boundary frames), not a structurally dead model. Under P0-3's
+    chronological (shuffle=False) requirement, this exact shape is what the
+    OLD first-N-batches circuit breaker would have falsely aborted on."""
+
+    def __init__(self, zero_calls: int):
+        super().__init__()
+        self.zero_calls = zero_calls
+        self.calls = 0
+
+    def forward(self, x):
+        batch = x.shape[0]
+        self.calls += 1
+        if self.calls <= self.zero_calls:
+            logits = torch.full((batch, 2, 8, 16, 16), -100.0)
+        else:
+            logits = torch.full((batch, 2, 8, 16, 16), -100.0)
+            logits[:, :, 4, 8, 8] = 100.0  # one clear peak per channel
+        features = torch.zeros(batch, 4, 8, 16, 16)
+        return logits, features
+
+
+class _FakeEdgeTransformer(torch.nn.Module):
+    """Minimal stand-in for SimpleNodeTransformer: returns a fixed
+    high-probability flat (n_t * n_t1,) edge-probability tensor, matching
+    greedy_edge_assignment()'s expected shape when candidate_edges=None.
+    Real transformer forward-pass numerics aren't under test here."""
+
+    def forward(self, nodes_t, nodes_t1, features_t, features_t1):
+        n_t = nodes_t.shape[0]
+        n_t1 = nodes_t1.shape[0]
+        return torch.full((n_t * n_t1,), 0.9)
+
+
 class TestValidateEpochCircuitBreaker:
     """REGRESSION GUARD for the exact incident this test class is named after:
     a real 5.6-hour Kaggle run continued through all ~4,950 validation batches
     after the first few already showed zero detections, because validate_epoch()
-    had no way to notice a structural failure early. validate_epoch() uses a
-    FROZEN model (no weight updates happen during validation) -- if the first N
-    batches predict zero nodes, no later batch can differ, so this must raise
-    fast rather than run to completion confirming what's already certain."""
+    had no way to notice a structural failure early.
 
-    def make_degenerate_loop(self, num_batches: int = 15):
+    P0-3 fix (2026-07-17): the circuit breaker moved from a mid-loop
+    first-10-batches check to a POST-PASS check over the complete run's
+    UNIQUE node total. The old first-N-batches version relied on
+    shuffle=True precisely so those N batches weren't just one sample's
+    real, legitimately-empty early/boundary frames -- P0-3 now REQUIRES
+    chronological (shuffle=False) order, under which the first N batches
+    genuinely ARE one sample's earliest frames, so an early-abort would
+    misfire on real empty frames rather than a structurally dead model.
+    validate_epoch() still uses a FROZEN model -- a fully-zero pass still
+    cannot self-correct, so the check still fires, just only after
+    confirming the ENTIRE pass, not an early guess."""
+
+    def make_loop(self, unet3d, num_batches: int = 15, transformer=None):
+        if transformer is None:
+            transformer = torch.nn.Identity()  # never reached when peaks are always empty
         return make_bare_training_loop(
-            unet3d=_FakeDegenerateUNet3D(),
-            transformer=torch.nn.Identity(),  # never reached -- peaks are always empty
+            unet3d=unet3d,
+            transformer=transformer,
             device=torch.device("cpu"),
             _amp_enabled=False,  # validate_epoch()'s autocast() call reads this
+            # Non-existent path: geff_path.exists() is False, so GT loading is
+            # skipped cleanly (no exception, no evaluation_failure count) for
+            # tests that reach that far (i.e. don't raise on zero nodes first).
+            data_dir=Path("nonexistent_test_dir_for_circuit_breaker_test"),
             hyperparams={
                 "detection_threshold": 0.5,
                 "max_positive_voxel_fraction": 0.005,
@@ -475,16 +527,17 @@ class TestValidateEpochCircuitBreaker:
             },
         )
 
-    def test_raises_within_10_batches_on_a_structurally_zero_model(self):
-        loop = self.make_degenerate_loop(num_batches=15)
+    def test_raises_after_full_pass_on_a_structurally_zero_model(self):
+        loop = self.make_loop(_FakeDegenerateUNet3D(), num_batches=15)
 
-        with pytest.raises(RuntimeError, match="ZERO nodes"):
+        with pytest.raises(RuntimeError, match="ZERO unique graph nodes"):
             loop.validate_epoch()
 
-    def test_does_not_raise_before_the_check_point(self, monkeypatch):
-        """The breaker must check AT batch 10, not before -- a model that's
-        merely slow to warm up shouldn't be killed on batch 1."""
-        loop = self.make_degenerate_loop(num_batches=15)
+    def test_full_pass_is_processed_before_raising_not_an_early_abort(self, monkeypatch):
+        """Proves the check is now a genuine post-pass check, not a
+        disguised early abort -- every batch's forward pass must run before
+        the RuntimeError fires."""
+        loop = self.make_loop(_FakeDegenerateUNet3D(), num_batches=15)
         seen_batches = []
         real_peaks_for_channel = loop._peaks_for_channel
 
@@ -497,9 +550,24 @@ class TestValidateEpochCircuitBreaker:
         with pytest.raises(RuntimeError):
             loop.validate_epoch()
 
-        # 2 calls per batch (channel 0 and channel 1) x 10 batches processed
-        # before the breaker fires on the 10th
-        assert len(seen_batches) == 20
+        # 2 calls per batch (channel 0 and channel 1) x all 15 batches --
+        # the old version raised after only 20 (10 batches).
+        assert len(seen_batches) == 30
+
+    def test_chronologically_empty_boundary_frames_do_not_cause_a_false_failure(self):
+        """The exact P0-3 regression case: a model whose first several
+        chronological batches are genuinely empty (real biological boundary
+        frames), but later batches show real detections. Under
+        shuffle=False, the OLD first-10-batches breaker would have falsely
+        aborted here. The new post-pass check must NOT raise."""
+        loop = self.make_loop(
+            _FakeLateBloomerUNet3D(zero_calls=12), num_batches=15, transformer=_FakeEdgeTransformer(),
+        )
+
+        val_metrics = loop.validate_epoch()
+
+        assert val_metrics["predicted_nodes_total"] > 0
+        assert val_metrics["is_structural_zero"] is False
 
 
 class _SyncThread:
