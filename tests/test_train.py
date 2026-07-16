@@ -94,6 +94,114 @@ class TestGetGtNodesGeffCache:
         assert result.shape == (0, 3)
 
 
+class TestGenerateAndValidateHeatmapTarget:
+    """P0-1 fix (2026-07-16), Section 6 training-side invariant: CompetitionDataset's
+    pair index now guarantees every retained training pair has >=1 GT node at both
+    t_idx and t_idx+1, so TrainingLoop must fail loudly -- not silently substitute an
+    all-zero target -- if a retained pair's heatmap generation fails OR succeeds but
+    produces zero target mass in either channel. This is exactly the gap that let a
+    real full-epoch run (14,751 batches) silently train on all-background targets
+    with no crash, ever (see DetectionLoss docstring)."""
+
+    def make_loop(self):
+        return make_bare_training_loop(
+            data_dir=Path(REAL_TRAIN_DIR),
+            _geff_cache={},
+            device=torch.device("cpu"),
+        )
+
+    def test_raises_when_heatmap_generation_raises(self, monkeypatch):
+        def failing_generate_heatmap_targets(*args, **kwargs):
+            raise RuntimeError("simulated GEFF parse failure")
+
+        monkeypatch.setattr(train_module, "generate_heatmap_targets", failing_generate_heatmap_targets)
+        loop = self.make_loop()
+
+        with pytest.raises(RuntimeError, match="Heatmap target generation failed"):
+            loop._generate_and_validate_heatmap_target(
+                REAL_SAMPLE_ID, 5, (7, 8, 16, 16), 8, 16, 16
+            )
+
+    def test_raises_when_retained_pair_produces_all_zero_heatmap(self, monkeypatch):
+        """The exact regression this invariant guards against: heatmap generation
+        SUCCEEDS (no exception) but returns an all-zero target for a pair the
+        dataset claims is retained/annotated -- must abort, not silently continue
+        training on a fabricated all-background example."""
+        def zero_generate_heatmap_targets(sample_id, geff_path, volume_shape, **kwargs):
+            z, y, x = volume_shape[1], volume_shape[2], volume_shape[3]
+            target_ts = kwargs["target_ts"]
+            return {t: torch.zeros((1, z, y, x), dtype=torch.float32) for t in target_ts}, {}
+
+        monkeypatch.setattr(train_module, "generate_heatmap_targets", zero_generate_heatmap_targets)
+        loop = self.make_loop()
+
+        with pytest.raises(RuntimeError, match="all-zero heatmap target"):
+            loop._generate_and_validate_heatmap_target(
+                REAL_SAMPLE_ID, 5, (7, 8, 16, 16), 8, 16, 16
+            )
+
+    def test_raises_when_only_channel0_is_all_zero(self, monkeypatch):
+        """Independent of the both-channels-zero test: channel 1 (t_idx+1) alone
+        having real mass must NOT mask channel 0 (t_idx) being all-zero -- both
+        channels are checked with `or`, not just their combined/either sum."""
+        def mixed_generate_heatmap_targets(sample_id, geff_path, volume_shape, **kwargs):
+            z, y, x = volume_shape[1], volume_shape[2], volume_shape[3]
+            t0, t1 = kwargs["target_ts"]
+            h1 = torch.zeros((1, z, y, x), dtype=torch.float32)
+            h1[0, 0, 0, 0] = 1.0
+            return {t0: torch.zeros((1, z, y, x), dtype=torch.float32), t1: h1}, {}
+
+        monkeypatch.setattr(train_module, "generate_heatmap_targets", mixed_generate_heatmap_targets)
+        loop = self.make_loop()
+
+        with pytest.raises(RuntimeError, match="all-zero heatmap target"):
+            loop._generate_and_validate_heatmap_target(
+                REAL_SAMPLE_ID, 5, (7, 8, 16, 16), 8, 16, 16
+            )
+
+    def test_raises_when_only_channel1_is_all_zero(self, monkeypatch):
+        """Mirror of the channel-0 case: a real, nonzero channel 0 must NOT mask
+        channel 1 being all-zero."""
+        def mixed_generate_heatmap_targets(sample_id, geff_path, volume_shape, **kwargs):
+            z, y, x = volume_shape[1], volume_shape[2], volume_shape[3]
+            t0, t1 = kwargs["target_ts"]
+            h0 = torch.zeros((1, z, y, x), dtype=torch.float32)
+            h0[0, 0, 0, 0] = 1.0
+            return {t0: h0, t1: torch.zeros((1, z, y, x), dtype=torch.float32)}, {}
+
+        monkeypatch.setattr(train_module, "generate_heatmap_targets", mixed_generate_heatmap_targets)
+        loop = self.make_loop()
+
+        with pytest.raises(RuntimeError, match="all-zero heatmap target"):
+            loop._generate_and_validate_heatmap_target(
+                REAL_SAMPLE_ID, 5, (7, 8, 16, 16), 8, 16, 16
+            )
+
+    def test_returns_concatenated_target_for_a_valid_nonzero_heatmap(self, monkeypatch):
+        """Positive case: a real (nonzero) heatmap for both channels must pass
+        through untouched as a (1, 2, Z, Y, X) tensor -- this invariant check must
+        not reject legitimately annotated pairs."""
+        def real_generate_heatmap_targets(sample_id, geff_path, volume_shape, **kwargs):
+            z, y, x = volume_shape[1], volume_shape[2], volume_shape[3]
+            target_ts = kwargs["target_ts"]
+            heatmaps = {}
+            for t in target_ts:
+                h = torch.zeros((1, z, y, x), dtype=torch.float32)
+                h[0, 0, 0, 0] = 1.0
+                heatmaps[t] = h
+            return heatmaps, {}
+
+        monkeypatch.setattr(train_module, "generate_heatmap_targets", real_generate_heatmap_targets)
+        loop = self.make_loop()
+
+        result = loop._generate_and_validate_heatmap_target(
+            REAL_SAMPLE_ID, 5, (7, 8, 16, 16), 8, 16, 16
+        )
+
+        assert result.shape == (1, 2, 8, 16, 16)
+        assert result.sum().item() == pytest.approx(2.0)
+
+
 class TestExtractPeaksFromVolumeSubvoxelRefinement:
     """A `vol == pooled` tied plateau is mathematically guaranteed to be
     uniform-valued internally (proven: any two adjacent True voxels are each

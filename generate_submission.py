@@ -73,6 +73,12 @@ def main():
         dataset.sample_ids = [sample_id]
         dataset.pairs = []
         dataset._loader_cache = {}
+        # P0-1 fix (2026-07-16): submission inference must see every real
+        # consecutive pair -- test samples have no .geff at all, so GT-count
+        # filtering isn't even meaningful here, let alone desirable.
+        dataset.filter_unannotated_pairs = False
+        dataset._gt_counts_by_time_cache = {}
+        dataset.annotation_pair_stats = None
         dataset._build_pair_index()
 
         if len(dataset) == 0:

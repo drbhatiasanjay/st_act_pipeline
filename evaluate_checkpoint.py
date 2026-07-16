@@ -90,7 +90,13 @@ def run_evaluation(split_type: str, dataset_id_filter: list = None, max_pairs: i
         data_dir=data_dir,
         split_file=split_file,
         split_type=split_type,
-        normalize=True
+        normalize=True,
+        # P0-1 fix (2026-07-16): explicit, not just relying on the default --
+        # this function does pure inference/graph evaluation for BOTH
+        # split_type values it's ever called with (including "train", e.g.
+        # run_evaluation(split_type="train", ...) below), never backprop, so it
+        # must always see every real consecutive pair regardless of GT coverage.
+        filter_unannotated_pairs=False,
     )
 
     if dataset_id_filter:

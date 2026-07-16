@@ -399,13 +399,21 @@ try:
         data_dir=train_data_dir,
         split_file=data_split_file,
         split_type='train',
-        normalize=True
+        normalize=True,
+        # P0-1 fix (2026-07-16): this is the only CompetitionDataset instance in
+        # the whole repo that feeds the optimizer/backprop, so it's the only one
+        # that may drop unannotated (t, t+1) pairs. See
+        # CompetitionDataset.__init__'s filter_unannotated_pairs docstring.
+        filter_unannotated_pairs=True,
     )
     val_dataset = CompetitionDataset(
         data_dir=train_data_dir,
         split_file=data_split_file,
         split_type='validation',
         normalize=True
+        # filter_unannotated_pairs intentionally omitted (defaults False):
+        # validation performs inference/graph construction, not training, and
+        # must see every real consecutive pair regardless of GT coverage.
     )
     logger.info(f"Train dataset size: {len(train_dataset)}")
     logger.info(f"Val dataset size: {len(val_dataset)}")

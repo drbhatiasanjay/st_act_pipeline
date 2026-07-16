@@ -42,6 +42,7 @@ class CompetitionDataset(Dataset):
         normalize: bool = True,
         anisotropy: tuple[float, float, float] = (4.0, 1.0, 1.0),
         zip_path: str | Path | None = None,
+        filter_unannotated_pairs: bool = False,
     ):
         """
         Initialize CompetitionDataset.
@@ -50,10 +51,26 @@ class CompetitionDataset(Dataset):
             data_dir: Path to directory containing Zarr/geff data
                       (local staging or Kaggle-mounted competition path)
             split_file: Path to data_split.json
-            split_type: "train" or "validation"
+            split_type: which sample-id membership list to load from split_file
+                (e.g. "train", "validation", "test") -- selects WHICH samples this
+                dataset covers, nothing else. Does NOT control annotation
+                filtering (see filter_unannotated_pairs); a P0-1 regression
+                (2026-07-16) derived filtering from `split_type == "train"`, which
+                incorrectly filtered train-split samples used for pure inference
+                (e.g. evaluate_checkpoint.py's run_evaluation(split_type="train",
+                ...)) -- fixed by decoupling the two concerns.
             normalize: Whether to apply normalization (default: True)
             anisotropy: Anisotropy ratio (Z:Y:X), default (4.0, 1.0, 1.0)
             zip_path: Optional path to zip file for extracting samples on-the-fly
+            filter_unannotated_pairs: If True, _build_pair_index() retains a
+                (t, t+1) pair only when BOTH timepoints have >=1 GT node (see
+                _get_gt_counts_by_time). Set True ONLY for the actual training
+                dataset used for optimizer/backpropagation (see DetectionLoss
+                docstring for why an all-zero target is actively harmful during
+                training). Every other caller -- validation inference, train-split
+                evaluation, test/submission inference -- must leave this False so
+                pair coverage matches the real frame timeline, not GT coverage.
+                Default False: the pre-P0-1 unconditional behavior.
         """
         self.data_dir = Path(data_dir)
         self.split_type = split_type
@@ -61,6 +78,7 @@ class CompetitionDataset(Dataset):
         self.anisotropy = anisotropy
         self.physical_voxel_size = (1.625, 0.40625, 0.40625)  # um
         self.zip_path = Path(zip_path) if zip_path else None
+        self.filter_unannotated_pairs = filter_unannotated_pairs
 
         # Load split file
         split_file = Path(split_file)
@@ -85,6 +103,15 @@ class CompetitionDataset(Dataset):
         # (repeated "Opening real Zarr v3 store..." at closely-spaced timestamps for the
         # same sample_id, since shuffle=False means ~100 consecutive pairs per sample).
         self._loader_cache: dict[str, AnisotropicZarrLoader] = {}
+        # Per-sample {timepoint: gt_node_count}, parsed from .geff once and reused --
+        # see _get_gt_counts_by_time. Only populated/consulted when
+        # filter_unannotated_pairs is True (see _build_pair_index).
+        self._gt_counts_by_time_cache: dict[str, dict[int, int]] = {}
+        # P0-1 fix (2026-07-16): audit trail of which candidate (t, t+1) pairs were
+        # kept vs. dropped for lacking GT coverage. None when filter_unannotated_pairs
+        # is False (nothing is filtered there -- see _build_pair_index). See
+        # CLAUDE.md for the underlying bug this exists to prevent.
+        self.annotation_pair_stats: dict[str, Any] | None = None
         self._build_pair_index()
 
     def _get_loader(self, sample_id: str) -> AnisotropicZarrLoader:
@@ -96,32 +123,196 @@ class CompetitionDataset(Dataset):
             self._loader_cache[sample_id] = loader
         return loader
 
-    def _build_pair_index(self) -> None:
-        """Build index of all (frame_t, frame_t+1) pairs."""
-        for sample_id in self.sample_ids:
-            try:
-                # Check if sample exists locally
-                zarr_path = self.data_dir / f"{sample_id}.zarr"
-                if not zarr_path.exists():
-                    logger.debug(
-                        f"Sample {sample_id} not found locally (OK for local testing)"
-                    )
-                    continue
+    def _get_gt_counts_by_time(self, sample_id: str) -> dict[int, int]:
+        """
+        Return {timepoint: gt_node_count} for sample_id, parsed from its .geff once
+        and cached for the lifetime of this dataset instance.
 
-                # Load zarr to determine number of frames
+        P0-1 fix (2026-07-16): CompetitionDataset used to build (t, t+1) pairs from
+        Zarr frame count alone, with no idea whether either frame actually had a
+        labeled GT cell. Combined with generate_heatmap_targets() returning an
+        all-zero heatmap for an unlabeled timepoint (correct in isolation) and
+        DetectionLoss's adaptive branch falling back to a FIXED weight_neg on an
+        all-zero target (see DetectionLoss docstring) -- which cancels out of
+        loss.sum()/weights.sum() exactly -- a completely unannotated frame pair was
+        silently trained as ordinary mean BCE against an all-background target,
+        actively teaching the model "no cells exist here" for windows that were
+        simply never labeled, not actually empty. Real GT coverage is genuinely
+        sparse (~0.2% of the estimated true cell count in the densest local sample --
+        see data/staging/README.md's "Ground truth is far sparser than the PRD's
+        prose suggested" section, written 2026-07-03), so this was not a rare edge
+        case.
+
+        Deliberately fails loudly rather than substituting a default, matching this
+        project's established "silent fallback masks real breakage" lesson (the
+        polars/GroupNorm incidents in CLAUDE.md): a training run must not silently
+        proceed on annotation data it cannot verify.
+        """
+        if sample_id in self._gt_counts_by_time_cache:
+            return self._gt_counts_by_time_cache[sample_id]
+
+        geff_path = self.data_dir / f"{sample_id}.geff"
+
+        try:
+            graph, _ = self.load_geff_gt(sample_id)
+        except FileNotFoundError as e:
+            raise FileNotFoundError(
+                f"Sample {sample_id}: Zarr volume exists but no matching .geff "
+                f"ground truth was found at {geff_path} -- cannot determine which "
+                f"timepoints are annotated, so training cannot safely proceed for "
+                f"this sample."
+            ) from e
+        except Exception as e:
+            raise RuntimeError(
+                f"Sample {sample_id}: failed to parse .geff at {geff_path}: {e}"
+            ) from e
+
+        try:
+            node_attrs_df = graph.node_attrs(attr_keys=["t"])
+            t_vals = node_attrs_df['t'].to_list()
+        except Exception as e:
+            raise RuntimeError(
+                f"Sample {sample_id}: failed to read node 't' attribute from parsed "
+                f".geff at {geff_path}: {e}"
+            ) from e
+
+        if len(t_vals) == 0:
+            raise RuntimeError(
+                f"Sample {sample_id}: .geff at {geff_path} parsed successfully but "
+                f"contains zero GT nodes -- cannot build any annotated training "
+                f"pairs for this sample."
+            )
+
+        # Explicit int() cast: node_attrs()'s polars column has been observed to
+        # yield plain Python int via .to_list() for this dtype (verified empirically
+        # 2026-07-16), but that's an implementation detail of polars, not a
+        # contract -- casting explicitly makes the counts dict's key type an
+        # invariant of THIS function, not an accident of the upstream library.
+        counts: dict[int, int] = {}
+        for t in t_vals:
+            t_idx = int(t)
+            counts[t_idx] = counts.get(t_idx, 0) + 1
+
+        self._gt_counts_by_time_cache[sample_id] = counts
+        return counts
+
+    def _build_pair_index(self) -> None:
+        """
+        Build index of (frame_t, frame_t+1) pairs.
+
+        When self.filter_unannotated_pairs is True: a pair is retained only when
+        BOTH frame_idx and frame_idx + 1 have at least one GT node (see
+        _get_gt_counts_by_time for why). When False (the default): unchanged,
+        unconditional behavior -- every consecutive pair is added regardless of GT
+        coverage.
+
+        This is deliberately gated on filter_unannotated_pairs, NOT on
+        `split_type == "train"` -- an earlier version of this fix conflated the
+        two, which broke evaluate_checkpoint.py's run_evaluation(split_type="train",
+        ...) (pure inference/graph construction over train-split samples, no
+        backprop) by silently handing it a GT-filtered, incomplete frame timeline
+        just because split_type happened to be "train". split_type only selects
+        WHICH samples this dataset covers; filter_unannotated_pairs is the only
+        thing that should ever gate this filtering. Callers: only the real
+        training dataset used for optimizer/backpropagation
+        (kaggle_kernel/train_kernel.py's train_dataset) sets this True. Validation
+        inference, train-split evaluation, and test/submission inference must all
+        leave it False -- filtering any of those would alter graph construction /
+        official metric aggregation, out of scope for the P0-1 fix this filtering
+        exists for.
+        """
+        if self.filter_unannotated_pairs:
+            self.annotation_pair_stats = {
+                'total_candidate_pairs': 0,
+                'retained_annotated_pairs': 0,
+                'excluded_both_zero': 0,
+                'excluded_t_zero': 0,
+                'excluded_t1_zero': 0,
+                'per_sample': {},
+            }
+
+        for sample_id in self.sample_ids:
+            # Case 1 (preserved exactly): sample has no local Zarr at all -- expected
+            # in local/CI checkouts where only a handful of the split's samples are
+            # staged. Soft-skip, not an error.
+            zarr_path = self.data_dir / f"{sample_id}.zarr"
+            if not zarr_path.exists():
+                logger.debug(
+                    f"Sample {sample_id} not found locally (OK for local testing)"
+                )
+                continue
+
+            try:
                 loader = self._get_loader(sample_id)
                 num_frames = loader.get_shape()[0]
+            except Exception as e:
+                logger.warning(f"Failed to open Zarr for sample {sample_id}: {e}")
+                continue
 
-                # Add all consecutive frame pairs
+            if not self.filter_unannotated_pairs:
+                # Unconditional behavior, unchanged from before this fix.
                 for frame_idx in range(num_frames - 1):
                     self.pairs.append((sample_id, frame_idx))
-
                 logger.debug(
                     f"Sample {sample_id}: {num_frames} frames → {num_frames - 1} pairs"
                 )
+                continue
 
-            except Exception as e:
-                logger.warning(f"Failed to index sample {sample_id}: {e}")
+            # Cases 2/3/4 (deliberately NOT caught here): a missing/unparseable/
+            # empty .geff for a sample whose Zarr DOES exist is a training-data
+            # correctness failure, not a benign "sample not staged" gap -- must
+            # propagate all the way out of __init__, not be swallowed into a
+            # logger.warning like the Zarr-existence check above.
+            gt_counts = self._get_gt_counts_by_time(sample_id)
+
+            sample_stats = {
+                'candidate_pairs': 0,
+                'retained': 0,
+                'excluded_both_zero': 0,
+                'excluded_t_zero': 0,
+                'excluded_t1_zero': 0,
+            }
+            for frame_idx in range(num_frames - 1):
+                sample_stats['candidate_pairs'] += 1
+                count_t = gt_counts.get(frame_idx, 0)
+                count_t1 = gt_counts.get(frame_idx + 1, 0)
+
+                if count_t > 0 and count_t1 > 0:
+                    self.pairs.append((sample_id, frame_idx))
+                    sample_stats['retained'] += 1
+                elif count_t == 0 and count_t1 == 0:
+                    sample_stats['excluded_both_zero'] += 1
+                elif count_t == 0:
+                    sample_stats['excluded_t_zero'] += 1
+                else:
+                    sample_stats['excluded_t1_zero'] += 1
+
+            self.annotation_pair_stats['per_sample'][sample_id] = sample_stats
+            self.annotation_pair_stats['total_candidate_pairs'] += sample_stats['candidate_pairs']
+            self.annotation_pair_stats['retained_annotated_pairs'] += sample_stats['retained']
+            self.annotation_pair_stats['excluded_both_zero'] += sample_stats['excluded_both_zero']
+            self.annotation_pair_stats['excluded_t_zero'] += sample_stats['excluded_t_zero']
+            self.annotation_pair_stats['excluded_t1_zero'] += sample_stats['excluded_t1_zero']
+
+            logger.info(
+                f"Sample {sample_id}: candidate_pairs={sample_stats['candidate_pairs']} "
+                f"retained={sample_stats['retained']} "
+                f"excluded_both_zero={sample_stats['excluded_both_zero']} "
+                f"excluded_t_zero={sample_stats['excluded_t_zero']} "
+                f"excluded_t1_zero={sample_stats['excluded_t1_zero']}"
+            )
+
+        if self.filter_unannotated_pairs:
+            s = self.annotation_pair_stats
+            excluded_total = (
+                s['excluded_both_zero'] + s['excluded_t_zero'] + s['excluded_t1_zero']
+            )
+            logger.info(
+                f"Dataset total: candidate_pairs={s['total_candidate_pairs']} "
+                f"retained={s['retained_annotated_pairs']} excluded={excluded_total} "
+                f"(both_zero={s['excluded_both_zero']} t_zero={s['excluded_t_zero']} "
+                f"t1_zero={s['excluded_t1_zero']})"
+            )
 
         logger.info(f"Built index: {len(self.pairs)} (frame_t, frame_t+1) pairs")
 
