@@ -5,6 +5,13 @@
 **Planning Status:** COMPLETE  
 **Date:** 2026-07-08  
 
+**P0-2 CORRECTION (2026-07-16):** every "embryo-disjoint split" reference below (data_split.json,
+per-sample granularity, "not movie-prefix level") describes a split that was later confirmed NOT
+embryo-disjoint. Kaggle's own Data description page confirms the movie prefix (44b6/6bba) IS the
+embryo ID, and data_split.json kept both embryos present in both train and validation. See
+`02-RESEARCH.md` S2.3 and `PLANNING-COMPLETE.md` for the full correction; use
+`data_splits/embryo_{44b6,6bba}_validation.json` (leave-one-embryo-out) instead.
+
 ---
 
 ## Plan Structure

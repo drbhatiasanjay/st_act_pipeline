@@ -361,6 +361,7 @@ if KAGGLE_MODE:
 try:
     from src.dataset import CompetitionDataset
     from src.model import SimpleNodeTransformer, UNet3D
+    from src.split_utils import get_split_identity, load_and_validate_split, resolve_split_file_path
     from src.train import TrainingLoop
     LOCAL_IMPORTS = True
 except ImportError:
@@ -377,13 +378,24 @@ logger.info("\n" + f"{'='*80}")
 logger.info("DATA LOADING")
 logger.info(f"{'='*80}")
 
-if KAGGLE_SRC_DATASET_DIR:
-    data_split_file = Path(KAGGLE_SRC_DATASET_DIR) / "data_split.json"
-else:
-    data_split_file = Path("data_split.json")
-if not data_split_file.exists():
-    logger.error(f"data_split.json not found at {data_split_file}")
-    raise FileNotFoundError("Missing data_split.json")
+# P0-2 fix (2026-07-16): the historical, pre-P0-2 content of data_split.json
+# (stratified by embryo prefix, NOT disjoint by it) had real embryo-level
+# leakage between train and validation -- see
+# scripts/build_train_val_split.py's module docstring and the P0-2 audit. The
+# active fold is now selected explicitly via ST_ACT_SPLIT_FILE (defaults to
+# data_splits/embryo_44b6_validation.json) and validated before any DataLoader
+# is created, so a leaking split can never silently train. (The root
+# data_split.json has since been replaced with a genuinely embryo-disjoint
+# compatibility alias too, but resolve_split_file_path() is the preferred
+# resolution path regardless.)
+data_split_file = resolve_split_file_path(kaggle_src_dataset_dir=KAGGLE_SRC_DATASET_DIR)
+load_and_validate_split(data_split_file)
+# P0-2 checkpoint/split-identity fix (2026-07-16): embedded into every saved
+# checkpoint (TrainingLoop.save_checkpoint(), and the partial-checkpoint
+# handler below) so evaluate_checkpoint.py can detect a checkpoint being
+# scored against a different split than it was trained on.
+split_identity = get_split_identity(data_split_file)
+logger.info(f"Active split identity (membership_sha256): {split_identity}")
 
 logger.info("Creating datasets...")
 # NOTE: KAGGLE_MODE's exact input subdirectory structure under INPUT_DIR
@@ -488,6 +500,7 @@ training_loop = TrainingLoop(
     hyperparams=HYPERPARAMS,
     deployed_sha=DEPLOYED_SHA,
     progress_file=progress_file,
+    split_identity=split_identity,
 )
 
 logger.info("Training loop initialized")
@@ -511,6 +524,10 @@ except Exception as e:
             'unet3d_state_dict': unet3d.state_dict(),
             'transformer_state_dict': transformer.state_dict(),
             'error': str(e),
+            # P0-2 checkpoint/split-identity fix (2026-07-16): a partial
+            # checkpoint is just as evaluable/resumable as a full one, so it
+            # needs the same identity marker.
+            'split_membership_sha256': split_identity,
         }
         torch.save(partial_checkpoint, WORKING_DIR / "partial_checkpoint.pt")
         logger.info("Partial checkpoint saved")
@@ -546,6 +563,14 @@ with open(summary_path, 'w') as f:
     f.write(f"\nTRAINING EPOCHS COMPLETED: {epochs_completed} (budget upper bound: {num_epochs})\n")
     f.write(f"Training dataset size: {len(train_dataset)}\n")
     f.write(f"Validation dataset size: {len(val_dataset)}\n\n")
+    # P0-2 checkpoint/split-identity fix (2026-07-16), round 2: makes a
+    # downloaded Kaggle run's artifacts self-describing -- NOT a substitute
+    # for the identity embedded in each checkpoint (see save_checkpoint()/
+    # validate_checkpoint_split_compatibility()), just a human-readable
+    # cross-check available without loading a .pt file.
+    f.write("SPLIT IDENTITY\n")
+    f.write(f"Active split file: {data_split_file}\n")
+    f.write(f"Split membership SHA-256: {split_identity}\n\n")
     f.write("CHECKPOINTS\n")
     if training_loop.best_checkpoint_path:
         f.write(f"Best checkpoint: {training_loop.best_checkpoint_path}\n")

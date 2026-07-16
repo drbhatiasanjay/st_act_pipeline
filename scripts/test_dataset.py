@@ -6,7 +6,6 @@ Tests against the 4 originally-staged samples + up-to-5 spot-checked samples.
 Full 199-sample I/O validation deferred to Wave 3's Kaggle sanity-check run.
 """
 
-import json
 import logging
 import sys
 from pathlib import Path
@@ -17,6 +16,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from dataset import CompetitionDataset
+from split_utils import load_and_validate_split, resolve_split_file_path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,7 +32,11 @@ def test_dataset():
 
     # Paths
     data_dir = Path("data/staging/train")
-    split_file = Path("data_split.json")
+    # P0-2 fix (2026-07-16): resolve via ST_ACT_SPLIT_FILE (same active fold as
+    # kaggle_kernel/train_kernel.py) and validate embryo-disjointness rather
+    # than hardcoding the obsolete, no-longer-representative "data_split.json"
+    # as a special fixture path.
+    split_file = resolve_split_file_path()
 
     if not data_dir.exists():
         logger.error(f"Data directory not found: {data_dir}")
@@ -48,9 +52,8 @@ def test_dataset():
     logger.info(f"Available local samples: {available_samples}")
     print()
 
-    # Load split
-    with open(split_file) as f:
-        split_data = json.load(f)
+    # Load + validate the selected split (fails loudly on embryo leakage)
+    split_data = load_and_validate_split(split_file)
 
     # Create datasets for both splits
     success = True

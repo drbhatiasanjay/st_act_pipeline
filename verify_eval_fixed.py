@@ -31,6 +31,12 @@ from tracksdata.graph import IndexedRXGraph
 from src.dataset import CompetitionDataset
 from src.inference import greedy_edge_assignment
 from src.model import SimpleNodeTransformer, UNet3D
+from src.split_utils import (
+    get_split_identity,
+    load_and_validate_split,
+    resolve_split_file_path,
+    validate_checkpoint_split_compatibility,
+)
 from src.train import (
     DEFAULT_SCALE,
     extract_peaks_from_volume,
@@ -121,11 +127,25 @@ def get_nodes_and_features(features: torch.Tensor, peaks: list, device: torch.de
 def run_evaluation(
     checkpoint_path: str = "checkpoint_dataset/epoch_1_v48_groupnorm_gradckpt_lr3e3.pt",
     data_dir: str = "data/staging/train",
-    split_file: str = "data_split.json",
+    split_file: str | None = None,
     split_type: str = "validation",
     dataset_id_filter: list[str] = None,
     max_pairs: int = None,
+    allow_split_mismatch: bool = False,
 ):
+    """
+    split_file: if omitted (None), resolved via ST_ACT_SPLIT_FILE (same active
+    fold as evaluate_checkpoint.py / kaggle_kernel/train_kernel.py). Pass an
+    explicit path to intentionally override the environment for this one call
+    -- P0-2 fix (2026-07-16): checkpoint evaluation must not silently use a
+    fold different from the one training used.
+
+    allow_split_mismatch: P0-2 checkpoint/split-identity fix (2026-07-16).
+    By default, evaluating a checkpoint against a split with a different
+    membership_sha256 than the one it was trained under raises RuntimeError.
+    Pass True (or the --allow-split-mismatch CLI flag) only for a deliberate
+    cross-fold evaluation.
+    """
     device = torch.device("cpu")
     logger.info(f"Using device: {device}")
 
@@ -145,12 +165,25 @@ def run_evaluation(
     unet3d.eval()
     transformer.eval()
 
+    resolved_split_file = Path(split_file) if split_file is not None else resolve_split_file_path()
+    load_and_validate_split(resolved_split_file)
+    # P0-2 checkpoint/split-identity fix (2026-07-16): detect a checkpoint
+    # being evaluated against a different split than it was trained under.
+    active_split_identity = get_split_identity(resolved_split_file)
+    validate_checkpoint_split_compatibility(
+        checkpoint, active_split_identity, resolved_split_file, allow_mismatch=allow_split_mismatch,
+    )
+
     logger.info(f"Creating CompetitionDataset for split '{split_type}'")
     dataset = CompetitionDataset(
         data_dir=Path(data_dir),
-        split_file=Path(split_file),
+        split_file=resolved_split_file,
         split_type=split_type,
-        normalize=True
+        normalize=True,
+        # Checkpoint evaluation does pure inference/graph construction, never
+        # backprop -- must always see every real consecutive pair regardless
+        # of GT coverage.
+        filter_unannotated_pairs=False,
     )
 
     if dataset_id_filter:
@@ -276,6 +309,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--max-pairs", type=int, default=50, help="Cap the number of pairs evaluated")
     parser.add_argument("--checkpoint", default="checkpoint_dataset/epoch_1_v48_groupnorm_gradckpt_lr3e3.pt")
+    parser.add_argument(
+        "--allow-split-mismatch", action="store_true",
+        help="Bypass the checkpoint/active-split identity check for a deliberate cross-fold evaluation.",
+    )
     args = parser.parse_args()
 
     # Run on first validation sample (the one that always crashed at batch ~33-34)
@@ -283,6 +320,7 @@ def main():
         checkpoint_path=args.checkpoint,
         dataset_id_filter=["44b6_0b24845f"],
         max_pairs=args.max_pairs,
+        allow_split_mismatch=args.allow_split_mismatch,
     )
 
 

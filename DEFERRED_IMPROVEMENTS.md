@@ -1,5 +1,37 @@
 # Deferred Improvements — Revisit After Full-Scale Training
 
+## LEGACY ARTIFACT WARNING (2026-07-16): checkpoints trained under data_split.json are not comparable to future runs
+
+Every checkpoint saved before the P0-2 fix (`data_splits/embryo_{44b6,6bba}_validation.json`,
+leave-one-embryo-out) was trained and validated using the **historical, pre-P0-2 content** of
+`data_split.json`, which stratified by embryo prefix rather than holding an embryo's samples out
+entirely -- confirmed real embryo-level leakage between train and validation (see the P0-2 audit;
+Kaggle's own Data description page confirms the prefix IS the embryo ID and "multiple samples may
+share the same embryo"). The root `data_split.json` filename has since been repurposed: its
+content is now an exact compatibility-alias copy of `data_splits/embryo_44b6_validation.json`
+(genuinely embryo-disjoint), so this warning applies only to checkpoints trained before that
+replacement, not to the current file on disk.
+
+Concretely: `best_val_score`, the LR-scheduler's `ReduceLROnPlateau` steps, and early-stopping
+decisions for every historical checkpoint (`checkpoint_dataset/*.pt`,
+`kaggle_sanity_outputs/checkpoints_sanity/*.pt`, etc.) were all computed against a validation set
+that may have shared an embryo with that same run's training data. **Do not treat any historical
+`val_score` as comparable to a `val_score` computed under the new leave-one-embryo-out split** --
+they are not measuring the same thing, and a lower score under the corrected split is not
+necessarily a regression. No checkpoint file has been altered, deleted, or renamed by this note;
+this is a documentation-only warning about how to interpret already-existing scores.
+
+**Update (2026-07-16): this is now enforced automatically, not just documented.** Every checkpoint
+saved by `TrainingLoop.save_checkpoint()`, `kaggle_kernel/train_kernel.py`'s partial-checkpoint
+handler, and `scripts/local_smoke_train.py` now embeds a `split_membership_sha256` identity (see
+`src/split_utils.py`'s `compute_membership_sha256()`/`get_split_identity()`). `evaluate_checkpoint.py`
+and `verify_eval_fixed.py` compare a checkpoint's saved identity against whichever split is active
+at evaluation time via `validate_checkpoint_split_compatibility()`: a genuine mismatch raises
+`RuntimeError` (bypass only with the explicit `allow_split_mismatch`/`--allow-split-mismatch`
+override, for deliberate cross-fold evaluation); a checkpoint with no saved identity at all --
+i.e. every historical checkpoint this warning describes -- logs a `WARNING` instead of raising,
+since there's nothing to compare against.
+
 ## PARKED (2026-07-15): symmetric adaptive threshold for greedy_edge_assignment
 
 Detection-side zero-detection bug (asymmetric `_peaks_for_channel`/`extract_peaks` adaptive

@@ -56,6 +56,11 @@ are out of scope - those are Phase 2 and Phase 3.
   validation set Phase 2's MODEL-02 requirement will need. Documentation decision, not a code
   change - avoids retroactively figuring out the split once training starts, and keeps the
   local-score-vs-leaderboard correlation risk (tracked in STATE.md) under control from the start.
+  **P0-2 CORRECTION (2026-07-16): this was wrong** -- `44b6` and `6bba` are themselves the embryo
+  IDs (Kaggle's own Data description page: "multiple samples may share the same embryo"), so
+  holding out one sample per prefix is NOT embryo-disjoint if any other same-prefix sample stays
+  in train. A real embryo-disjoint validation set must hold out an entire embryo's samples. See
+  `scripts/build_train_val_split.py`'s leave-one-embryo-out fold generator.
 
 ### Claude's Discretion
 - Exact sweep threshold values to try.

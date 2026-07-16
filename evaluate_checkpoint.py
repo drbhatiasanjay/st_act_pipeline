@@ -25,6 +25,12 @@ from src.inference import greedy_edge_assignment
 
 # Import project modules
 from src.model import SimpleNodeTransformer, UNet3D
+from src.split_utils import (
+    get_split_identity,
+    load_and_validate_split,
+    resolve_split_file_path,
+    validate_checkpoint_split_compatibility,
+)
 from src.train import extract_peaks_from_volume
 
 # Set up logging to stdout
@@ -49,7 +55,12 @@ def find_latest_local_checkpoint(search_root: Path = Path(".")) -> Path | None:
     return candidates[-1] if candidates else None
 
 
-def run_evaluation(split_type: str, dataset_id_filter: list = None, max_pairs: int | None = None):
+def run_evaluation(
+    split_type: str,
+    dataset_id_filter: list = None,
+    max_pairs: int | None = None,
+    allow_split_mismatch: bool = False,
+):
     """
     max_pairs: cap the number of (frame_t, frame_t1) pairs evaluated per call.
     Exists to work around the project's known unresolved native Windows
@@ -58,6 +69,13 @@ def run_evaluation(split_type: str, dataset_id_filter: list = None, max_pairs: i
     evaluate_submission() actually execute instead of losing all progress on
     every attempt. Real score, real (partial) coverage -- not a full-sample
     number, but the actual scoring code runs end to end.
+
+    allow_split_mismatch: P0-2 checkpoint/split-identity fix (2026-07-16).
+    By default, evaluating a checkpoint against a split with a different
+    membership_sha256 than the one it was trained under raises RuntimeError
+    -- the checkpoint's val_score was selected against a specific held-out
+    embryo, so scoring it against a different split is not the same
+    measurement. Pass True only for a deliberate cross-fold evaluation.
     """
     device = torch.device("cpu")
     checkpoint_path = find_latest_local_checkpoint()
@@ -83,7 +101,18 @@ def run_evaluation(split_type: str, dataset_id_filter: list = None, max_pairs: i
 
     # Load dataset
     data_dir = Path("data/staging/train")
-    split_file = Path("data_split.json")
+    # P0-2 fix (2026-07-16): use the SAME active-fold resolution as
+    # kaggle_kernel/train_kernel.py (ST_ACT_SPLIT_FILE, validated for
+    # embryo-disjointness) so a checkpoint's training run and its evaluation
+    # here can never accidentally consult different split files.
+    split_file = resolve_split_file_path()
+    load_and_validate_split(split_file)
+    # P0-2 checkpoint/split-identity fix (2026-07-16): detect a checkpoint
+    # being evaluated against a different split than it was trained under.
+    active_split_identity = get_split_identity(split_file)
+    validate_checkpoint_split_compatibility(
+        checkpoint, active_split_identity, split_file, allow_mismatch=allow_split_mismatch,
+    )
 
     logger.info(f"Creating CompetitionDataset for split '{split_type}'")
     dataset = CompetitionDataset(

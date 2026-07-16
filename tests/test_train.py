@@ -576,5 +576,187 @@ class TestPostNtfyHeartbeat:
         assert calls == []
 
 
+class TestSaveCheckpointSplitIdentity:
+    """P0-2 checkpoint/split-identity fix (2026-07-16): save_checkpoint() must
+    embed self.split_identity as 'split_membership_sha256' in every saved
+    checkpoint, so evaluate_checkpoint.py can later detect a mismatch against
+    whatever split is active at evaluation time (see
+    src/split_utils.py's validate_checkpoint_split_compatibility()).
+    Uses tiny real nn.Module/optimizer stand-ins (not the full UNet3D/
+    SimpleNodeTransformer) -- save_checkpoint() only calls .state_dict() on
+    them, so a minimal real module is enough and much faster than the real
+    models."""
+
+    def _make_loop(self, tmp_path, split_identity):
+        model_a = torch.nn.Linear(2, 2)
+        model_b = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(list(model_a.parameters()) + list(model_b.parameters()), lr=0.01)
+        return make_bare_training_loop(
+            unet3d=model_a,
+            transformer=model_b,
+            optimizer=optimizer,
+            checkpoint_dir=tmp_path,
+            hyperparams={"seed": 42},
+            split_identity=split_identity,
+        )
+
+    def test_checkpoint_embeds_split_identity_when_known(self, tmp_path):
+        loop = self._make_loop(tmp_path, split_identity="a" * 64)
+        loop.save_checkpoint(epoch=1, metrics={"adjusted_edge_jaccard": 0.5})
+
+        saved = list(tmp_path.glob("epoch_*.pt"))
+        assert len(saved) == 1
+        checkpoint = torch.load(saved[0], weights_only=False)
+        assert checkpoint["split_membership_sha256"] == "a" * 64
+
+    def test_checkpoint_omits_split_identity_key_when_unknown(self, tmp_path):
+        """"unknown" (TrainingLoop's default) must NOT be written as a literal
+        placeholder value -- the key must be absent entirely, so
+        validate_checkpoint_split_compatibility()'s legacy-checkpoint
+        (checkpoint.get(...) is None) branch fires, not a confusing hard
+        mismatch against the string "unknown"."""
+        loop = self._make_loop(tmp_path, split_identity="unknown")
+        loop.save_checkpoint(epoch=1, metrics={"adjusted_edge_jaccard": 0.5})
+
+        saved = list(tmp_path.glob("epoch_*.pt"))
+        checkpoint = torch.load(saved[0], weights_only=False)
+        assert "split_membership_sha256" not in checkpoint
+
+
+class TestSaveLastCheckpointSplitIdentity:
+    """P0-2 checkpoint/split-identity fix (2026-07-16), round 2: last_checkpoint.pt
+    (the unconditional per-epoch checkpoint saved by _save_last_checkpoint(),
+    independent of save_checkpoint()'s val-score-keyed files) must follow the
+    exact same identity-embedding contract as save_checkpoint() -- easy to
+    miss since it's a separate code path with its own torch.save() call."""
+
+    def _make_loop(self, tmp_path, split_identity):
+        model_a = torch.nn.Linear(2, 2)
+        model_b = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(list(model_a.parameters()) + list(model_b.parameters()), lr=0.01)
+        return make_bare_training_loop(
+            unet3d=model_a,
+            transformer=model_b,
+            optimizer=optimizer,
+            checkpoint_dir=tmp_path,
+            hyperparams={"seed": 42},
+            split_identity=split_identity,
+        )
+
+    def test_last_checkpoint_embeds_split_identity_when_known(self, tmp_path):
+        loop = self._make_loop(tmp_path, split_identity="a" * 64)
+        loop._save_last_checkpoint(epoch=1, train_loss=0.5)
+
+        checkpoint = torch.load(tmp_path / "last_checkpoint.pt", weights_only=False)
+        assert checkpoint["split_membership_sha256"] == "a" * 64
+
+    def test_last_checkpoint_omits_split_identity_key_when_unknown(self, tmp_path):
+        loop = self._make_loop(tmp_path, split_identity="unknown")
+        loop._save_last_checkpoint(epoch=1, train_loss=0.5)
+
+        checkpoint = torch.load(tmp_path / "last_checkpoint.pt", weights_only=False)
+        assert "split_membership_sha256" not in checkpoint
+
+
+class TestLoadCheckpointSplitIdentity:
+    """P0-2 checkpoint/split-identity fix (2026-07-16), round 2:
+    load_checkpoint() must fail loud by DEFAULT on a missing or mismatched
+    checkpoint split identity -- stricter than evaluate_checkpoint.py's
+    warn-only legacy handling, since resuming TRAINING from a mismatched
+    checkpoint can directly contaminate the currently held-out embryo's
+    weights (see src/split_utils.py's validate_resume_checkpoint_split_
+    identity() docstring)."""
+
+    def _make_loop(self, split_identity):
+        model_a = torch.nn.Linear(2, 2)
+        model_b = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(list(model_a.parameters()) + list(model_b.parameters()), lr=0.01)
+        return make_bare_training_loop(
+            unet3d=model_a,
+            transformer=model_b,
+            optimizer=optimizer,
+            device=torch.device("cpu"),
+            split_identity=split_identity,
+        )
+
+    def _save_checkpoint_with_identity(self, tmp_path, identity) -> Path:
+        """Build a minimal, real torch.save()'d checkpoint (matching the real
+        shape load_checkpoint() expects) with the given saved identity.
+        identity=None omits the key entirely (legacy checkpoint)."""
+        model_a = torch.nn.Linear(2, 2)
+        model_b = torch.nn.Linear(2, 2)
+        optimizer = torch.optim.SGD(list(model_a.parameters()) + list(model_b.parameters()), lr=0.01)
+        checkpoint = {
+            "epoch": 1,
+            "unet3d_state_dict": model_a.state_dict(),
+            "transformer_state_dict": model_b.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "val_metrics": {"adjusted_edge_jaccard": 0.5},
+        }
+        if identity is not None:
+            checkpoint["split_membership_sha256"] = identity
+        path = tmp_path / "checkpoint.pt"
+        torch.save(checkpoint, path)
+        return path
+
+    def test_matching_identity_loads_normally(self, tmp_path):
+        """Test 1."""
+        ckpt_path = self._save_checkpoint_with_identity(tmp_path, "a" * 64)
+        loop = self._make_loop(split_identity="a" * 64)
+
+        val_metrics = loop.load_checkpoint(str(ckpt_path))
+
+        assert val_metrics == {"adjusted_edge_jaccard": 0.5}
+
+    def test_mismatching_identity_raises_by_default(self, tmp_path):
+        """Test 2."""
+        ckpt_path = self._save_checkpoint_with_identity(tmp_path, "b" * 64)
+        loop = self._make_loop(split_identity="a" * 64)
+
+        with pytest.raises(RuntimeError, match="different embryo-disjoint folds"):
+            loop.load_checkpoint(str(ckpt_path))
+
+    def test_missing_legacy_identity_raises_by_default(self, tmp_path):
+        """Test 3."""
+        ckpt_path = self._save_checkpoint_with_identity(tmp_path, None)
+        loop = self._make_loop(split_identity="a" * 64)
+
+        with pytest.raises(RuntimeError, match="historical, embryo-leaking data_split.json"):
+            loop.load_checkpoint(str(ckpt_path))
+
+    def test_explicit_mismatch_override_works(self, tmp_path):
+        """Test 4."""
+        ckpt_path = self._save_checkpoint_with_identity(tmp_path, "b" * 64)
+        loop = self._make_loop(split_identity="a" * 64)
+
+        val_metrics = loop.load_checkpoint(str(ckpt_path), allow_split_mismatch=True)
+
+        assert val_metrics == {"adjusted_edge_jaccard": 0.5}
+
+    def test_explicit_legacy_override_works(self, tmp_path):
+        """Test 5."""
+        ckpt_path = self._save_checkpoint_with_identity(tmp_path, None)
+        loop = self._make_loop(split_identity="a" * 64)
+
+        val_metrics = loop.load_checkpoint(str(ckpt_path), allow_legacy_split=True)
+
+        assert val_metrics == {"adjusted_edge_jaccard": 0.5}
+
+    def test_current_loop_identity_unknown_preserves_backward_compatibility(self, tmp_path, caplog):
+        """Test 6: when THIS TrainingLoop itself has no configured split
+        identity (not the checkpoint), loading must succeed regardless of
+        the checkpoint's own identity -- but log a prominent warning rather
+        than silently proceeding, since a caller in this state hasn't been
+        updated to pass split_identity=... yet."""
+        ckpt_path = self._save_checkpoint_with_identity(tmp_path, "b" * 64)
+        loop = self._make_loop(split_identity="unknown")
+
+        with caplog.at_level("WARNING"):
+            val_metrics = loop.load_checkpoint(str(ckpt_path))
+
+        assert val_metrics == {"adjusted_edge_jaccard": 0.5}
+        assert any("no configured split_identity" in r.message for r in caplog.records)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

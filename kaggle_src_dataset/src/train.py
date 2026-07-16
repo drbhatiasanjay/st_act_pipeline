@@ -35,6 +35,7 @@ from src.evaluation import (
     load_geff_ground_truth,
 )
 from src.inference import greedy_edge_assignment
+from src.split_utils import validate_resume_checkpoint_split_identity
 from src.targets import (
     DetectionLoss,
     DivisionLoss,
@@ -181,6 +182,7 @@ class TrainingLoop:
         hyperparams: dict[str, Any] | None = None,
         deployed_sha: str = "unknown",
         progress_file: str | Path | None = None,
+        split_identity: str = "unknown",
     ):
         """
         Initialize training loop.
@@ -202,6 +204,17 @@ class TrainingLoop:
             progress_file: If given, path to overwrite (not append) a small JSON
                 heartbeat after each epoch -- fetchable via `kaggle kernels
                 output` mid-run without pulling the full raw log.
+            split_identity: src/split_utils.py's compute_membership_sha256()
+                identity of the split this run's train_loader/val_loader were
+                built from -- embedded into every saved checkpoint
+                ('split_membership_sha256') so evaluate_checkpoint.py can
+                detect a checkpoint being scored against a different split
+                than it was trained on (P0-2 fix, 2026-07-16). "unknown" (the
+                default) is a valid value for callers that don't yet pass a
+                real split identity -- see
+                validate_checkpoint_split_compatibility()'s legacy-checkpoint
+                handling, which treats an absent/unknown identity as a
+                warning, not a hard failure.
         """
         self.unet3d = unet3d
         self.transformer = transformer
@@ -213,6 +226,7 @@ class TrainingLoop:
         self.log_file = log_file
         self.deployed_sha = deployed_sha
         self.progress_file = Path(progress_file) if progress_file else None
+        self.split_identity = split_identity
 
         # Create checkpoint directory
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -521,6 +535,79 @@ class TrainingLoop:
         fraction = (global_step + 1) / warmup_steps
         return start_lr + (target_lr - start_lr) * fraction
 
+    def _generate_and_validate_heatmap_target(
+        self, sample_id: str, t_idx: int, volume_shape: tuple[int, int, int, int],
+        z: int, y: int, x: int,
+    ) -> torch.Tensor:
+        """
+        Generate the (1, 2, Z, Y, X) GT heatmap target for a training pair and
+        fail loudly if it's not what a retained pair should look like.
+
+        P0-1 fix (2026-07-16): previously, ANY exception from generate_heatmap_targets
+        was caught and silently replaced with an all-zero target (self.epoch_fallback_counts
+        incremented but training continued). CompetitionDataset's pair index now
+        guarantees every retained training pair has >=1 GT node at both t_idx and
+        t_idx+1 (see CompetitionDataset._get_gt_counts_by_time), so a failure -- or an
+        all-zero result -- reaching this point for a retained pair is a real
+        regression, not an expected data gap, and must abort the run rather than
+        train on a fabricated all-background target (see DetectionLoss's docstring:
+        an all-zero target's weight_neg cancels out of loss.sum()/weights.sum()
+        exactly, collapsing to plain BCE-against-zero -- the exact bug this dataset-
+        level filtering exists to prevent).
+        """
+        geff_path = self.data_dir / f"{sample_id}.geff"
+        try:
+            heatmap_targets_dict, _ = generate_heatmap_targets(
+                sample_id,
+                str(geff_path),
+                volume_shape,
+                target_type='gaussian',
+                target_ts=[t_idx, t_idx + 1],
+                geff_cache=self._geff_cache,
+            )
+            # heatmaps[t] is (1, Z, Y, X) -- stack channel 0 (t_idx) and channel 1
+            # (t_idx+1), then add batch dim to match logits' (B, 2, Z, Y, X) for
+            # DetectionLoss/BCEWithLogitsLoss.
+            zero_channel = torch.zeros((1, z, y, x), dtype=torch.float32)
+            heatmap_ch0 = heatmap_targets_dict.get(t_idx, zero_channel)
+            heatmap_ch1 = heatmap_targets_dict.get(t_idx + 1, zero_channel)
+            if not isinstance(heatmap_ch0, torch.Tensor):
+                heatmap_ch0 = torch.from_numpy(heatmap_ch0).float()
+            if not isinstance(heatmap_ch1, torch.Tensor):
+                heatmap_ch1 = torch.from_numpy(heatmap_ch1).float()
+        except Exception as e:
+            raise RuntimeError(
+                f"Heatmap target generation failed for a retained training pair: "
+                f"sample_id={sample_id} t_idx={t_idx} geff_path={geff_path}: {e}. "
+                f"CompetitionDataset's annotation filtering should have excluded "
+                f"this pair if either timepoint truly had zero GT nodes -- this "
+                f"is a real regression (indexing, GEFF parsing, etc.), not an "
+                f"expected data gap, so it must not be silently replaced with a "
+                f"zero target."
+            ) from e
+
+        # Fail-loud invariant: a retained training pair is guaranteed (by
+        # CompetitionDataset's GT-count filtering) to have >=1 GT node at both
+        # t_idx and t_idx+1, so a correctly generated heatmap must have positive
+        # target mass in both channels. A zero-sum channel here means the
+        # filtering was bypassed or something broke downstream of it (wrong
+        # coordinate/bounds handling, wrong time indexing) -- must abort, not
+        # silently train on an effectively-empty target.
+        ch0_sum = heatmap_ch0.sum().item()
+        ch1_sum = heatmap_ch1.sum().item()
+        if ch0_sum <= 0 or ch1_sum <= 0:
+            raise RuntimeError(
+                f"Retained training pair produced an all-zero heatmap target: "
+                f"sample_id={sample_id} t_idx={t_idx} ch0_sum={ch0_sum} "
+                f"ch1_sum={ch1_sum} geff_path={geff_path}. CompetitionDataset's "
+                f"GT-count filtering should guarantee both timepoints have >=1 "
+                f"GT node for a retained pair -- this indicates a real bug "
+                f"(coordinate/bounds error, wrong time indexing, broken GEFF "
+                f"parsing), not an expected data gap."
+            )
+
+        return torch.cat([heatmap_ch0, heatmap_ch1], dim=0).unsqueeze(0).to(self.device)
+
     def train_epoch(self) -> float:
         """
         Run one training epoch.
@@ -590,30 +677,9 @@ class TrainingLoop:
             # compute exactly (and only) the real timepoints needed.
             z, y, x = frame_t.shape[2:]
             volume_shape = (int(t_idx) + 2, z, y, x)  # T only used for bounds validation now
-            try:
-                heatmap_targets_dict, _ = generate_heatmap_targets(
-                    sample_id,
-                    str(self.data_dir / f"{sample_id}.geff"),
-                    volume_shape,
-                    target_type='gaussian',
-                    target_ts=[int(t_idx), int(t_idx) + 1],
-                    geff_cache=self._geff_cache,
-                )
-                # heatmaps[t] is (1, Z, Y, X) -- stack channel 0 (t_idx) and
-                # channel 1 (t_idx+1), then add batch dim to match logits'
-                # (B, 2, Z, Y, X) for DetectionLoss/BCEWithLogitsLoss.
-                zero_channel = torch.zeros((1, z, y, x), dtype=torch.float32)
-                heatmap_ch0 = heatmap_targets_dict.get(t_idx, zero_channel)
-                heatmap_ch1 = heatmap_targets_dict.get(t_idx + 1, zero_channel)
-                if not isinstance(heatmap_ch0, torch.Tensor):
-                    heatmap_ch0 = torch.from_numpy(heatmap_ch0).float()
-                if not isinstance(heatmap_ch1, torch.Tensor):
-                    heatmap_ch1 = torch.from_numpy(heatmap_ch1).float()
-                heatmap_target = torch.cat([heatmap_ch0, heatmap_ch1], dim=0).unsqueeze(0).to(self.device)
-            except Exception as e:
-                logger.warning(f"Heatmap generation failed for {sample_id}: {e}, using zero targets")
-                self.epoch_fallback_counts['heatmap_generation_failure'] += 1
-                heatmap_target = torch.zeros((1, 2, z, y, x), dtype=torch.float32, device=self.device)
+            heatmap_target = self._generate_and_validate_heatmap_target(
+                sample_id, int(t_idx), volume_shape, z, y, x
+            )
 
             # detection_loss expects (B, 2, Z, Y, X) for both logits and targets.
             # logits.float(): logits left the autocast(dtype=float16) block above
@@ -1207,6 +1273,12 @@ class TrainingLoop:
             'train_loss': train_loss,
             'hyperparams': self.hyperparams,
         }
+        # P0-2 fix (2026-07-16): same identity-embedding contract as
+        # save_checkpoint() -- omit the key entirely (not a placeholder
+        # value) when self.split_identity is "unknown".
+        if self.split_identity != "unknown":
+            checkpoint['split_membership_sha256'] = self.split_identity
+
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Saved unconditional last-epoch checkpoint: {checkpoint_path}")
 
@@ -1224,6 +1296,13 @@ class TrainingLoop:
             'val_metrics': metrics,
             'hyperparams': self.hyperparams,
         }
+        # P0-2 fix (2026-07-16): omit the key entirely (not a placeholder
+        # value) when self.split_identity is "unknown", so
+        # validate_checkpoint_split_compatibility()'s checkpoint.get(...) is
+        # None legacy-checkpoint branch fires correctly instead of a
+        # confusing hard mismatch against a literal "unknown" string.
+        if self.split_identity != "unknown":
+            checkpoint['split_membership_sha256'] = self.split_identity
 
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Saved checkpoint: {checkpoint_path}")
@@ -1236,9 +1315,33 @@ class TrainingLoop:
             old_checkpoint.unlink()
             logger.info(f"Deleted old checkpoint: {old_checkpoint}")
 
-    def load_checkpoint(self, checkpoint_path: str):
-        """Load model checkpoint."""
+    def load_checkpoint(
+        self,
+        checkpoint_path: str,
+        allow_split_mismatch: bool = False,
+        allow_legacy_split: bool = False,
+    ):
+        """
+        Load model checkpoint.
+
+        P0-2 checkpoint/split-identity fix (2026-07-16): resuming TRAINING
+        from a checkpoint trained under a different embryo-disjoint fold can
+        directly contaminate the currently held-out embryo's weights -- a
+        stricter, fail-by-default requirement than evaluate_checkpoint.py's
+        warn-only legacy handling (see
+        src/split_utils.py's validate_resume_checkpoint_split_identity()
+        docstring for the full rationale). Unless this TrainingLoop's own
+        split_identity is "unknown" (backward-compatibility case, logs a
+        warning instead), a missing OR mismatched checkpoint identity raises
+        RuntimeError by default -- pass allow_legacy_split=True /
+        allow_split_mismatch=True only for a deliberate legacy warm start or
+        cross-fold resume.
+        """
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        validate_resume_checkpoint_split_identity(
+            checkpoint, self.split_identity, checkpoint_path,
+            allow_split_mismatch=allow_split_mismatch, allow_legacy_split=allow_legacy_split,
+        )
         self.unet3d.load_state_dict(checkpoint['unet3d_state_dict'])
         self.transformer.load_state_dict(checkpoint['transformer_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

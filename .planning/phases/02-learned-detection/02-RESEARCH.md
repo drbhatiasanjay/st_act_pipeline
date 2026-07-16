@@ -112,6 +112,20 @@ data/staging/train/
 
 ### 2.3 Embryo-Disjoint Train/Val Split Strategy -- CORRECTED after direct verification
 
+**P0-2 SECOND CORRECTION (2026-07-16): the "corrected" conclusion below (embryo =
+individual `{prefix}_{hash}` sample) is itself WRONG.** It was inferred by comparing
+against the 4 locally staged `test/` samples, which are explicitly documented elsewhere
+(`data/staging/README.md`) as byte-identical placeholder copies of 4 train samples, NOT
+the real hidden test set -- so that comparison never actually tested the competition's
+real embryo-disjoint boundary. Kaggle's own official Data description page (fetched live
+via `kaggle competitions pages -c biohub-cell-tracking-during-development --page-name
+data-description --content`) states plainly: folder names follow
+`{embryo_id}_{field_of_view}`, the first underscore-delimited segment IS the embryo ID,
+and "multiple samples may share the same embryo." So the 2-value prefix (`44b6`/`6bba`)
+is the real embryo ID, and the split strategy below (which kept both prefixes present in
+both train and validation) had real embryo-level leakage. See the P0-2 audit and
+`scripts/build_train_val_split.py`'s leave-one-embryo-out replacement.
+
 **IMPORTANT CORRECTION to this research pass's original claim:** the first draft of this
 document assumed "~15-20 embryo IDs" across the full train set. That was an unverified
 guess and is **wrong**. Direct inspection of the actual downloaded competition zip

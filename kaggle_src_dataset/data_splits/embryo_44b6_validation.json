@@ -226,7 +226,6 @@
         "in_validation": 0
       }
     },
-    "membership_sha256": "8277f93b10a3747b8f42e06a2dfbed7e96cbc8646920b1cc9ea56aea7d7b5732",
-    "compatibility_alias_for": "data_splits/embryo_44b6_validation.json"
+    "membership_sha256": "8277f93b10a3747b8f42e06a2dfbed7e96cbc8646920b1cc9ea56aea7d7b5732"
   }
 }

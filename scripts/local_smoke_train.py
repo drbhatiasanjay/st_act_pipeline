@@ -33,23 +33,129 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.dataset import CompetitionDataset
 from src.model import UNet3D
+from src.split_utils import get_split_identity, load_and_validate_split, resolve_split_file_path
 from src.targets import DetectionLoss, generate_heatmap_targets
+
+
+def build_and_validate_targets(heatmaps: dict, t_idx: int, sample_id: str) -> torch.Tensor:
+    """
+    Build the (1, 2, Z, Y, X) target tensor for one smoke-test step and fail
+    loudly if it doesn't meet the same P0-1 supervision invariant
+    TrainingLoop._generate_and_validate_heatmap_target enforces in the real
+    training loop (src/train.py): both t_idx and t_idx+1 must be present in
+    heatmaps, and each channel must have positive target mass.
+    CompetitionDataset's filter_unannotated_pairs=True guarantees a retained
+    training pair has >=1 GT node at both timepoints, so reaching either
+    failure here means a real regression (indexing, GEFF parsing, etc.), not
+    an expected data gap -- must abort, not silently substitute a zero
+    target (see DetectionLoss docstring for why an all-zero target is
+    actively harmful, not just uninformative).
+    """
+    if t_idx not in heatmaps or (t_idx + 1) not in heatmaps:
+        raise RuntimeError(
+            f"sample_id={sample_id} t_idx={t_idx}: generate_heatmap_targets did not "
+            f"return both expected timepoints ({t_idx}, {t_idx + 1}) -- got keys "
+            f"{sorted(heatmaps.keys())}. This should never happen for a retained "
+            f"training pair; do not silently substitute a zero target."
+        )
+
+    ch0 = heatmaps[t_idx]
+    ch1 = heatmaps[t_idx + 1]
+    ch0_sum = ch0.sum().item()
+    ch1_sum = ch1.sum().item()
+    if ch0_sum <= 0 or ch1_sum <= 0:
+        raise RuntimeError(
+            f"sample_id={sample_id} t_idx={t_idx}: all-zero heatmap target "
+            f"(ch0_sum={ch0_sum} ch1_sum={ch1_sum}). CompetitionDataset's "
+            f"filter_unannotated_pairs=True should guarantee both timepoints have "
+            f">=1 GT node for a retained pair -- this indicates a real bug, not an "
+            f"expected data gap."
+        )
+
+    return torch.cat([ch0, ch1], dim=0).unsqueeze(0)
+
+
+def validate_resume_split_identity(
+    state: dict, current_identity: str, ckpt_path: Path, allow_legacy_resume: bool = False,
+) -> None:
+    """
+    P0-2 checkpoint/split-identity fix (2026-07-16, round 2): resuming this
+    script's own checkpoint with a DIFFERENT active split than the one it
+    started with is always a real bug (unlike evaluate_checkpoint.py's
+    cross-fold case, there is no legitimate reason to resume a training run
+    under a different split than it began with) -- raises RuntimeError on a
+    genuine mismatch, always, no override.
+
+    A checkpoint saved before this fix has no 'split_membership_sha256' key
+    at all -- this ALSO now raises RuntimeError by default (changed from a
+    warn-and-continue in the initial P0-2 round): resuming training on a
+    legacy checkpoint could be continuing to train weights that already
+    accumulated gradient signal from the historical, embryo-leaking
+    data_split.json. Pass allow_legacy_resume=True (or the
+    --allow-legacy-resume CLI flag) only for a deliberate legacy warm start.
+    """
+    saved_identity = state.get("split_membership_sha256")
+    if saved_identity is None:
+        if not allow_legacy_resume:
+            raise RuntimeError(
+                f"Checkpoint {ckpt_path} has no saved split_membership_sha256 "
+                f"(predates the P0-2 checkpoint/split identity fix) -- it may "
+                f"have been trained under the historical, embryo-leaking "
+                f"data_split.json (see DEFERRED_IMPROVEMENTS.md's LEGACY "
+                f"ARTIFACT WARNING). Resuming training from it can directly "
+                f"contaminate the currently held-out embryo's weights. Pass "
+                f"--allow-legacy-resume only for a deliberate legacy warm "
+                f"start."
+            )
+        print(
+            f"WARNING: checkpoint {ckpt_path} has no saved split_membership_sha256 "
+            f"(predates the P0-2 checkpoint/split identity fix) -- resuming "
+            f"anyway because --allow-legacy-resume was explicitly set.",
+            flush=True,
+        )
+        return
+    if saved_identity != current_identity:
+        raise RuntimeError(
+            f"Checkpoint {ckpt_path} was trained under split identity "
+            f"{saved_identity}, but the currently active split has identity "
+            f"{current_identity} -- resuming a training run under a different "
+            f"split than it started with is always a bug, never intentional. "
+            f"Use the same ST_ACT_SPLIT_FILE (or --split-file) as the original "
+            f"run, or start a fresh run (no --checkpoint-path resume) if you "
+            f"really mean to switch splits."
+        )
 
 
 def run_smoke_test(
     steps: int,
     lr: float,
     data_dir: str,
-    split_file: str,
+    split_file: str | None,
     weight_pos: float,
     weight_neg: float,
     seed: int,
     checkpoint_path: str | None = None,
     checkpoint_every: int = 10,
+    allow_legacy_resume: bool = False,
 ) -> list[dict]:
     torch.manual_seed(seed)
+
+    # P0-2 fix (2026-07-16): resolve via ST_ACT_SPLIT_FILE (same active fold as
+    # kaggle_kernel/train_kernel.py) unless split_file is explicitly given, and
+    # validate embryo-disjointness before creating any DataLoader.
+    resolved_split_file = Path(split_file) if split_file is not None else resolve_split_file_path()
+    load_and_validate_split(resolved_split_file)
+    # P0-2 checkpoint/split-identity fix (2026-07-16): embedded into every
+    # saved (and resumed) checkpoint below.
+    split_identity = get_split_identity(resolved_split_file)
+
     dataset = CompetitionDataset(
-        data_dir=data_dir, split_file=split_file, split_type="train", normalize=True,
+        data_dir=data_dir, split_file=resolved_split_file, split_type="train", normalize=True,
+        # This script performs real optimizer/backprop steps (see the
+        # opt.step() call below), so it's a training path, not inference --
+        # must drop fully-unannotated (t, t+1) pairs the same way
+        # kaggle_kernel/train_kernel.py's real train_dataset does.
+        filter_unannotated_pairs=True,
     )
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
 
@@ -69,6 +175,7 @@ def run_smoke_test(
     # (no checkpoint file) is unchanged for every existing caller.
     if ckpt_path is not None and ckpt_path.exists():
         state = torch.load(ckpt_path, weights_only=False)
+        validate_resume_split_identity(state, split_identity, ckpt_path, allow_legacy_resume=allow_legacy_resume)
         model.load_state_dict(state["model_state_dict"])
         opt.load_state_dict(state["optimizer_state_dict"])
         results = state["results"]
@@ -90,10 +197,7 @@ def run_smoke_test(
             sample_id, f"{data_dir}/{sample_id}.geff", (t_idx + 2, 64, 256, 256),
             target_type="gaussian", target_ts=[t_idx, t_idx + 1], geff_cache=geff_cache,
         )
-        zero_ch = torch.zeros((1, 64, 256, 256))
-        ch0 = heatmaps.get(t_idx, zero_ch)
-        ch1 = heatmaps.get(t_idx + 1, zero_ch)
-        targets = torch.cat([ch0, ch1], dim=0).unsqueeze(0)
+        targets = build_and_validate_targets(heatmaps, t_idx, sample_id)
 
         opt.zero_grad()
         logits, unused_features = model(x)
@@ -132,6 +236,7 @@ def run_smoke_test(
                 "optimizer_state_dict": opt.state_dict(),
                 "results": results,
                 "next_step": step + 1,
+                "split_membership_sha256": split_identity,
             }, tmp_path)
             tmp_path.replace(ckpt_path)  # atomic overwrite, matches src/train.py's heartbeat pattern
 
@@ -167,7 +272,10 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=40)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--data-dir", default="data/staging/train")
-    parser.add_argument("--split-file", default="data_split.json")
+    parser.add_argument("--split-file", default=None,
+                         help="Path to a split JSON. If omitted, resolved via the "
+                              "ST_ACT_SPLIT_FILE environment variable (defaults to "
+                              "data_splits/embryo_44b6_validation.json).")
     parser.add_argument("--weight-pos", type=float, default=1.0)
     parser.add_argument("--weight-neg", type=float, default=0.01)
     parser.add_argument("--seed", type=int, default=42)
@@ -177,12 +285,20 @@ def main() -> None:
                               "known unresolved native segfault (~step 33-36) by resuming "
                               "instead of restarting from step 0.")
     parser.add_argument("--checkpoint-every", type=int, default=10)
+    parser.add_argument(
+        "--allow-legacy-resume", action="store_true",
+        help="Permit resuming from a checkpoint with no saved split identity "
+             "(predates the P0-2 fix). Fails loud by default -- only pass this "
+             "for a deliberate legacy warm start. A known identity MISMATCH is "
+             "never bypassable here -- that always indicates a real bug.",
+    )
     args = parser.parse_args()
 
     results = run_smoke_test(
         steps=args.steps, lr=args.lr, data_dir=args.data_dir, split_file=args.split_file,
         weight_pos=args.weight_pos, weight_neg=args.weight_neg, seed=args.seed,
         checkpoint_path=args.checkpoint_path, checkpoint_every=args.checkpoint_every,
+        allow_legacy_resume=args.allow_legacy_resume,
     )
     summarize(results)
 

@@ -35,6 +35,7 @@ from src.evaluation import (
     load_geff_ground_truth,
 )
 from src.inference import greedy_edge_assignment
+from src.split_utils import validate_resume_checkpoint_split_identity
 from src.targets import (
     DetectionLoss,
     DivisionLoss,
@@ -181,6 +182,7 @@ class TrainingLoop:
         hyperparams: dict[str, Any] | None = None,
         deployed_sha: str = "unknown",
         progress_file: str | Path | None = None,
+        split_identity: str = "unknown",
     ):
         """
         Initialize training loop.
@@ -202,6 +204,17 @@ class TrainingLoop:
             progress_file: If given, path to overwrite (not append) a small JSON
                 heartbeat after each epoch -- fetchable via `kaggle kernels
                 output` mid-run without pulling the full raw log.
+            split_identity: src/split_utils.py's compute_membership_sha256()
+                identity of the split this run's train_loader/val_loader were
+                built from -- embedded into every saved checkpoint
+                ('split_membership_sha256') so evaluate_checkpoint.py can
+                detect a checkpoint being scored against a different split
+                than it was trained on (P0-2 fix, 2026-07-16). "unknown" (the
+                default) is a valid value for callers that don't yet pass a
+                real split identity -- see
+                validate_checkpoint_split_compatibility()'s legacy-checkpoint
+                handling, which treats an absent/unknown identity as a
+                warning, not a hard failure.
         """
         self.unet3d = unet3d
         self.transformer = transformer
@@ -213,6 +226,7 @@ class TrainingLoop:
         self.log_file = log_file
         self.deployed_sha = deployed_sha
         self.progress_file = Path(progress_file) if progress_file else None
+        self.split_identity = split_identity
 
         # Create checkpoint directory
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1259,6 +1273,12 @@ class TrainingLoop:
             'train_loss': train_loss,
             'hyperparams': self.hyperparams,
         }
+        # P0-2 fix (2026-07-16): same identity-embedding contract as
+        # save_checkpoint() -- omit the key entirely (not a placeholder
+        # value) when self.split_identity is "unknown".
+        if self.split_identity != "unknown":
+            checkpoint['split_membership_sha256'] = self.split_identity
+
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Saved unconditional last-epoch checkpoint: {checkpoint_path}")
 
@@ -1276,6 +1296,13 @@ class TrainingLoop:
             'val_metrics': metrics,
             'hyperparams': self.hyperparams,
         }
+        # P0-2 fix (2026-07-16): omit the key entirely (not a placeholder
+        # value) when self.split_identity is "unknown", so
+        # validate_checkpoint_split_compatibility()'s checkpoint.get(...) is
+        # None legacy-checkpoint branch fires correctly instead of a
+        # confusing hard mismatch against a literal "unknown" string.
+        if self.split_identity != "unknown":
+            checkpoint['split_membership_sha256'] = self.split_identity
 
         torch.save(checkpoint, checkpoint_path)
         logger.info(f"Saved checkpoint: {checkpoint_path}")
@@ -1288,9 +1315,33 @@ class TrainingLoop:
             old_checkpoint.unlink()
             logger.info(f"Deleted old checkpoint: {old_checkpoint}")
 
-    def load_checkpoint(self, checkpoint_path: str):
-        """Load model checkpoint."""
+    def load_checkpoint(
+        self,
+        checkpoint_path: str,
+        allow_split_mismatch: bool = False,
+        allow_legacy_split: bool = False,
+    ):
+        """
+        Load model checkpoint.
+
+        P0-2 checkpoint/split-identity fix (2026-07-16): resuming TRAINING
+        from a checkpoint trained under a different embryo-disjoint fold can
+        directly contaminate the currently held-out embryo's weights -- a
+        stricter, fail-by-default requirement than evaluate_checkpoint.py's
+        warn-only legacy handling (see
+        src/split_utils.py's validate_resume_checkpoint_split_identity()
+        docstring for the full rationale). Unless this TrainingLoop's own
+        split_identity is "unknown" (backward-compatibility case, logs a
+        warning instead), a missing OR mismatched checkpoint identity raises
+        RuntimeError by default -- pass allow_legacy_split=True /
+        allow_split_mismatch=True only for a deliberate legacy warm start or
+        cross-fold resume.
+        """
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        validate_resume_checkpoint_split_identity(
+            checkpoint, self.split_identity, checkpoint_path,
+            allow_split_mismatch=allow_split_mismatch, allow_legacy_split=allow_legacy_split,
+        )
         self.unet3d.load_state_dict(checkpoint['unet3d_state_dict'])
         self.transformer.load_state_dict(checkpoint['transformer_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])

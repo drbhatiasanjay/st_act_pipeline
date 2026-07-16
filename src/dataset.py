@@ -3,7 +3,18 @@ PyTorch Dataset class for ST-ACT competition.
 
 CompetitionDataset loads Zarr v3 volumes and .geff ground truth.
 Produces (frame_t, frame_t+1) pairs with anisotropic metadata.
-Respects embryo-disjoint train/val split from data_split.json.
+Respects the train/val split named by whichever split_file is passed in.
+
+P0-2 correction (2026-07-16): the historical, pre-P0-2 content of
+data_split.json was NOT embryo-disjoint -- it stratified by embryo prefix
+rather than excluding an embryo's samples from one side, per Kaggle's own
+competition documentation ("multiple samples may share the same embryo").
+The current root data_split.json has since been replaced with a compatibility
+alias (an exact copy of data_splits/embryo_44b6_validation.json), so it is
+now genuinely embryo-disjoint too. Prefer resolving the active fold via
+scripts/build_train_val_split.py's leave-one-embryo-out generator /
+src/split_utils.py's resolve_split_file_path() rather than hardcoding this
+filename.
 """
 
 import json

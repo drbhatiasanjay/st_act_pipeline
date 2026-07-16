@@ -18,6 +18,7 @@ from torch.utils.data import DataLoader
 
 from src.dataset import CompetitionDataset
 from src.model import SimpleNodeTransformer, UNet3D
+from src.split_utils import get_split_identity, load_and_validate_split, resolve_split_file_path
 from src.train import TrainingLoop
 
 logging.basicConfig(
@@ -39,7 +40,14 @@ def test_training_loop_smoke():
     logger.info(f"Device: {device}")
 
     data_dir = Path("data/staging/train")
-    split_file = Path("data_split.json")
+    # P0-2 fix (2026-07-16): resolve via ST_ACT_SPLIT_FILE (same active fold
+    # as kaggle_kernel/train_kernel.py) and validate embryo-disjointness
+    # before creating any DataLoader.
+    split_file = resolve_split_file_path()
+    load_and_validate_split(split_file)
+    # P0-2 checkpoint/split-identity fix (2026-07-16): embedded into every
+    # checkpoint this smoke test saves below.
+    split_identity = get_split_identity(split_file)
 
     # Create datasets
     logger.info("Creating datasets...")
@@ -47,13 +55,20 @@ def test_training_loop_smoke():
         data_dir=data_dir,
         split_file=split_file,
         split_type='train',
-        normalize=True
+        normalize=True,
+        # This smoke test performs a real train_epoch() (optimizer/backprop)
+        # call below -- must drop fully-unannotated pairs like the real
+        # training path does.
+        filter_unannotated_pairs=True,
     )
     val_dataset = CompetitionDataset(
         data_dir=data_dir,
         split_file=split_file,
         split_type='validation',
-        normalize=True
+        normalize=True,
+        # Validation performs inference/graph construction, not training --
+        # must see every real consecutive pair regardless of GT coverage.
+        filter_unannotated_pairs=False,
     )
 
     logger.info(f"Train dataset size: {len(train_dataset)}")
@@ -108,6 +123,7 @@ def test_training_loop_smoke():
         checkpoint_dir="checkpoints_smoke_test",
         log_file="training_log_smoke_test.csv",
         hyperparams=hyperparams,
+        split_identity=split_identity,
     )
 
     # Run 1 epoch

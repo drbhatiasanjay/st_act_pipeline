@@ -190,9 +190,23 @@ All plans respect and enforce the locked decisions from 02-CONTEXT.md (verified 
 
 All locked decisions explicitly wired into task descriptions and verification criteria.
 
-### ✓ Plans Account for Corrected Embryo-Disjoint Split
+### ✗ P0-2 CORRECTION (2026-07-16): the split below was NOT actually embryo-disjoint
 
-**RESEARCH.md S2.3 Correction:** "Embryo" = individual sample ID (e.g., 44b6_0113de3b), NOT movie-prefix (44b6 or 6bba). Verified by direct enumeration of 199 train .geff entries in competition zip.
+**RESEARCH.md S2.3 Correction was itself wrong** -- it inferred "embryo" = individual
+sample ID by comparing against the 4 staged `test/` placeholder copies (byte-identical
+duplicates of 4 train samples, not the real hidden test set), not against authoritative
+competition documentation. Kaggle's own Data description page states plainly that the
+movie prefix (44b6/6bba) IS the embryo ID and "multiple samples may share the same
+embryo." The stratified split this section describes therefore had real embryo-level
+leakage (both `44b6` and `6bba` present in both `data_split.json`'s train and validation
+lists, in its historical pre-P0-2 content). Superseded by
+`scripts/build_train_val_split.py`'s leave-one-embryo-out fold generator -- see the P0-2 audit
+for the full evidence trail. The root `data_split.json` has since been replaced with an exact
+copy of `data_splits/embryo_44b6_validation.json` (a compatibility alias, genuinely
+embryo-disjoint); prefer resolving the active fold via `src/split_utils.py`'s
+`resolve_split_file_path()` rather than hardcoding either filename directly.
+
+**Original (incorrect) claims, preserved for history:**
 
 **Plans Enforce Correct Split:**
 - Task 1.3: Partition 199 individual sample IDs into 149 train / 50 validation
@@ -201,9 +215,9 @@ All locked decisions explicitly wired into task descriptions and verification cr
 - Verified no leakage (split JSON with explicit sample lists)
 
 **Verification:**
-- [ ] data_split.json: 199 total = 149 train + 50 validation (per-sample granularity, not prefix-based)
-- [ ] Both splits contain samples from both 44b6 and 6bba prefixes (no prefix-level split)
-- [ ] Dataset class respects split_file filtering (train set loads only 149 samples)
+- [x] data_split.json: 199 total = 149 train + 50 validation (per-sample granularity, not prefix-based)
+- [x] Both splits contain samples from both 44b6 and 6bba prefixes (no prefix-level split) -- **this checkbox itself describes the leakage; it was treated as a pass criterion under the incorrect embryo definition**
+- [x] Dataset class respects split_file filtering (train set loads only 149 samples)
 
 ---
 
@@ -226,7 +240,7 @@ All locked decisions explicitly wired into task descriptions and verification cr
 - 02-SUMMARY.md — Heatmap benchmark results + division loss weight
 - 03-SUMMARY.md — Sanity-check training report + user decision
 - 04-SUMMARY.md — Full training results + leaderboard score + Phase 2 exit verification
-- data_split.json — Embryo-disjoint train/val split (149/50)
+- data_split.json — originally a stratified train/val split (149/50); **the historical pre-P0-2 version of this file was NOT embryo-disjoint, see P0-2 correction above.** The current root `data_split.json` has since been replaced with an exact copy of `data_splits/embryo_44b6_validation.json` (a compatibility alias for the primary leave-one-embryo-out fold), so any caller still hardcoding this filename now gets a genuinely embryo-disjoint split.
 
 **Code:**
 - src/dataset.py — CompetitionDataset (Zarr v3 + .geff loader)
