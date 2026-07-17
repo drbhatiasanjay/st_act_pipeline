@@ -9,7 +9,7 @@ Key exports:
 """
 
 from .division_metrics import evaluate_divisions
-from .io import DEFAULT_SCALE, open_dataset, save_graph, list_datasets
+from .io import DEFAULT_SCALE, list_datasets, open_dataset, save_graph
 from .metrics import (
     ADJUSTMENT_ALPHA,
     SCORE_DIVISION_WEIGHT,
@@ -17,6 +17,7 @@ from .metrics import (
     EvaluationResult,
     evaluate,
     evaluate_datasets,
+    node_recall,
     per_sample_metrics,
     summarise,
 )
@@ -35,6 +36,7 @@ __all__ = [
     "evaluate_divisions",
     "per_sample_metrics",
     "summarise",
+    "node_recall",
     # Data loading
     "open_dataset",
     "save_graph",

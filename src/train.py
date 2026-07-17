@@ -264,6 +264,12 @@ class TrainingLoop:
             # warmup.
             'warmup_steps': 0,
             'warmup_start_lr': 1e-4,
+            # P0-4 (2026-07-17): max_validation_samples allows capping validation
+            # to a deterministic subset of samples for faster iteration. When set,
+            # selects the first N distinct sample IDs and evaluates every frame pair
+            # for each selected sample (never truncates mid-sample). Default None =
+            # full-fold validation (all samples).
+            'max_validation_samples': None,
         }
         if hyperparams:
             self.hyperparams.update(hyperparams)
@@ -968,16 +974,95 @@ class TrainingLoop:
         # RuntimeError on any duplicate/backward/gapped t_idx per sample.
         assembler = PredictionGraphAssembler()
         max_batches = self.hyperparams.get('max_batches_per_epoch')
+        max_validation_samples = self.hyperparams.get('max_validation_samples')
+
+        # P0-4 (hardened): reject a max_validation_samples value that could
+        # silently do the wrong thing -- bool is an int subclass in Python
+        # (isinstance(True, int) is True), so it's checked explicitly first;
+        # a non-positive cap has no sensible "select N samples" meaning.
+        if max_validation_samples is not None:
+            if isinstance(max_validation_samples, bool) or not isinstance(max_validation_samples, int):
+                raise ValueError(
+                    f"max_validation_samples must be an int or None, got "
+                    f"{type(max_validation_samples).__name__}: {max_validation_samples!r}"
+                )
+            if max_validation_samples <= 0:
+                raise ValueError(
+                    f"max_validation_samples must be a positive int, got {max_validation_samples}"
+                )
+
+        # Derive ordered unique sample IDs from dataset.pairs whenever the
+        # dataset exposes them -- not only when a cap is configured -- so
+        # validation_samples_total is a trustworthy full-fold count in the
+        # uncapped case too. getattr(..., None) (not a bare .dataset
+        # access) so a val_loader without a .dataset attribute at all (a
+        # bare list, as used by several existing unit tests) degrades to
+        # "pairs unavailable" instead of raising AttributeError.
+        val_dataset = getattr(self.val_loader, 'dataset', None)
+        has_pairs = (
+            val_dataset is not None
+            and hasattr(val_dataset, 'pairs')
+            and val_dataset.pairs is not None
+        )
+
+        allowed_sample_ids = None
+        validation_samples_total = None
+        validation_sample_cap = max_validation_samples
+
+        if has_pairs:
+            unique_sample_ids = []
+            seen = set()
+            for sample_id, _ in val_dataset.pairs:
+                if sample_id not in seen:
+                    unique_sample_ids.append(sample_id)
+                    seen.add(sample_id)
+            validation_samples_total = len(unique_sample_ids)
+
+            if max_validation_samples is not None:
+                n_select = min(max_validation_samples, validation_samples_total)
+                allowed_sample_ids = set(unique_sample_ids[:n_select])
+                logger.info(
+                    f"Validation sample selection: {len(allowed_sample_ids)} of "
+                    f"{validation_samples_total} samples selected "
+                    f"(cap={max_validation_samples}). Selected: {sorted(allowed_sample_ids)}"
+                )
+        elif max_validation_samples is not None:
+            raise RuntimeError(
+                f"max_validation_samples={max_validation_samples} requested but "
+                f"val_loader.dataset does not expose 'pairs' attribute for safe sample selection. "
+                f"Cannot guarantee complete sample evaluation."
+            )
+
+        # Coverage-based provenance: a fold is "full" iff every available
+        # sample was selected, not merely because a cap was SUPPLIED --
+        # None -> full fold; cap >= total -> full fold (selection covers
+        # everything anyway); cap < total -> not full fold.
+        if allowed_sample_ids is not None:
+            validation_is_full_fold = (len(allowed_sample_ids) == validation_samples_total)
+        else:
+            validation_is_full_fold = True
+
+        # max_batches_per_epoch is a training-only cap (P0-4); log this ONCE
+        # before the loop when configured, not per-batch -- validate_epoch()
+        # deliberately ignores it on every batch, and a per-batch warning is
+        # pure log spam once past the threshold.
+        if max_batches is not None:
+            logger.info(
+                f"max_batches_per_epoch={max_batches} is configured but is a "
+                f"TRAINING-only cap; validate_epoch() ignores it and always "
+                f"processes complete samples."
+            )
 
         with torch.no_grad():
             for _batch_idx, batch in enumerate(self.val_loader):
-                if max_batches is not None and _batch_idx >= max_batches:
-                    logger.info(f"Stopping validation early at {max_batches} batches (max_batches_per_epoch cap)")
-                    break
+                sample_id = batch['sample_id'][0]
+
+                # P0-4: Skip batches for samples not in the allowed set
+                if allowed_sample_ids is not None and sample_id not in allowed_sample_ids:
+                    continue
 
                 frame_t = batch['frame_t'].to(self.device)
                 frame_t1 = batch['frame_t1'].to(self.device)
-                sample_id = batch['sample_id'][0]
                 t_idx = int(batch.get('t_idx', [0])[0])
 
                 # Fail loud, immediately, on any out-of-order window for this
@@ -1143,9 +1228,28 @@ class TrainingLoop:
                           f"Adjusted: {val_metrics_clean['adjusted_edge_jaccard']:.6f}, "
                           f"Division: {val_metrics_clean['division_jaccard']:.6f}, "
                           f"Score: {val_metrics_clean['score']:.6f}")
+
+                # P0-4: Add provenance fields for validation coverage distinction
                 val_metrics_clean['predicted_nodes_total'] = total_predicted_nodes
                 val_metrics_clean['predicted_edges_total'] = total_predicted_edges
                 val_metrics_clean['is_structural_zero'] = (total_predicted_nodes == 0)
+                val_metrics_clean['validation_is_full_fold'] = validation_is_full_fold
+                val_metrics_clean['validation_samples_evaluated'] = len(all_pred_graphs)
+                val_metrics_clean['validation_samples_total'] = (
+                    validation_samples_total if validation_samples_total is not None
+                    else len(all_pred_graphs)
+                )
+                val_metrics_clean['validation_sample_cap'] = validation_sample_cap
+
+                # Log provenance
+                if validation_is_full_fold:
+                    logger.info(f"Validation used FULL-FOLD ({val_metrics_clean['validation_samples_evaluated']} samples)")
+                else:
+                    logger.info(
+                        f"Validation CAPPED to {val_metrics_clean['validation_samples_evaluated']} "
+                        f"of {val_metrics_clean['validation_samples_total']} samples"
+                    )
+
                 return val_metrics_clean
             except Exception as e:
                 logger.warning(f"Evaluation failed: {e}")
@@ -1164,8 +1268,16 @@ class TrainingLoop:
                 'score': 0.0,
             }
 
+        # P0-4: Add provenance fields in all paths
         val_metrics['predicted_nodes_total'] = total_predicted_nodes
         val_metrics['predicted_edges_total'] = total_predicted_edges
+        val_metrics['validation_is_full_fold'] = validation_is_full_fold
+        val_metrics['validation_samples_evaluated'] = len(all_pred_graphs)
+        val_metrics['validation_samples_total'] = (
+            validation_samples_total if validation_samples_total is not None
+            else len(all_pred_graphs)
+        )
+        val_metrics['validation_sample_cap'] = validation_sample_cap
         val_metrics['is_structural_zero'] = (total_predicted_nodes == 0)
         return val_metrics
 

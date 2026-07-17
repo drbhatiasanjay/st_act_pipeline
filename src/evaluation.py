@@ -21,9 +21,10 @@ import tracksdata as td
 from tracksdata.graph import IndexedRXGraph
 
 from src.tracking_cellmot import (
-    ADJUSTMENT_ALPHA,
-    SCORE_DIVISION_WEIGHT,
-    evaluate_datasets,
+    evaluate,
+    node_recall,
+    per_sample_metrics,
+    summarise,
 )
 
 # Real physical voxel scale (z, y, x) in micrometers — z=1.625um, y=x=0.40625um.
@@ -114,10 +115,11 @@ def evaluate_submission(
     """
     Evaluate predicted tracking graphs against ground-truth graphs.
 
-    Computes the exact same score as Kaggle's official scorer:
-    - Edge Jaccard via tracksdata.evaluate_datasets()
-    - Division Jaccard via tracksdata.evaluate_divisions()
-    - Adjusted edge Jaccard using the node-count adjustment formula
+    Computes the exact same score as Kaggle's official scorer using the vendored
+    reference implementation:
+    - Per-sample evaluation via tracksdata.evaluate()
+    - Per-sample metrics via per_sample_metrics()
+    - Aggregation via summarise() for correct weighted averaging of adjusted Jaccard
     - Combined score = adjusted_edge_jaccard + 0.1 * division_jaccard
       (or just adjusted_edge_jaccard if no GT divisions exist)
 
@@ -143,7 +145,7 @@ def evaluate_submission(
     dict
         A dictionary with keys:
         - 'edge_jaccard': float — micro-averaged edge Jaccard
-        - 'adjusted_edge_jaccard': float — edge Jaccard with node-count penalty
+        - 'adjusted_edge_jaccard': float — edge Jaccard with node-count penalty (weight-averaged per sample)
         - 'division_jaccard': float — micro-averaged division Jaccard (NaN if no divisions)
         - 'score': float — final submission score
         - 'num_pred_nodes_total': int — total predicted nodes across all datasets
@@ -153,23 +155,74 @@ def evaluate_submission(
     Raises
     ------
     ValueError
-        If pred_graphs and gt_graphs are misaligned, or if either is empty.
+        If pred_graphs and gt_graphs are misaligned, missing keys, or if either is empty.
+    RuntimeError
+        If evaluation of a sample fails (with sample ID for diagnosis).
     """
-    # Normalize to lists for uniform processing
+    # P0-4 (hardened): reject mixed container types explicitly, before any
+    # dict/list-specific logic runs. Letting one branch treat the other
+    # type's container as its own (e.g. calling .keys() on a list, or
+    # indexing a dict with an int) produces a confusing AttributeError or
+    # integer-key KeyError deep inside the function instead of a clear,
+    # user-facing alignment failure.
+    pred_is_dict = isinstance(pred_graphs, dict)
+    gt_is_dict = isinstance(gt_graphs, dict)
+    if pred_is_dict != gt_is_dict:
+        raise ValueError(
+            "pred_graphs and gt_graphs must both be dicts or both be lists, "
+            f"not mixed types. Got pred_graphs: {type(pred_graphs).__name__}, "
+            f"gt_graphs: {type(gt_graphs).__name__}."
+        )
+    if not pred_is_dict and isinstance(gt_metadata, dict):
+        raise ValueError(
+            "gt_metadata was provided as a dict, but pred_graphs/gt_graphs "
+            "are lists -- metadata must be a list aligned by position when "
+            "pred_graphs/gt_graphs are lists, or all three (pred_graphs, "
+            "gt_graphs, gt_metadata) must be dicts keyed by the same sample IDs."
+        )
+
+    # Normalize to lists and extract dataset IDs for alignment checking
     if isinstance(pred_graphs, dict):
+        pred_keys = set(pred_graphs.keys())
+        gt_keys = set(gt_graphs.keys())
+
+        # Require identical key sets in BOTH directions: a GT-only sample must
+        # not be silently dropped just because iteration is pred-driven, and
+        # a pred-only sample must not be silently evaluated against nothing.
+        missing_gt = sorted(pred_keys - gt_keys)
+        missing_pred = sorted(gt_keys - pred_keys)
+        if missing_gt or missing_pred:
+            raise ValueError(
+                f"pred_graphs and gt_graphs key sets do not match. "
+                f"Missing ground-truth graphs for dataset IDs: {missing_gt}. "
+                f"Missing prediction graphs for dataset IDs: {missing_pred}. "
+                f"Prediction IDs: {sorted(pred_keys)}. GT IDs: {sorted(gt_keys)}"
+            )
+
         dataset_ids = list(pred_graphs.keys())
         pred_list = [pred_graphs[did] for did in dataset_ids]
         gt_list = [gt_graphs[did] for did in dataset_ids]
+
         if gt_metadata is not None and isinstance(gt_metadata, dict):
+            metadata_keys = set(gt_metadata.keys())
+            missing_meta = sorted(pred_keys - metadata_keys)
+            unexpected_meta = sorted(metadata_keys - pred_keys)
+            if missing_meta or unexpected_meta:
+                raise ValueError(
+                    f"Missing metadata for dataset IDs: {missing_meta}. "
+                    f"Unexpected metadata for dataset IDs not in pred_graphs/gt_graphs: "
+                    f"{unexpected_meta}. Provided metadata IDs: {sorted(metadata_keys)}"
+                )
             metadata_list = [gt_metadata[did] for did in dataset_ids]
         else:
             metadata_list = None
     else:
+        dataset_ids = None
         pred_list = pred_graphs
         gt_list = gt_graphs
         metadata_list = gt_metadata
 
-    # Validation
+    # Validation: list length and alignment
     if len(pred_list) == 0 or len(gt_list) == 0:
         raise ValueError("pred_graphs and gt_graphs must not be empty")
     if len(pred_list) != len(gt_list):
@@ -177,52 +230,72 @@ def evaluate_submission(
             f"pred_graphs and gt_graphs must have the same length. "
             f"Got {len(pred_list)} pred and {len(gt_list)} gt."
         )
+    if metadata_list is not None and len(metadata_list) != len(pred_list):
+        raise ValueError(
+            f"gt_metadata must have the same length as pred_graphs/gt_graphs. "
+            f"Got {len(metadata_list)} metadata, {len(pred_list)} graphs."
+        )
 
-    # Compute micro-averaged Jaccard scores across all datasets
-    graph_pairs = list(zip(pred_list, gt_list, strict=False))
-    datasets_result = evaluate_datasets(graph_pairs, scale=scale, max_distance=max_distance)
+    # Evaluate each (pred, gt) pair and collect per-sample metrics
+    per_sample_rows = []
+    num_gt_nodes_total = 0
 
-    # Compute adjusted edge Jaccard using node-count mismatch penalty
-    # Formula: J_adj = max(0, J * (1 - ALPHA * (T_pred - T_true) / T_true))
-    # Where T_true is the estimated GT node count and T_pred is the total predicted nodes
-    num_pred_nodes_total = sum(g.num_nodes() for g in pred_list)
-    num_gt_nodes_total = sum(g.num_nodes() for g in gt_list)
+    for idx, (pred, gt) in enumerate(zip(pred_list, gt_list, strict=False)):
+        sample_id = dataset_ids[idx] if dataset_ids else f"sample_{idx}"
 
-    # Extract T_true from metadata if available; otherwise use GT node count
-    if metadata_list is not None:
-        t_true_list = []
-        for m, g in zip(metadata_list, gt_list, strict=False):
+        try:
+            # Evaluate the pair (this mutates pred in-place with matching attributes)
+            er = evaluate(pred, gt, scale=scale, max_distance=max_distance)
+        except Exception as e:
+            raise RuntimeError(
+                f"Evaluation failed for sample '{sample_id}' (index {idx}): {e}"
+            ) from e
+
+        # Extract T_true from metadata if available; otherwise use GT node count
+        if metadata_list is not None and metadata_list[idx] is not None:
+            m = metadata_list[idx]
             if hasattr(m, 'extra') and m.extra and 'estimated_number_of_nodes' in m.extra:
-                t_true_list.append(m.extra['estimated_number_of_nodes'])
+                n_total = m.extra['estimated_number_of_nodes']
             else:
-                t_true_list.append(g.num_nodes())
-    else:
-        t_true_list = [g.num_nodes() for g in gt_list]
+                n_total = gt.num_nodes()
+        else:
+            n_total = gt.num_nodes()
 
-    # Compute total T_true across all datasets
-    t_true = sum(t_true_list)
+        # Compute node recall for this sample
+        try:
+            nr = node_recall(pred, gt)
+        except Exception:
+            # If node_recall fails, use NaN; this is non-fatal for the overall evaluation
+            nr = float("nan")
 
-    # Apply adjustment formula (only if we have GT nodes for normalization)
-    if t_true > 0:
-        node_ratio = (num_pred_nodes_total - t_true) / t_true
-        adjusted_edge_jaccard = max(0.0, datasets_result.edge_jaccard * (1.0 - ADJUSTMENT_ALPHA * node_ratio))
-    else:
-        adjusted_edge_jaccard = datasets_result.edge_jaccard
+        # Compute per-sample metrics
+        row = per_sample_metrics(er, n_total, nr)
+        per_sample_rows.append(row)
 
-    # Compute final score
-    # If no GT divisions anywhere, drop the division term (division_jaccard will be NaN)
-    import math
-    if not math.isnan(datasets_result.division_jaccard):
-        # We have divisions
-        score = adjusted_edge_jaccard + SCORE_DIVISION_WEIGHT * datasets_result.division_jaccard
-    else:
-        # No divisions in any GT graph
-        score = adjusted_edge_jaccard
+        num_gt_nodes_total += gt.num_nodes()
+
+    # Aggregate per-sample metrics using the reference implementation's summarise()
+    summary = summarise(per_sample_rows)
+
+    # Extract results from summary
+    # Note: summarise() returns 'adj_edge_jaccard'; map to 'adjusted_edge_jaccard' for public API
+    edge_jaccard = summary['edge_jaccard']
+    adjusted_edge_jaccard = summary['adj_edge_jaccard']
+    division_jaccard = summary['division_jaccard']
+    score = summary['score']
+
+    # Compute total predicted nodes across all samples. per_sample_rows holds
+    # the dicts returned by per_sample_metrics() (NOT EvaluationResult objects
+    # -- a prior version of this line did `er.num_pred_nodes` against these
+    # dicts, an AttributeError that fired on every single call reaching this
+    # point; never caught because no test exercised evaluate_submission() to
+    # completion with data present).
+    num_pred_nodes_total = sum(row['num_pred_nodes'] for row in per_sample_rows)
 
     return {
-        'edge_jaccard': datasets_result.edge_jaccard,
+        'edge_jaccard': edge_jaccard,
         'adjusted_edge_jaccard': adjusted_edge_jaccard,
-        'division_jaccard': datasets_result.division_jaccard,
+        'division_jaccard': division_jaccard,
         'score': score,
         'num_pred_nodes_total': num_pred_nodes_total,
         'num_gt_nodes_total': num_gt_nodes_total,
