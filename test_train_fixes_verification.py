@@ -83,8 +83,10 @@ def test_fix_2_real_edge_targets():
     logger.info("TEST 2: Real edge targets with DivisionLoss")
     logger.info("=" * 80)
 
-    # Create dummy edge predictions and targets
-    edge_probs = torch.tensor([0.1, 0.2, 0.5, 0.8, 0.9], dtype=torch.float32)
+    # Create dummy edge logits and targets
+    # P0-5 fix: transformer now returns logits, not probabilities
+    # Using logits corresponding to probabilities [0.1, 0.2, 0.5, 0.8, 0.9]
+    edge_logits = torch.tensor([-2.2, -1.4, 0.0, 1.4, 2.2], dtype=torch.float32)
     edge_targets = torch.tensor([0, 0, 1, 1, 1], dtype=torch.long)
     division_mask = torch.tensor([False, False, True, False, True], dtype=torch.bool)
 
@@ -92,7 +94,7 @@ def test_fix_2_real_edge_targets():
     loss_fn = DivisionLoss(weight_division=2.5, pos_weight=10.0)
 
     # Compute loss
-    loss = loss_fn(edge_probs, edge_targets.float(), division_mask)
+    loss = loss_fn(edge_logits, edge_targets.float(), division_mask)
 
     # Verify loss is not zero (which would indicate a broken placeholder)
     assert loss.item() > 0, "FAIL: Edge loss is zero! Placeholder not fixed."

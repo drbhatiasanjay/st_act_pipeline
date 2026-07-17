@@ -741,12 +741,12 @@ class TrainingLoop:
                 # Compute edge predictions and loss
                 if edge_targets is not None:
                     try:
-                        edge_probs = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
-                        if len(edge_probs) > 0:
+                        edge_logits = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
+                        if len(edge_logits) > 0:
                             # Convert targets to float for BCE
                             edge_targets_float = edge_targets.float()
                             edge_loss = self.division_loss_fn(
-                                edge_probs.view(-1),
+                                edge_logits.view(-1),
                                 edge_targets_float,
                                 division_mask
                             )
@@ -1126,7 +1126,8 @@ class TrainingLoop:
                     )
 
                 if len(source_coords) > 0 and len(target_coords) > 0:
-                    edge_probs = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
+                    edge_logits = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
+                    edge_probs = torch.sigmoid(edge_logits)
                     assignment = greedy_edge_assignment(
                         edge_probs,
                         nodes_t.cpu(),

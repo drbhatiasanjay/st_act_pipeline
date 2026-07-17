@@ -296,7 +296,8 @@ def main():
                 nodes_t1, features_t1 = nodes_and_features(features, peaks_t1, device)
 
                 if len(peaks_t) > 0 and len(peaks_t1) > 0:
-                    edge_probs = transformer(nodes_t, nodes_t1, features_t, features_t1)
+                    edge_logits = transformer(nodes_t, nodes_t1, features_t, features_t1)
+                    edge_probs = torch.sigmoid(edge_logits)
                     assignment = greedy_edge_assignment(
                         edge_probs, nodes_t.cpu(), nodes_t1.cpu(),
                         threshold=hyperparams['edge_threshold'], max_children=2, max_parents=1

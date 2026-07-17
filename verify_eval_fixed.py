@@ -257,7 +257,8 @@ def run_evaluation(
             del features
 
             if len(source_coords) > 0 and len(target_coords) > 0:
-                edge_probs = transformer(nodes_t, nodes_t1, features_t, features_t1)
+                edge_logits = transformer(nodes_t, nodes_t1, features_t, features_t1)
+                edge_probs = torch.sigmoid(edge_logits)
                 assignment = greedy_edge_assignment(
                     edge_probs,
                     nodes_t.cpu(),

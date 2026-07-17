@@ -109,10 +109,10 @@ def test_training_loop_infrastructure():
     logger.info(f"Node features shape: {node_features.shape}")
 
     with torch.no_grad():
-        edge_probs = transformer(nodes, nodes, node_features, node_features)
+        edge_logits = transformer(nodes, nodes, node_features, node_features)
 
-    logger.info(f"Edge probabilities shape: {edge_probs.shape}")
-    assert edge_probs.shape[0] >= 0, "Edge probs should be 1D or empty"
+    logger.info(f"Edge logits shape: {edge_logits.shape}")
+    assert edge_logits.shape[0] >= 0, "Edge logits should be 1D or empty"
     logger.info("✓ Transformer forward pass: PASS")
 
     # Test 3: Loss computation

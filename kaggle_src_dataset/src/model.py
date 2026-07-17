@@ -244,8 +244,7 @@ class SimpleNodeTransformer(nn.Module):
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-            nn.Sigmoid()
+            nn.Linear(hidden_dim // 2, 1)
         )
 
     @staticmethod
@@ -266,7 +265,7 @@ class SimpleNodeTransformer(nn.Module):
 
     def forward(self, nodes_t, nodes_t1, features_t, features_t1, candidate_edges=None):
         """
-        Forward pass for edge probability prediction.
+        Forward pass for edge logit prediction.
 
         Args:
             nodes_t: (n_t, 3) node coordinates [z, y, x] at frame t
@@ -277,7 +276,7 @@ class SimpleNodeTransformer(nn.Module):
                             If None, score all possible edges
 
         Returns:
-            edge_probs: (n_candidates,) edge probabilities in [0, 1]
+            edge_logits: (n_candidates,) raw edge logits (unbounded)
         """
         device = nodes_t.device
         n_t = nodes_t.shape[0]
@@ -324,9 +323,9 @@ class SimpleNodeTransformer(nn.Module):
         feat_t = nodes_t_h[candidate_edges[:, 0]]    # (n_candidates, hidden_dim)
         feat_t1 = nodes_t1_h[candidate_edges[:, 1]]  # (n_candidates, hidden_dim)
         edge_feat = torch.cat([feat_t, feat_t1], dim=1)  # (n_candidates, hidden_dim*2)
-        edge_probs = self.edge_scorer(edge_feat).squeeze(-1)  # (n_candidates,)
+        edge_logits = self.edge_scorer(edge_feat).squeeze(-1)  # (n_candidates,)
 
-        return edge_probs
+        return edge_logits
 
 
 class AnisotropicCoordinateTransformer(nn.Module):
