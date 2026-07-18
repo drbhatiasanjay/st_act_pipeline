@@ -8,6 +8,13 @@ is a Code Competition: the graded submission must be a committed Notebook with
 train_kernel.py's live `pip install` from PyPI cannot run here -- every
 dependency must already be present. This script installs from a pre-downloaded
 wheels Dataset instead, via `pip install --no-index --find-links=...`.
+
+P0-6: submission-path parity, fail-closed submission validation, verified
+checkpoint deployment. Checkpoint selection is now exclusively via a verified
+checkpoint_manifest.json (never filename/mtime guessing -- see
+src/checkpoint_manifest.py), and graph construction is exclusively via the
+shared production pipeline (src/submission_pipeline.py) so this kernel can
+never silently diverge from generate_submission.py's local smoke-test path.
 """
 
 import logging
@@ -15,62 +22,50 @@ import os
 import sys
 from pathlib import Path
 
-import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
-# Same self-discovery pattern as train_kernel.py, generalized to find any
-# marker file under /kaggle/input rather than assuming a fixed slug/mount
-# path -- confirmed necessary earlier this session (Kaggle nests attached
-# datasets under /kaggle/input/datasets/<owner>/<slug>/, not flat).
+# Exact-one discovery (Part C1): never silently select the first directory,
+# directory order, or modification time -- zero matches raises, multiple
+# matches raises and lists every candidate.
 MAX_SEARCH_DEPTH = 5
 
 
-def find_kaggle_input_dir(marker_relpath: str) -> str | None:
+def find_all_kaggle_input_dirs(marker_relpath: str, max_depth: int = MAX_SEARCH_DEPTH) -> list[str]:
     if not os.path.exists("/kaggle/input"):
-        return None
+        return []
+    matches: list[str] = []
     for dirpath, dirnames, _filenames in os.walk("/kaggle/input"):
         depth = dirpath[len("/kaggle/input"):].count(os.sep)
-        if depth >= MAX_SEARCH_DEPTH:
+        if depth >= max_depth:
             dirnames[:] = []
             continue
         if os.path.isfile(os.path.join(dirpath, marker_relpath)):
-            return dirpath
-    return None
+            matches.append(dirpath)
+    return matches
 
 
-def find_best_checkpoint() -> str | None:
-    """Find the most-recently-modified epoch_*.pt under /kaggle/input.
-
-    Deliberately does not assume a fixed filename: save_checkpoint() only
-    writes a new file when val_score improves on the previous best, so the
-    most-recently-modified epoch_*.pt IS the best one -- this lets inference
-    pick up whatever checkpoint the latest training run produced (e.g.
-    epoch_1_val_score_0.0000.pt from the earlier sanity run vs. a real
-    epoch_N_val_score_X.XXXX.pt from the full run) without a code change.
-    """
-    if not os.path.exists("/kaggle/input"):
-        return None
-    candidates = []
-    for dirpath, dirnames, filenames in os.walk("/kaggle/input"):
-        depth = dirpath[len("/kaggle/input"):].count(os.sep)
-        if depth >= MAX_SEARCH_DEPTH:
-            dirnames[:] = []
-            continue
-        for name in filenames:
-            if name.startswith("epoch_") and name.endswith(".pt"):
-                full_path = os.path.join(dirpath, name)
-                candidates.append((os.path.getmtime(full_path), full_path))
-    if not candidates:
-        return None
-    candidates.sort(key=lambda pair: pair[0])
-    return candidates[-1][1]
+def find_exactly_one_kaggle_input_dir(marker_relpath: str) -> str:
+    matches = find_all_kaggle_input_dirs(marker_relpath)
+    if not matches:
+        raise RuntimeError(f"No directory beneath /kaggle/input contains {marker_relpath!r}.")
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Multiple directories beneath /kaggle/input contain {marker_relpath!r}, exactly "
+            f"one is required: {sorted(matches)}"
+        )
+    return matches[0]
 
 
-KAGGLE_SRC_DATASET_DIR = find_kaggle_input_dir(os.path.join("src", "dataset.py"))
-if KAGGLE_SRC_DATASET_DIR:
+KAGGLE_MODE = os.path.exists("/kaggle/input")
+
+if KAGGLE_MODE:
+    # Kaggle mode: never fall back to repository-local source code.
+    KAGGLE_SRC_DATASET_DIR = find_exactly_one_kaggle_input_dir(os.path.join("src", "dataset.py"))
     sys.path.insert(0, KAGGLE_SRC_DATASET_DIR)
 else:
+    # Local non-Kaggle execution (e.g. import-structure smoke tests) may
+    # retain a repository fallback.
+    KAGGLE_SRC_DATASET_DIR = None
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logging.basicConfig(
@@ -79,23 +74,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger("KaggleInference")
 
-KAGGLE_MODE = os.path.exists("/kaggle/input")
 if KAGGLE_MODE:
     try:
         logger.info(f"/kaggle/input contents: {os.listdir('/kaggle/input')}")
     except Exception as e:
         logger.warning(f"Could not list /kaggle/input: {e}")
+    logger.info(f"Selected source dataset (exact-one discovery): {KAGGLE_SRC_DATASET_DIR}")
 
 # === ENVIRONMENT SETUP ===
-# Deployed code identity: same mechanism as train_kernel.py (see
-# DEFERRED_IMPROVEMENTS.md) -- read the SHA embedded at push time by
-# scripts/sync_kaggle_src.py so "is this run using the code I think I
-# committed" is a 2-second log check, not a post-mortem.
-DEPLOYED_SHA = "unknown (GIT_SHA.txt not found -- was this pushed via scripts/sync_kaggle_src.py?)"
-if KAGGLE_SRC_DATASET_DIR:
+# Deployed code identity (Part C3): read the SHA embedded at push time by
+# scripts/sync_kaggle_src.py. In Kaggle mode, missing/unreadable/empty/
+# malformed values raise -- "unknown" is never a valid fallback here, unlike
+# the pre-P0-6 kernel.
+if KAGGLE_MODE:
     _sha_file = Path(KAGGLE_SRC_DATASET_DIR) / "GIT_SHA.txt"
-    if _sha_file.exists():
-        DEPLOYED_SHA = _sha_file.read_text().strip()
+    if not _sha_file.exists():
+        raise RuntimeError(
+            f"GIT_SHA.txt not found in selected source dataset {KAGGLE_SRC_DATASET_DIR} -- "
+            f"was this pushed via scripts/sync_kaggle_src.py?"
+        )
+    _raw_sha = _sha_file.read_text(encoding="utf-8").strip()
+    if not _raw_sha:
+        raise RuntimeError(f"GIT_SHA.txt at {_sha_file} is empty or whitespace-only.")
+    if len(_raw_sha) != 40 or _raw_sha != _raw_sha.lower() or not all(c in "0123456789abcdef" for c in _raw_sha):
+        raise RuntimeError(
+            f"GIT_SHA.txt at {_sha_file} does not contain a 40-character lowercase hex git "
+            f"SHA: {_raw_sha!r}"
+        )
+    DEPLOYED_SHA = _raw_sha
+else:
+    DEPLOYED_SHA = "unknown (local execution)"
 logger.info(f"Deployed code SHA: {DEPLOYED_SHA}")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -127,12 +135,18 @@ if torch.cuda.is_available():
 if KAGGLE_MODE:
     import subprocess
 
-    WHEELS_DIR = find_kaggle_input_dir("tracksdata-0.1.0rc6-py3-none-any.whl")
-    if WHEELS_DIR is None:
+    _wheels_matches = find_all_kaggle_input_dirs("tracksdata-0.1.0rc6-py3-none-any.whl")
+    if not _wheels_matches:
         raise RuntimeError(
             "st-act-wheels dataset not found under /kaggle/input -- attach it "
             "in the notebook's Input panel before running."
         )
+    if len(_wheels_matches) > 1:
+        raise RuntimeError(
+            f"Multiple datasets under /kaggle/input contain the wheels marker file, "
+            f"exactly one is required: {sorted(_wheels_matches)}"
+        )
+    WHEELS_DIR = _wheels_matches[0]
     logger.info(f"Installing dependencies offline from {WHEELS_DIR}")
     subprocess.run(
         [
@@ -174,157 +188,129 @@ if KAGGLE_MODE:
         ) from e
     logger.info(f"polars {_pl_check.__version__} extension verified OK.")
 
-import polars as pl  # noqa: E402
-from tracksdata.graph import IndexedRXGraph  # noqa: E402
-
-from src.dataset import CompetitionDataset  # noqa: E402
-from src.evaluation import DEFAULT_SCALE  # noqa: E402
-from src.inference import greedy_edge_assignment  # noqa: E402
+import src.checkpoint_manifest  # noqa: E402
+import src.dataset  # noqa: E402
+import src.inference  # noqa: E402
+import src.model  # noqa: E402
+import src.prediction_graph  # noqa: E402
+import src.submission_exporter  # noqa: E402
+import src.submission_pipeline  # noqa: E402
+import src.train  # noqa: E402
+from src.checkpoint_manifest import find_single_manifest, load_verified_checkpoint  # noqa: E402
 from src.model import SimpleNodeTransformer, UNet3D  # noqa: E402
 from src.submission_exporter import export_submission, validate_submission  # noqa: E402
-from src.train import extract_peaks_from_volume  # noqa: E402
+from src.submission_pipeline import run_submission_inference  # noqa: E402
 
 
-def peaks_for_channel(detection_probs: torch.Tensor, channel: int, hyperparams: dict) -> list:
-    vol_np = detection_probs[0, channel].cpu().numpy()
-    threshold = hyperparams['detection_threshold']
-    positive_fraction = float((vol_np > threshold).mean())
-    max_positive_fraction = hyperparams.get('max_positive_voxel_fraction', 0.005)
-    if positive_fraction > max_positive_fraction:
-        threshold = max(
-            float(np.percentile(vol_np, 100 * (1 - max_positive_fraction))), threshold
-        )
-    elif positive_fraction == 0.0:
-        # Opposite failure mode: raw confidence never crosses the fixed
-        # threshold anywhere -- see src/train.py::_peaks_for_channel for the
-        # full rationale (same duplicated logic). Without this, a real
-        # submission run would silently emit zero detections forever.
-        threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
-    return extract_peaks_from_volume(
-        vol_np, threshold=threshold, voxel_size=DEFAULT_SCALE,
-        nms_radius_um=hyperparams['nms_radius_um']
+def verify_import_origins(expected_root: str | Path) -> None:
+    """Part C2: after importing every production module this kernel depends
+    on, verify each one's real __file__ resolves underneath the exact-one
+    selected source dataset -- never underneath a stray repository checkout,
+    a different attached dataset, or anywhere else. Raises loudly on any
+    module resolving outside expected_root."""
+    expected_root_resolved = Path(expected_root).resolve()
+    modules_to_check = [
+        src.dataset,
+        src.model,
+        src.train,
+        src.submission_pipeline,
+        src.checkpoint_manifest,
+        src.submission_exporter,
+        src.prediction_graph,
+        src.inference,
+    ]
+    for module in modules_to_check:
+        module_file = getattr(module, "__file__", None)
+        if module_file is None:
+            raise RuntimeError(f"Module {module.__name__} has no __file__ -- cannot verify import origin.")
+        resolved = Path(module_file).resolve()
+        try:
+            resolved.relative_to(expected_root_resolved)
+        except ValueError as e:
+            raise RuntimeError(
+                f"Module {module.__name__} resolved to {resolved}, which is NOT beneath the "
+                f"selected source dataset {expected_root_resolved} -- refusing to run "
+                f"inference against code from an unverified location."
+            ) from e
+        logger.info(f"Verified import origin: {module.__name__} -> {resolved}")
+
+
+if KAGGLE_MODE:
+    verify_import_origins(KAGGLE_SRC_DATASET_DIR)
+
+
+def main() -> None:
+    # === VERIFIED CHECKPOINT SELECTION (Part C4) ===
+    # No recursive epoch_*.pt / newest-mtime / filename-guessing selection --
+    # exactly one manifest beneath /kaggle/input, hash-verified before
+    # torch.load() ever runs.
+    manifest_path = find_single_manifest("/kaggle/input")
+    checkpoint, manifest, checkpoint_path = load_verified_checkpoint(
+        manifest_path, expected_source_sha=DEPLOYED_SHA, map_location=device,
+    )
+    logger.info(f"Verified manifest: {manifest_path}")
+    logger.info(f"Verified checkpoint: {checkpoint_path}")
+    logger.info(
+        f"Manifest identity: training_code_sha={manifest['training_code_sha']} "
+        f"mounted_source_sha={DEPLOYED_SHA} split_membership_sha256={manifest['split_membership_sha256']} "
+        f"model_contract={manifest['model_contract']} epoch={manifest['epoch']} "
+        f"coverage={manifest['validation_samples_evaluated']}/{manifest['validation_samples_total']} "
+        f"datasets={manifest['num_datasets']} predicted_nodes_total={manifest['predicted_nodes_total']} "
+        f"predicted_edges_total={manifest['predicted_edges_total']} "
+        f"adjusted_edge_jaccard={manifest['adjusted_edge_jaccard']}"
     )
 
-
-def nodes_and_features(features: torch.Tensor, peaks: list, device: torch.device):
-    if len(peaks) == 0:
-        return (
-            torch.zeros((0, 3), dtype=torch.float32, device=device),
-            torch.zeros((0, features.shape[1]), dtype=torch.float32, device=device),
-        )
-    nodes = torch.tensor(peaks, dtype=torch.float32, device=device)
-    zc = torch.clamp(nodes[:, 0].long(), 0, features.shape[2] - 1)
-    yc = torch.clamp(nodes[:, 1].long(), 0, features.shape[3] - 1)
-    xc = torch.clamp(nodes[:, 2].long(), 0, features.shape[4] - 1)
-    return nodes, features[0, :, zc, yc, xc].t()
-
-
-def main():
-    # === LOAD CHECKPOINT ===
-    checkpoint_path_str = find_best_checkpoint()
-    if checkpoint_path_str is None:
-        raise RuntimeError("No epoch_*.pt checkpoint found under /kaggle/input.")
-    checkpoint_path = Path(checkpoint_path_str)
-    logger.info(f"Loading checkpoint from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    hyperparams = checkpoint["hyperparams"]
 
     unet3d = UNet3D(in_channels=2, channels=(32, 64, 128)).to(device)
     transformer = SimpleNodeTransformer(hidden_dim=128, num_heads=4, num_blocks=4).to(device)
-    unet3d.load_state_dict(checkpoint['unet3d_state_dict'])
-    transformer.load_state_dict(checkpoint['transformer_state_dict'])
+    # Strict state-dict loading (Part B8) -- never downgraded to a warning.
+    unet3d.load_state_dict(checkpoint["unet3d_state_dict"], strict=True)
+    transformer.load_state_dict(checkpoint["transformer_state_dict"], strict=True)
     unet3d.eval()
     transformer.eval()
-
-    hyperparams = checkpoint.get('hyperparams', {
-        'edge_threshold': 0.5, 'detection_threshold': 0.5, 'nms_radius_um': 5.0,
-    })
 
     # === REAL TEST DATA (swapped in at grading time, per rules) ===
     test_dir = Path("/kaggle/input/competitions/biohub-cell-tracking-during-development/test")
     test_zarrs = sorted(test_dir.glob("*.zarr"))
-    required_dataset_ids = [z.stem for z in test_zarrs]
-    logger.info(f"Found {len(test_zarrs)} real test samples: {required_dataset_ids}")
+    logger.info(f"Found {len(test_zarrs)} real test sample(s): {[z.stem for z in test_zarrs]}")
 
-    all_pred_graphs = {}
+    # === SHARED PRODUCTION SUBMISSION PIPELINE (Part C5) ===
+    # No direct IndexedRXGraph construction, node-attribute schema setup, or
+    # add_node/add_edge loops in this kernel -- run_submission_inference()
+    # owns all graph assembly (via PredictionGraphAssembler), identically to
+    # generate_submission.py's local path. Raises RuntimeError (Part C6) if
+    # test_zarrs is empty rather than producing a header-only "successful"
+    # dry run.
+    pred_graphs, diagnostics = run_submission_inference(
+        test_dir=test_dir,
+        test_zarrs=test_zarrs,
+        unet3d=unet3d,
+        transformer=transformer,
+        device=device,
+        hyperparams=hyperparams,
+    )
 
-    for zarr_path in test_zarrs:
-        sample_id = zarr_path.stem
-        dataset = CompetitionDataset.__new__(CompetitionDataset)
-        dataset.data_dir = test_dir
-        dataset.split_type = "test"
-        dataset.normalize = True
-        dataset.anisotropy = (4.0, 1.0, 1.0)
-        dataset.physical_voxel_size = (1.625, 0.40625, 0.40625)
-        dataset.zip_path = None
-        dataset.sample_ids = [sample_id]
-        dataset.pairs = []
-        dataset._loader_cache = {}
-        # P0-1 fix (2026-07-16): submission inference must see every real
-        # consecutive pair -- test samples have no .geff at all, so GT-count
-        # filtering isn't even meaningful here, let alone desirable.
-        dataset.filter_unannotated_pairs = False
-        dataset._gt_counts_by_time_cache = {}
-        dataset.annotation_pair_stats = None
-        dataset._build_pair_index()
-
-        pred_graph = IndexedRXGraph()
-        for key in ('t', 'x', 'y', 'z'):
-            try:
-                pred_graph.add_node_attr_key(key, pl.Int64, 0)
-            except ValueError:
-                pass
-        all_pred_graphs[sample_id] = pred_graph
-
-        if len(dataset) == 0:
-            logger.warning(f"No pairs built for {sample_id}, leaving graph empty")
-            continue
-
-        loader = DataLoader(dataset, batch_size=1, shuffle=False)
-        with torch.no_grad():
-            for batch in loader:
-                frame_t = batch['frame_t'].to(device)
-                frame_t1 = batch['frame_t1'].to(device)
-                t_idx = int(batch.get('t_idx', [0])[0])
-
-                x = torch.cat([frame_t, frame_t1], dim=1)
-                logits, features = unet3d(x)
-                detection_probs = torch.sigmoid(logits)
-
-                peaks_t = peaks_for_channel(detection_probs, 0, hyperparams)
-                peaks_t1 = peaks_for_channel(detection_probs, 1, hyperparams)
-                nodes_t, features_t = nodes_and_features(features, peaks_t, device)
-                nodes_t1, features_t1 = nodes_and_features(features, peaks_t1, device)
-
-                if len(peaks_t) > 0 and len(peaks_t1) > 0:
-                    edge_logits = transformer(nodes_t, nodes_t1, features_t, features_t1)
-                    edge_probs = torch.sigmoid(edge_logits)
-                    assignment = greedy_edge_assignment(
-                        edge_probs, nodes_t.cpu(), nodes_t1.cpu(),
-                        threshold=hyperparams['edge_threshold'], max_children=2, max_parents=1
-                    )
-                    edges = assignment['edges']
-                else:
-                    edges = []
-
-                node_id_map_t = {}
-                for i, (z, y, xc) in enumerate(peaks_t):
-                    node_id_map_t[i] = pred_graph.add_node(
-                        {'t': t_idx, 'x': int(round(xc)), 'y': int(round(y)), 'z': int(round(z))}
-                    )
-                node_id_map_t1 = {}
-                for j, (z, y, xc) in enumerate(peaks_t1):
-                    node_id_map_t1[j] = pred_graph.add_node(
-                        {'t': t_idx + 1, 'x': int(round(xc)), 'y': int(round(y)), 'z': int(round(z))}
-                    )
-                for src_idx, tgt_idx, _prob in edges:
-                    pred_graph.add_edge(node_id_map_t[src_idx], node_id_map_t1[tgt_idx], {})
-
-        logger.info(f"{sample_id}: {pred_graph.num_nodes()} nodes, {pred_graph.num_edges()} edges")
+    required_dataset_ids = diagnostics["required_dataset_ids"]
+    logger.info(
+        f"Inference complete in {diagnostics['total_elapsed_seconds']:.1f}s: "
+        f"{diagnostics['total_unique_nodes']} nodes, {diagnostics['total_unique_edges']} edges, "
+        f"{diagnostics['total_accepted_edges']}/{diagnostics['total_candidate_edges']} edges accepted."
+    )
+    for sample_id in required_dataset_ids:
+        sample_diag = diagnostics["per_sample"][sample_id]
+        logger.info(
+            f"  {sample_id}: pairs={sample_diag['processed_pair_count']}/"
+            f"{sample_diag['expected_pair_count']} nodes={sample_diag['unique_node_count']} "
+            f"edges={sample_diag['unique_edge_count']} elapsed={sample_diag['elapsed_seconds']:.1f}s"
+        )
+    if "cuda_max_memory_allocated_bytes" in diagnostics:
+        logger.info(f"CUDA peak memory allocated: {diagnostics['cuda_max_memory_allocated_bytes']} bytes")
 
     out_path = "/kaggle/working/submission.csv"
     logger.info(f"Exporting submission to {out_path}")
-    csv_path = export_submission(all_pred_graphs, out_path, required_dataset_ids=required_dataset_ids)
-    is_valid = validate_submission(csv_path)
+    csv_path = export_submission(pred_graphs, out_path, required_dataset_ids=required_dataset_ids)
+    is_valid = validate_submission(csv_path, required_dataset_ids=required_dataset_ids)
     logger.info(f"validate_submission() result: {is_valid}")
     if not is_valid:
         raise RuntimeError("Generated submission.csv failed validate_submission() -- do not submit.")

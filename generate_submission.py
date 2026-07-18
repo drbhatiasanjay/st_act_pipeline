@@ -1,27 +1,27 @@
 """
-Smoke-test submission generator for Task 3.5.
+Local submission generator (P0-6, Part D).
 
-Runs the checkpoint's inference over the real TEST set (no ground truth --
-test samples have no .geff) and writes a Kaggle-compliant submission CSV.
-Reuses the exact inference pattern already verified in evaluate_checkpoint.py
-(Task 3.4), minus the GT-comparison step.
+Runs a verified, manifest-referenced checkpoint's inference over the real
+TEST set (no ground truth -- test samples have no .geff) via the shared
+production pipeline (src/submission_pipeline.py), and writes a Kaggle-
+compliant submission CSV. Fail-closed: refuses to run against an unverified
+checkpoint, a source/checkpoint SHA mismatch, or missing hyperparameters, and
+refuses to accept an unmanifested, header-only, zero-node, or zero-edge
+output.
 """
 
+import argparse
 import logging
 import sys
 import time
 from pathlib import Path
 
-import polars as pl
 import torch
-from torch.utils.data import DataLoader
-from tracksdata.graph import IndexedRXGraph
 
-from evaluate_checkpoint import extract_peaks, find_latest_local_checkpoint, get_nodes_and_features
-from src.dataset import CompetitionDataset
-from src.inference import greedy_edge_assignment
+from src.checkpoint_manifest import load_verified_checkpoint
 from src.model import SimpleNodeTransformer, UNet3D
 from src.submission_exporter import export_submission, validate_submission
+from src.submission_pipeline import run_submission_inference
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,131 +30,110 @@ logging.basicConfig(
 )
 logger = logging.getLogger("generate_submission")
 
+DEFAULT_SOURCE_SHA_FILE = "kaggle_src_dataset/GIT_SHA.txt"
+DEFAULT_TEST_DIR = "data/staging/test"
+DEFAULT_OUTPUT = "submissions/smoke_test_submission.csv"
 
-def main():
+
+def _read_source_sha(source_sha_file: Path) -> str:
+    if not source_sha_file.exists():
+        raise RuntimeError(f"Source SHA file not found: {source_sha_file}")
+    raw = source_sha_file.read_text(encoding="utf-8").strip()
+    if not raw:
+        raise RuntimeError(f"Source SHA file {source_sha_file} is empty or whitespace-only.")
+    if len(raw) != 40 or raw != raw.lower() or not all(c in "0123456789abcdef" for c in raw):
+        raise RuntimeError(
+            f"Source SHA file {source_sha_file} does not contain a 40-character "
+            f"lowercase hex git SHA: {raw!r}"
+        )
+    return raw
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate a local submission from a verified checkpoint.")
+    parser.add_argument("--manifest", required=True, type=Path, help="Path to checkpoint_manifest.json.")
+    parser.add_argument(
+        "--source-sha-file", type=Path, default=Path(DEFAULT_SOURCE_SHA_FILE),
+        help=f"Path to a file containing the expected 40-char training source SHA (default: {DEFAULT_SOURCE_SHA_FILE}).",
+    )
+    parser.add_argument(
+        "--test-dir", type=Path, default=Path(DEFAULT_TEST_DIR),
+        help=f"Directory containing test *.zarr samples (default: {DEFAULT_TEST_DIR}).",
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path(DEFAULT_OUTPUT),
+        help=f"Output submission CSV path (default: {DEFAULT_OUTPUT}).",
+    )
+    args = parser.parse_args()
+
     device = torch.device("cpu")
-    checkpoint_path = find_latest_local_checkpoint()
-    if checkpoint_path is None:
-        raise FileNotFoundError("No epoch_*.pt checkpoint found anywhere under the project root")
-    logger.info(f"Loading checkpoint from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location=device)
 
-    unet3d = UNet3D(in_channels=2, channels=(32, 64, 128))
-    transformer = SimpleNodeTransformer(hidden_dim=128, num_heads=4, num_blocks=4)
-    unet3d.load_state_dict(checkpoint['unet3d_state_dict'])
-    transformer.load_state_dict(checkpoint['transformer_state_dict'])
+    expected_source_sha = _read_source_sha(args.source_sha_file)
+    logger.info(f"Expected source SHA (from {args.source_sha_file}): {expected_source_sha}")
+
+    checkpoint, manifest, checkpoint_path = load_verified_checkpoint(
+        args.manifest, expected_source_sha=expected_source_sha, map_location=device,
+    )
+    logger.info(f"Loaded verified checkpoint: {checkpoint_path}")
+    logger.info(
+        f"Manifest identity: training_code_sha={manifest['training_code_sha']} "
+        f"split_membership_sha256={manifest['split_membership_sha256']} "
+        f"model_contract={manifest['model_contract']} epoch={manifest['epoch']} "
+        f"coverage={manifest['validation_samples_evaluated']}/{manifest['validation_samples_total']} "
+        f"adjusted_edge_jaccard={manifest['adjusted_edge_jaccard']}"
+    )
+
+    hyperparams = checkpoint["hyperparams"]
+
+    unet3d = UNet3D(in_channels=2, channels=(32, 64, 128)).to(device)
+    transformer = SimpleNodeTransformer(hidden_dim=128, num_heads=4, num_blocks=4).to(device)
+    unet3d.load_state_dict(checkpoint["unet3d_state_dict"], strict=True)
+    transformer.load_state_dict(checkpoint["transformer_state_dict"], strict=True)
     unet3d.eval()
     transformer.eval()
 
-    hyperparams = checkpoint.get('hyperparams', {
-        'edge_threshold': 0.5, 'detection_threshold': 0.5, 'nms_radius_um': 5.0,
-    })
-
-    test_dir = Path("data/staging/test")
+    test_dir = args.test_dir
     test_zarrs = sorted(test_dir.glob("*.zarr"))
-    logger.info(f"Found {len(test_zarrs)} real test samples: {[z.stem for z in test_zarrs]}")
+    logger.info(f"Found {len(test_zarrs)} real test sample(s) in {test_dir}: {[z.stem for z in test_zarrs]}")
 
-    all_pred_graphs = {}
+    t0 = time.monotonic()
+    pred_graphs, diagnostics = run_submission_inference(
+        test_dir=test_dir,
+        test_zarrs=test_zarrs,
+        unet3d=unet3d,
+        transformer=transformer,
+        device=device,
+        hyperparams=hyperparams,
+    )
+    elapsed = time.monotonic() - t0
 
-    for zarr_path in test_zarrs:
-        sample_id = zarr_path.stem
-        logger.info(f"=== Running inference on TEST sample {sample_id} ===")
-
-        # CompetitionDataset expects a data_dir + split_file/split_type; for
-        # test data (no labels, no split membership) construct pairs directly
-        # against this one sample instead of going through the split JSON.
-        dataset = CompetitionDataset.__new__(CompetitionDataset)
-        dataset.data_dir = test_dir
-        dataset.split_type = "test"
-        dataset.normalize = True
-        dataset.anisotropy = (4.0, 1.0, 1.0)
-        dataset.physical_voxel_size = (1.625, 0.40625, 0.40625)
-        dataset.zip_path = None
-        dataset.sample_ids = [sample_id]
-        dataset.pairs = []
-        dataset._loader_cache = {}
-        # P0-1 fix (2026-07-16): submission inference must see every real
-        # consecutive pair -- test samples have no .geff at all, so GT-count
-        # filtering isn't even meaningful here, let alone desirable.
-        dataset.filter_unannotated_pairs = False
-        dataset._gt_counts_by_time_cache = {}
-        dataset.annotation_pair_stats = None
-        dataset._build_pair_index()
-
-        if len(dataset) == 0:
-            logger.warning(f"No pairs built for {sample_id}, skipping")
-            continue
-
-        loader = DataLoader(dataset, batch_size=1, shuffle=False)
-
-        pred_graph = IndexedRXGraph()
-        for key in ('t', 'x', 'y', 'z'):
-            try:
-                pred_graph.add_node_attr_key(key, pl.Int64, 0)
-            except ValueError:
-                pass
-        all_pred_graphs[sample_id] = pred_graph
-
-        t0 = time.time()
-        total_nodes, total_edges = 0, 0
-        with torch.no_grad():
-            for batch in loader:
-                frame_t = batch['frame_t'].to(device)
-                frame_t1 = batch['frame_t1'].to(device)
-                t_idx = int(batch.get('t_idx', [0])[0])
-
-                x = torch.cat([frame_t, frame_t1], dim=1)
-                logits, features = unet3d(x)
-                detection_probs = torch.sigmoid(logits)
-
-                peaks_t = extract_peaks(detection_probs, channel=0, t_idx=t_idx, hyperparams=hyperparams)
-                peaks_t1 = extract_peaks(detection_probs, channel=1, t_idx=t_idx, hyperparams=hyperparams)
-                nodes_t, features_t = get_nodes_and_features(features, peaks_t, device)
-                nodes_t1, features_t1 = get_nodes_and_features(features, peaks_t1, device)
-
-                if len(peaks_t) > 0 and len(peaks_t1) > 0:
-                    edge_logits = transformer(nodes_t, nodes_t1, features_t, features_t1)
-                    edge_probs = torch.sigmoid(edge_logits)
-                    assignment = greedy_edge_assignment(
-                        edge_probs, nodes_t.cpu(), nodes_t1.cpu(),
-                        threshold=hyperparams['edge_threshold'], max_children=2, max_parents=1
-                    )
-                    edges = assignment['edges']
-                else:
-                    edges = []
-
-                node_id_map_t = {}
-                for i, (z, y, xc) in enumerate(peaks_t):
-                    node_id_map_t[i] = pred_graph.add_node({'t': t_idx, 'x': int(round(xc)), 'y': int(round(y)), 'z': int(round(z))})
-                node_id_map_t1 = {}
-                for j, (z, y, xc) in enumerate(peaks_t1):
-                    node_id_map_t1[j] = pred_graph.add_node({'t': t_idx + 1, 'x': int(round(xc)), 'y': int(round(y)), 'z': int(round(z))})
-                for src_idx, tgt_idx, _prob in edges:
-                    pred_graph.add_edge(node_id_map_t[src_idx], node_id_map_t1[tgt_idx], {})
-
-                total_nodes += len(peaks_t) + len(peaks_t1)
-                total_edges += len(edges)
-
-        elapsed = time.time() - t0
+    required_dataset_ids = diagnostics["required_dataset_ids"]
+    logger.info(
+        f"Inference complete in {elapsed:.1f}s: {diagnostics['total_unique_nodes']} nodes, "
+        f"{diagnostics['total_unique_edges']} edges, "
+        f"{diagnostics['total_accepted_edges']}/{diagnostics['total_candidate_edges']} edges accepted."
+    )
+    for sample_id in required_dataset_ids:
+        sample_diag = diagnostics["per_sample"][sample_id]
         logger.info(
-            f"{sample_id}: {len(loader)} batches in {elapsed:.1f}s -- "
-            f"final graph: {pred_graph.num_nodes()} nodes, {pred_graph.num_edges()} edges "
-            f"(raw totals across batches: {total_nodes} node-detections, {total_edges} edges)"
+            f"  {sample_id}: pairs={sample_diag['processed_pair_count']}/"
+            f"{sample_diag['expected_pair_count']} nodes={sample_diag['unique_node_count']} "
+            f"edges={sample_diag['unique_edge_count']} elapsed={sample_diag['elapsed_seconds']:.1f}s"
         )
+    if "cuda_max_memory_allocated_bytes" in diagnostics:
+        logger.info(f"CUDA peak memory allocated: {diagnostics['cuda_max_memory_allocated_bytes']} bytes")
 
-    Path("submissions").mkdir(exist_ok=True)
-    out_path = "submissions/smoke_test_submission.csv"
-    logger.info(f"Exporting submission to {out_path}")
-    csv_path = export_submission(all_pred_graphs, out_path)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    csv_path = export_submission(pred_graphs, args.output, required_dataset_ids=required_dataset_ids)
     logger.info(f"export_submission returned: {csv_path}")
 
-    logger.info("Running validate_submission()...")
-    is_valid = validate_submission(csv_path)
+    is_valid = validate_submission(csv_path, required_dataset_ids=required_dataset_ids)
     logger.info(f"validate_submission() result: {is_valid}")
+    if not is_valid:
+        raise RuntimeError("Generated submission.csv failed validate_submission() -- do not submit.")
 
-    for sid, g in all_pred_graphs.items():
-        logger.info(f"FINAL {sid}: {g.num_nodes()} nodes, {g.num_edges()} edges")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -632,6 +632,20 @@ def _get_class_method_source(file_path: str, class_name: str, method_name: str) 
     raise AssertionError(f"{class_name}.{method_name} not found in {file_path}")
 
 
+def _get_function_source(file_path: str, function_name: str) -> str:
+    """Top-level (module-scope) function counterpart to
+    _get_class_method_source -- P0-6's src/submission_pipeline.py owns the
+    shared inference call site as a plain function, not a class method."""
+    source = _get_module_source(file_path)
+    tree = ast.parse(source, filename=file_path)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            segment = ast.get_source_segment(source, node)
+            assert segment is not None
+            return segment
+    raise AssertionError(f"{function_name} not found in {file_path}")
+
+
 def _has_call(source: str, name_fragment: str) -> bool:
     """True if a genuine ast.Call node's function name/attribute contains
     name_fragment (e.g. 'division_loss_fn' or 'greedy_edge_assignment')."""
@@ -660,11 +674,28 @@ def _sigmoid_call_count(source: str) -> int:
     return count
 
 
+def _is_source_or_source_dot_float(node: ast.AST, source_name: str) -> bool:
+    """True if node is the bare Name source_name, OR the P0-6 Part A4
+    dtype-safe call pattern `source_name.float()` (a zero-arg .float() call
+    on that exact Name) -- e.g. torch.sigmoid(edge_logits.float())."""
+    if isinstance(node, ast.Name) and node.id == source_name:
+        return True
+    if isinstance(node, ast.Call) and not node.args and not node.keywords:
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute) and func.attr == "float"
+            and isinstance(func.value, ast.Name) and func.value.id == source_name
+        ):
+            return True
+    return False
+
+
 def _count_exact_sigmoid_assignment(source: str, target_name: str, source_name: str) -> int:
     """Count genuine `target_name = torch.sigmoid(source_name)` (or
-    `= sigmoid(source_name)`) assignments as real ast.Assign nodes -- a
-    comment or docstring containing this exact text is not an ast.Assign
-    node and will not be counted."""
+    `= sigmoid(source_name)`, or the dtype-safe `source_name.float()`
+    variant -- see _is_source_or_source_dot_float) assignments as real
+    ast.Assign nodes -- a comment or docstring containing this exact text
+    is not an ast.Assign node and will not be counted."""
     tree = ast.parse(source)
     count = 0
     for node in ast.walk(tree):
@@ -676,8 +707,7 @@ def _count_exact_sigmoid_assignment(source: str, target_name: str, source_name: 
                     func = val.func
                     is_sigmoid = (isinstance(func, ast.Attribute) and func.attr == "sigmoid") or \
                                  (isinstance(func, ast.Name) and func.id == "sigmoid")
-                    if is_sigmoid and len(val.args) == 1 and isinstance(val.args[0], ast.Name) \
-                            and val.args[0].id == source_name:
+                    if is_sigmoid and len(val.args) == 1 and _is_source_or_source_dot_float(val.args[0], source_name):
                         count += 1
     return count
 
@@ -749,11 +779,64 @@ class TestP05ProductionCallSiteRegression:
     def test_verify_eval_fixed_py(self):
         self._assert_inference_script_pattern("verify_eval_fixed.py")
 
+    def _assert_shared_pipeline_caller_pattern(self, file_path: str):
+        """P0-6: generate_submission.py and inference_kernel.py no longer
+        own any transformer/sigmoid/greedy_edge_assignment call directly --
+        that logic moved into src/submission_pipeline.py's
+        run_sample_loader_inference() (see
+        TestP06SubmissionPipelineCallSite below) so the two production
+        callers can never silently duplicate or diverge from each other.
+        Each caller must instead call the shared
+        run_submission_inference() entry point and contain NONE of the old
+        direct call patterns."""
+        source = _get_module_source(file_path)
+
+        assert _has_call(source, "run_submission_inference"), (
+            f"{file_path} must call the shared src.submission_pipeline.run_submission_inference()"
+        )
+        assert not _has_call(source, "transformer"), (
+            f"{file_path} must not call the transformer directly -- that belongs in "
+            f"src/submission_pipeline.py only"
+        )
+        assert not _has_call(source, "greedy_edge_assignment"), (
+            f"{file_path} must not call greedy_edge_assignment directly -- that belongs in "
+            f"src/submission_pipeline.py only"
+        )
+        assert _count_exact_sigmoid_assignment(source, "edge_probs", "edge_logits") == 0, (
+            f"{file_path} must not apply edge-logit Sigmoid directly -- that belongs in "
+            f"src/submission_pipeline.py only"
+        )
+
     def test_generate_submission_py(self):
-        self._assert_inference_script_pattern("generate_submission.py")
+        self._assert_shared_pipeline_caller_pattern("generate_submission.py")
 
     def test_inference_kernel_py(self):
-        self._assert_inference_script_pattern("kaggle_kernel_inference/inference_kernel.py")
+        self._assert_shared_pipeline_caller_pattern("kaggle_kernel_inference/inference_kernel.py")
+
+
+class TestP06SubmissionPipelineCallSite:
+    """P0-6: the real transformer/sigmoid/greedy_edge_assignment call site
+    generate_submission.py and inference_kernel.py now delegate to --
+    src/submission_pipeline.py's run_sample_loader_inference() -- must
+    itself follow the exact same one-Sigmoid-before-assignment contract
+    TestP05ProductionCallSiteRegression enforces for every other real
+    inference/validation path. Preserves the original P0-5 invariant
+    (exactly one Sigmoid applied to edge logits before greedy assignment,
+    never before DivisionLoss) at its new real call site."""
+
+    def test_run_sample_loader_inference(self):
+        source = _get_function_source("src/submission_pipeline.py", "run_sample_loader_inference")
+
+        assert _has_call(source, "transformer"), "run_sample_loader_inference must call the transformer"
+        assert _has_call(source, "greedy_edge_assignment"), \
+            "run_sample_loader_inference must call greedy_edge_assignment"
+        assert _count_exact_sigmoid_assignment(source, "edge_probs", "edge_logits") == 1, (
+            "run_sample_loader_inference must apply exactly one torch.sigmoid(edge_logits) "
+            "(assigned to edge_probs) before greedy_edge_assignment"
+        )
+        assert _first_positional_arg_name(source, "greedy_edge_assignment") == "edge_probs", (
+            "greedy_edge_assignment must receive the sigmoided edge_probs, not raw edge_logits"
+        )
 
 
 if __name__ == "__main__":

@@ -228,9 +228,10 @@ class TestExportSubmission:
         node_ids_b = df_b[df_b['row_type'] == 'node']['node_id'].tolist()
         assert node_ids_b == [1, 2]  # Reset, not [3, 4]
 
-    def test_export_all_datasets_zero_detections_produces_valid_empty_csv(self, temp_csv):
-        """REGRESSION GUARD: a submission where every dataset has zero nodes/edges must
-        still export a schema-correct, header-only CSV, not crash.
+    def test_export_all_datasets_zero_detections_produces_valid_empty_csv_generic_mode(self, temp_csv):
+        """REGRESSION GUARD: in GENERIC mode (required_dataset_ids=None), a
+        submission where every dataset has zero nodes/edges must still
+        export a schema-correct, header-only CSV, not crash.
 
         Real bug, hit live on Kaggle (inference_kernel.py v4): pd.DataFrame(rows) on a
         fully-empty rows list produces a DataFrame with zero columns, so the subsequent
@@ -238,15 +239,18 @@ class TestExportSubmission:
         happens for real whenever the checkpoint under test produces no detections on any
         real test sample (confirmed with the known severely-undertrained sanity-check
         checkpoint) -- not just a hypothetical input.
+
+        P0-6: generic (required_dataset_ids=None) mode is the ONLY mode that
+        still accepts this -- see
+        test_export_all_datasets_zero_detections_raises_in_required_mode for
+        the new fail-closed required-mode behavior.
         """
         empty_graph_a = self.create_synthetic_graph([])
         empty_graph_b = self.create_synthetic_graph([])
         graphs_dict = {'dataset_A': empty_graph_a, 'dataset_B': empty_graph_b}
         csv_path = temp_csv / 'test_all_empty.csv'
 
-        result_path = export_submission(
-            graphs_dict, csv_path, required_dataset_ids=['dataset_A', 'dataset_B']
-        )
+        result_path = export_submission(graphs_dict, csv_path)
 
         df = pd.read_csv(result_path)
         assert len(df) == 0
@@ -255,6 +259,21 @@ class TestExportSubmission:
         ]
         # validate_submission() must accept a genuinely empty-but-schema-correct submission
         assert validate_submission(result_path) is True
+
+    def test_export_all_datasets_zero_detections_raises_in_required_mode(self, temp_csv):
+        """P0-6 (Part E1.6): required_dataset_ids mode must REJECT (not
+        silently accept, not just warn) any required dataset with zero
+        nodes -- fabricating an empty-but-"valid" submission for a real
+        graded run would hide a genuinely broken checkpoint/pipeline."""
+        empty_graph_a = self.create_synthetic_graph([])
+        empty_graph_b = self.create_synthetic_graph([])
+        graphs_dict = {'dataset_A': empty_graph_a, 'dataset_B': empty_graph_b}
+        csv_path = temp_csv / 'test_all_empty_required.csv'
+
+        with pytest.raises(ValueError, match="ZERO nodes"):
+            export_submission(
+                graphs_dict, csv_path, required_dataset_ids=['dataset_A', 'dataset_B']
+            )
 
     def test_coordinates_are_integers(self, temp_csv):
         """Test that exported coordinates are integers (no floats)."""
@@ -529,3 +548,312 @@ class TestIntegrationExportAndValidate:
             assert len(df) == 8
             assert len(df[df['dataset'] == 'dataset_A']) == 3
             assert len(df[df['dataset'] == 'dataset_B']) == 5
+
+
+def _make_graph(nodes_data, edges_data=None):
+    """Module-level synthetic-graph helper (P0-6, Part F3) -- identical
+    pattern to the class-scoped create_synthetic_graph() helpers above,
+    factored out for reuse across the new required_dataset_ids test classes."""
+    graph = td.graph.IndexedRXGraph()
+    if nodes_data:
+        for key in ('z', 'y', 'x'):
+            try:
+                graph.add_node_attr_key(key, pl.Int64, 0)
+            except ValueError:
+                pass
+        name_to_id = {}
+        for node_spec in nodes_data:
+            node_name = node_spec['name']
+            attrs = {k: v for k, v in node_spec.items() if k != 'name'}
+            node_id = graph.add_node(attrs)
+            name_to_id[node_name] = node_id
+    if edges_data:
+        for source_name, target_name in edges_data:
+            graph.add_edge(name_to_id[source_name], name_to_id[target_name], {})
+    return graph
+
+
+class TestExportSubmissionRequiredDatasetIdsValidation:
+    """P0-6 (Part F3): export_submission()'s required_dataset_ids preflight
+    validation -- empty list, duplicates, non-string/empty entries."""
+
+    @pytest.fixture
+    def temp_csv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir)
+
+    def _one_node_graph(self):
+        return _make_graph([{'name': 'n1', 't': 0, 'z': 1, 'y': 1, 'x': 1}])
+
+    def test_empty_required_ids_raises(self, temp_csv):
+        graphs = {'ds_a': self._one_node_graph()}
+        with pytest.raises(ValueError, match="must not be an empty list"):
+            export_submission(graphs, temp_csv / 'out.csv', required_dataset_ids=[])
+
+    def test_empty_string_required_id_raises(self, temp_csv):
+        graphs = {'ds_a': self._one_node_graph()}
+        with pytest.raises(ValueError, match="non-empty strings"):
+            export_submission(graphs, temp_csv / 'out.csv', required_dataset_ids=['ds_a', ''])
+
+    def test_duplicate_required_id_raises(self, temp_csv):
+        graphs = {'ds_a': self._one_node_graph()}
+        with pytest.raises(ValueError, match="duplicate ID"):
+            export_submission(graphs, temp_csv / 'out.csv', required_dataset_ids=['ds_a', 'ds_a'])
+
+    def test_missing_required_dataset_raises(self, temp_csv):
+        """F3.1: a dataset required but absent from graphs_dict must raise."""
+        graphs = {'ds_a': self._one_node_graph()}
+        with pytest.raises(ValueError, match="Missing"):
+            export_submission(graphs, temp_csv / 'out.csv', required_dataset_ids=['ds_a', 'ds_b'])
+
+    def test_unexpected_dataset_raises(self, temp_csv):
+        """F3.2: a dataset present in graphs_dict but not required must raise."""
+        graphs = {'ds_a': self._one_node_graph(), 'ds_b': self._one_node_graph()}
+        with pytest.raises(ValueError, match="Unexpected"):
+            export_submission(graphs, temp_csv / 'out.csv', required_dataset_ids=['ds_a'])
+
+    def test_zero_node_required_sample_raises(self, temp_csv):
+        """F3.6: any required dataset with zero nodes raises, even when
+        other required datasets have real detections."""
+        graphs = {'ds_a': self._one_node_graph(), 'ds_b': _make_graph([])}
+        with pytest.raises(ValueError, match="ZERO nodes"):
+            export_submission(graphs, temp_csv / 'out.csv', required_dataset_ids=['ds_a', 'ds_b'])
+
+    def test_zero_total_edges_raises(self, temp_csv):
+        """F3.8: every required dataset has >=1 node but zero edges anywhere
+        -- must still fail in required mode (a real submission with isolated
+        singleton detections and no real tracked edges is not acceptable)."""
+        graphs = {'ds_a': self._one_node_graph(), 'ds_b': self._one_node_graph()}
+        with pytest.raises(ValueError, match="edge row count"):
+            export_submission(graphs, temp_csv / 'out.csv', required_dataset_ids=['ds_a', 'ds_b'])
+
+    def test_valid_multi_dataset_submission_passes(self, temp_csv):
+        """F3.22: a genuinely valid multi-dataset submission (each required
+        dataset has nodes, at least one dataset has a real edge) exports and
+        validates cleanly."""
+        graph_a = _make_graph(
+            [{'name': 'a1', 't': 0, 'z': 1, 'y': 1, 'x': 1}, {'name': 'a2', 't': 1, 'z': 1, 'y': 1, 'x': 2}],
+            edges_data=[('a1', 'a2')],
+        )
+        graph_b = self._one_node_graph()
+        graphs = {'ds_a': graph_a, 'ds_b': graph_b}
+        csv_path = export_submission(graphs, temp_csv / 'out.csv', required_dataset_ids=['ds_a', 'ds_b'])
+        assert validate_submission(csv_path, required_dataset_ids=['ds_a', 'ds_b']) is True
+
+
+class TestValidateSubmissionRequiredMode:
+    """P0-6 (Part F3/E2): validate_submission()'s required_dataset_ids
+    structural checks -- exact dataset equality, per-required-dataset node
+    presence, edge structural validity (endpoints, self-edges, consecutive
+    time, duplicates, degree limits, non-negative/positive/integer values)."""
+
+    @pytest.fixture
+    def temp_csv(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield Path(tmpdir)
+
+    def _write_csv(self, path, rows):
+        df = pd.DataFrame(rows)
+        column_order = ['id', 'dataset', 'row_type', 'node_id', 't', 'z', 'y', 'x', 'source_id', 'target_id']
+        df = df[column_order]
+        df.to_csv(path, index=False)
+        return path
+
+    def _base_valid_rows(self):
+        """One dataset, 2 nodes (t=0 -> t=1), 1 valid edge between them."""
+        return [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 2, 't': 1, 'z': 1, 'y': 2, 'x': 4, 'source_id': -1, 'target_id': -1},
+            {'id': 2, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 2},
+        ]
+
+    def test_valid_submission_passes_required_mode(self, temp_csv):
+        csv_path = self._write_csv(temp_csv / 'valid.csv', self._base_valid_rows())
+        assert validate_submission(csv_path, required_dataset_ids=['ds_a']) is True
+
+    def test_header_only_fails_required_mode(self, temp_csv):
+        """F3.7: header-only passes generic mode but must fail required mode."""
+        csv_path = temp_csv / 'empty.csv'
+        pd.DataFrame(columns=['id', 'dataset', 'row_type', 'node_id', 't', 'z', 'y', 'x', 'source_id', 'target_id']).to_csv(csv_path, index=False)
+        assert validate_submission(csv_path) is True  # generic mode still accepts it
+        with pytest.raises(ValueError, match="header-only"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_missing_required_dataset_raises(self, temp_csv):
+        csv_path = self._write_csv(temp_csv / 'missing.csv', self._base_valid_rows())
+        with pytest.raises(ValueError, match="Missing"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a', 'ds_b'])
+
+    def test_unexpected_dataset_raises(self, temp_csv):
+        csv_path = self._write_csv(temp_csv / 'unexpected.csv', self._base_valid_rows())
+        with pytest.raises(ValueError, match="Unexpected"):
+            validate_submission(csv_path, required_dataset_ids=['ds_z'])
+
+    def test_zero_node_required_dataset_raises(self, temp_csv):
+        """F3.5/F3.6: a required dataset with zero node rows can only occur
+        as total absence from the CSV (an edge row can never reference a
+        dataset with no node rows of its own) -- both are caught by the
+        same exact-dataset-equality check."""
+        rows = self._base_valid_rows()
+        csv_path = self._write_csv(temp_csv / 'zero_node.csv', rows)
+        with pytest.raises(ValueError, match="Missing"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a', 'ds_b'])
+
+    def test_missing_source_node_raises(self, temp_csv):
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 1, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 99, 'target_id': 1},
+        ]
+        csv_path = self._write_csv(temp_csv / 'missing_source.csv', rows)
+        with pytest.raises(ValueError, match="missing source"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_missing_target_node_raises(self, temp_csv):
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 99},
+        ]
+        csv_path = self._write_csv(temp_csv / 'missing_target.csv', rows)
+        with pytest.raises(ValueError, match="missing target"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_cross_dataset_endpoint_raises(self, temp_csv):
+        """F3.11: an edge in ds_a referencing node_id=2 must be treated as a
+        missing endpoint even though ds_b legitimately has a node_id=2 --
+        node_id numbering is per-dataset-local, so lookups must be keyed by
+        (dataset, node_id), never by node_id alone."""
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_b', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 2, 'dataset': 'ds_b', 'row_type': 'node', 'node_id': 2, 't': 1, 'z': 1, 'y': 2, 'x': 4, 'source_id': -1, 'target_id': -1},
+            {'id': 3, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 2},
+        ]
+        csv_path = self._write_csv(temp_csv / 'cross_dataset.csv', rows)
+        with pytest.raises(ValueError, match="missing target"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a', 'ds_b'])
+
+    def test_self_edge_raises(self, temp_csv):
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 1},
+        ]
+        csv_path = self._write_csv(temp_csv / 'self_edge.csv', rows)
+        with pytest.raises(ValueError, match="self-edge"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_non_consecutive_time_raises(self, temp_csv):
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 2, 't': 2, 'z': 1, 'y': 2, 'x': 4, 'source_id': -1, 'target_id': -1},
+            {'id': 2, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 2},
+        ]
+        csv_path = self._write_csv(temp_csv / 'non_consecutive.csv', rows)
+        with pytest.raises(ValueError, match="target_t == source_t \\+ 1"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_duplicate_edge_raises(self, temp_csv):
+        rows = self._base_valid_rows() + [
+            {'id': 3, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 2},
+        ]
+        csv_path = self._write_csv(temp_csv / 'dup_edge.csv', rows)
+        with pytest.raises(ValueError, match="Duplicate edge"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_out_degree_exceeds_two_raises(self, temp_csv):
+        """F3.15: a node with 3 outgoing edges (only 0/1/2 children are
+        physically valid) must raise."""
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 2, 't': 1, 'z': 1, 'y': 2, 'x': 4, 'source_id': -1, 'target_id': -1},
+            {'id': 2, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 3, 't': 1, 'z': 1, 'y': 2, 'x': 5, 'source_id': -1, 'target_id': -1},
+            {'id': 3, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 4, 't': 1, 'z': 1, 'y': 2, 'x': 6, 'source_id': -1, 'target_id': -1},
+            {'id': 4, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 2},
+            {'id': 5, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 3},
+            {'id': 6, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 4},
+        ]
+        csv_path = self._write_csv(temp_csv / 'out_degree.csv', rows)
+        with pytest.raises(ValueError, match="out-degree"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_in_degree_exceeds_one_raises(self, temp_csv):
+        """F3.16: a node with 2 incoming edges (a real cell has exactly one
+        parent) must raise."""
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 2, 't': 0, 'z': 1, 'y': 2, 'x': 4, 'source_id': -1, 'target_id': -1},
+            {'id': 2, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 3, 't': 1, 'z': 1, 'y': 2, 'x': 5, 'source_id': -1, 'target_id': -1},
+            {'id': 3, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 3},
+            {'id': 4, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 2, 'target_id': 3},
+        ]
+        csv_path = self._write_csv(temp_csv / 'in_degree.csv', rows)
+        with pytest.raises(ValueError, match="in-degree"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_negative_node_coordinate_raises(self, temp_csv):
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': -1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 2, 't': 1, 'z': 1, 'y': 2, 'x': 4, 'source_id': -1, 'target_id': -1},
+            {'id': 2, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 2},
+        ]
+        csv_path = self._write_csv(temp_csv / 'neg_coord.csv', rows)
+        with pytest.raises(ValueError, match="negative time/coordinate"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_fractional_coordinate_raises(self, temp_csv):
+        """F3.18: a fractional (non-integer) coordinate value fails the
+        generic integer-value check, which required mode still runs."""
+        rows = self._base_valid_rows()
+        csv_path = temp_csv / 'fractional.csv'
+        df = pd.DataFrame(rows)
+        column_order = ['id', 'dataset', 'row_type', 'node_id', 't', 'z', 'y', 'x', 'source_id', 'target_id']
+        df = df[column_order]
+        df['z'] = df['z'].astype(float)
+        df.loc[0, 'z'] = 1.5
+        df.to_csv(csv_path, index=False)
+        with pytest.raises(ValueError, match="integer values"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_zero_source_id_raises(self, temp_csv):
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 0, 'target_id': 1},
+        ]
+        csv_path = self._write_csv(temp_csv / 'zero_source.csv', rows)
+        with pytest.raises(ValueError, match="positive"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_zero_target_id_raises(self, temp_csv):
+        """A literal target_id=0 slips past the generic '< 0' check (0 is
+        not negative) but must still be rejected in required mode: node_ids
+        are 1-indexed, so 0 can never be a genuine node reference."""
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 0},
+        ]
+        csv_path = self._write_csv(temp_csv / 'zero_target.csv', rows)
+        with pytest.raises(ValueError, match="positive"):
+            validate_submission(csv_path, required_dataset_ids=['ds_a'])
+
+    def test_valid_division_two_children_passes(self, temp_csv):
+        """F3.21: a genuine division (one parent node -> 2 children at
+        t+1) is a legitimate, physically valid pattern and must PASS."""
+        rows = [
+            {'id': 0, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 1, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 2, 't': 1, 'z': 1, 'y': 2, 'x': 4, 'source_id': -1, 'target_id': -1},
+            {'id': 2, 'dataset': 'ds_a', 'row_type': 'node', 'node_id': 3, 't': 1, 'z': 1, 'y': 2, 'x': 5, 'source_id': -1, 'target_id': -1},
+            {'id': 3, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 2},
+            {'id': 4, 'dataset': 'ds_a', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 3},
+        ]
+        csv_path = self._write_csv(temp_csv / 'division.csv', rows)
+        assert validate_submission(csv_path, required_dataset_ids=['ds_a']) is True
+
+    def test_valid_multi_dataset_submission_passes(self, temp_csv):
+        """F3.22: independent verification via validate_submission() alone
+        (not just the export_submission round-trip test above)."""
+        rows = self._base_valid_rows() + [
+            {'id': 3, 'dataset': 'ds_b', 'row_type': 'node', 'node_id': 1, 't': 0, 'z': 1, 'y': 2, 'x': 3, 'source_id': -1, 'target_id': -1},
+            {'id': 4, 'dataset': 'ds_b', 'row_type': 'node', 'node_id': 2, 't': 1, 'z': 1, 'y': 2, 'x': 4, 'source_id': -1, 'target_id': -1},
+            {'id': 5, 'dataset': 'ds_b', 'row_type': 'edge', 'node_id': -1, 't': -1, 'z': -1, 'y': -1, 'x': -1, 'source_id': 1, 'target_id': 2},
+        ]
+        csv_path = self._write_csv(temp_csv / 'multi.csv', rows)
+        assert validate_submission(csv_path, required_dataset_ids=['ds_a', 'ds_b']) is True

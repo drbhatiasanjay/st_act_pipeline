@@ -27,6 +27,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 
+from src import checkpoint_manifest
 from src.evaluation import (
     DEFAULT_MAX_DISTANCE,
     DEFAULT_SCALE,
@@ -159,6 +160,69 @@ def extract_peaks_from_volume(
         ))
         centroids.append(refined_center if shift_um <= max_shift_um else plateau_center)
     return centroids
+
+
+def extract_inference_peaks(
+    detection_probs: torch.Tensor,
+    channel: int,
+    t_idx: int,
+    hyperparams: dict[str, Any],
+) -> list:
+    """Shared production top-level version of TrainingLoop._peaks_for_channel()
+    (P0-6, Part A5) -- extracts NMS peaks from one channel of a (B, 2, Z, Y, X)
+    detection map, with the same adaptive-threshold guard against an
+    undertrained model's near-uniform sigmoid output (see
+    TrainingLoop._peaks_for_channel()'s docstring for the full rationale).
+    TrainingLoop._peaks_for_channel() and src/submission_pipeline.py both
+    delegate to this single implementation so validation and submission
+    inference can never silently diverge."""
+    vol_np = detection_probs[0, channel].cpu().numpy()
+    threshold = hyperparams['detection_threshold']
+    positive_fraction = float((vol_np > threshold).mean())
+    max_positive_fraction = hyperparams.get('max_positive_voxel_fraction', 0.005)
+    if positive_fraction > max_positive_fraction:
+        adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
+        logger.warning(
+            f"t_idx={t_idx} ch={channel}: threshold={threshold} flags "
+            f"{positive_fraction*100:.2f}% of voxels (undertrained-model miscalibration) "
+            f"-- using adaptive threshold={adaptive_threshold:.4f} instead"
+        )
+        threshold = max(adaptive_threshold, threshold)
+    elif positive_fraction == 0.0:
+        adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
+        logger.warning(
+            f"t_idx={t_idx} ch={channel}: threshold={threshold} flags "
+            f"0% of voxels (severe under-confidence) -- using adaptive "
+            f"threshold={adaptive_threshold:.6f} instead"
+        )
+        threshold = adaptive_threshold
+    return extract_peaks_from_volume(
+        vol_np,
+        threshold=threshold,
+        voxel_size=DEFAULT_SCALE,
+        nms_radius_um=hyperparams['nms_radius_um']
+    )
+
+
+def nodes_and_features_at_peaks(
+    features: torch.Tensor, peaks: list, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Shared production top-level version of
+    TrainingLoop._nodes_and_features_at_peaks() (P0-6, Part A5) -- builds
+    (n, 3) node coords and (n, C) feature vectors at given peak locations.
+    TrainingLoop._nodes_and_features_at_peaks() and
+    src/submission_pipeline.py both delegate to this single implementation."""
+    if len(peaks) == 0:
+        return (
+            torch.zeros((0, 3), dtype=torch.float32, device=device),
+            torch.zeros((0, features.shape[1]), dtype=torch.float32, device=device),
+        )
+    nodes = torch.tensor(peaks, dtype=torch.float32, device=device)
+    zc = torch.clamp(nodes[:, 0].long(), 0, features.shape[2] - 1)
+    yc = torch.clamp(nodes[:, 1].long(), 0, features.shape[3] - 1)
+    xc = torch.clamp(nodes[:, 2].long(), 0, features.shape[4] - 1)
+    feats = features[0, :, zc, yc, xc].t()
+    return nodes, feats
 
 
 class TrainingLoop:
@@ -871,62 +935,22 @@ class TrainingLoop:
     def _peaks_for_channel(self, detection_probs: torch.Tensor, channel: int, t_idx: int) -> list:
         """Extract NMS peaks from one channel of a (B, 2, Z, Y, X) detection map.
 
-        An undertrained model's raw sigmoid output sits near 0.5 almost
-        everywhere (near-zero logits), so a fixed threshold can flag a huge
-        fraction of voxels as "peaks" -- ndimage.label() over that much noise
-        then hangs/balloons memory. Same failure mode hit and fixed in
-        scripts/benchmark_heatmap_targets.py this session; apply the same
-        adaptive-threshold guard here.
+        P0-6 (Part A5): delegates to the shared top-level
+        extract_inference_peaks() so validation and submission inference
+        (src/submission_pipeline.py) can never silently diverge -- see that
+        function's docstring for the adaptive-threshold rationale.
         """
-        vol_np = detection_probs[0, channel].cpu().numpy()
-        threshold = self.hyperparams['detection_threshold']
-        positive_fraction = float((vol_np > threshold).mean())
-        max_positive_fraction = self.hyperparams.get('max_positive_voxel_fraction', 0.005)
-        if positive_fraction > max_positive_fraction:
-            adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
-            logger.warning(
-                f"Validation t_idx={t_idx} ch={channel}: threshold={threshold} flags "
-                f"{positive_fraction*100:.2f}% of voxels (undertrained-model miscalibration) "
-                f"-- using adaptive threshold={adaptive_threshold:.4f} instead"
-            )
-            threshold = max(adaptive_threshold, threshold)
-        elif positive_fraction == 0.0:
-            # Opposite failure mode: raw confidence never crosses the fixed
-            # threshold ANYWHERE in the volume (e.g. RetinaNet-style prior-bias
-            # init, pi=1e-4, still under-trained past absolute 0.5) --
-            # extract_peaks_from_volume would silently return zero peaks
-            # forever otherwise, regardless of real relative peak structure in
-            # the raw probabilities. Lower the bar to the top
-            # max_positive_fraction percentile instead of leaving it fixed.
-            adaptive_threshold = float(np.percentile(vol_np, 100 * (1 - max_positive_fraction)))
-            logger.warning(
-                f"Validation t_idx={t_idx} ch={channel}: threshold={threshold} flags "
-                f"0% of voxels (severe under-confidence) -- using adaptive "
-                f"threshold={adaptive_threshold:.6f} instead"
-            )
-            threshold = adaptive_threshold
-        return extract_peaks_from_volume(
-            vol_np,
-            threshold=threshold,
-            voxel_size=DEFAULT_SCALE,
-            nms_radius_um=self.hyperparams['nms_radius_um']
+        return extract_inference_peaks(
+            detection_probs, channel=channel, t_idx=t_idx, hyperparams=self.hyperparams,
         )
 
     def _nodes_and_features_at_peaks(
         self, features: torch.Tensor, peaks: list
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Build (n, 3) node coords and (n, C) feature vectors at given peak locations."""
-        if len(peaks) == 0:
-            return (
-                torch.zeros((0, 3), dtype=torch.float32, device=self.device),
-                torch.zeros((0, features.shape[1]), dtype=torch.float32, device=self.device),
-            )
-        nodes = torch.tensor(peaks, dtype=torch.float32, device=self.device)
-        zc = torch.clamp(nodes[:, 0].long(), 0, features.shape[2] - 1)
-        yc = torch.clamp(nodes[:, 1].long(), 0, features.shape[3] - 1)
-        xc = torch.clamp(nodes[:, 2].long(), 0, features.shape[4] - 1)
-        feats = features[0, :, zc, yc, xc].t()
-        return nodes, feats
+        """Build (n, 3) node coords and (n, C) feature vectors at given peak
+        locations. P0-6 (Part A5): delegates to the shared top-level
+        nodes_and_features_at_peaks()."""
+        return nodes_and_features_at_peaks(features, peaks, self.device)
 
     def validate_epoch(self) -> dict[str, float]:
         """
@@ -1234,6 +1258,12 @@ class TrainingLoop:
                 val_metrics_clean['predicted_nodes_total'] = total_predicted_nodes
                 val_metrics_clean['predicted_edges_total'] = total_predicted_edges
                 val_metrics_clean['is_structural_zero'] = (total_predicted_nodes == 0)
+                # P0-6 (adversarial finding 23): explicit evaluation-success
+                # provenance, checked literally (is True) by
+                # checkpoint_manifest.deployment_eligibility_errors() --
+                # independent of any other metric field, including a
+                # legitimate adjusted_edge_jaccard of exactly 0.0.
+                val_metrics_clean['evaluation_completed_successfully'] = True
                 val_metrics_clean['validation_is_full_fold'] = validation_is_full_fold
                 val_metrics_clean['validation_samples_evaluated'] = len(all_pred_graphs)
                 val_metrics_clean['validation_samples_total'] = (
@@ -1280,6 +1310,14 @@ class TrainingLoop:
         )
         val_metrics['validation_sample_cap'] = validation_sample_cap
         val_metrics['is_structural_zero'] = (total_predicted_nodes == 0)
+        # P0-6 (adversarial finding 23): both fallback paths reaching here --
+        # an evaluation exception, or no usable GT graphs at all -- are
+        # EXPLICITLY marked as a non-successful evaluation, independent of
+        # whatever score value they happen to report (both currently report
+        # 0.0, but this field is what deployment_eligibility_errors() checks,
+        # not the score itself, so this remains correct even if a future
+        # change to the fallback value stops being exactly 0.0).
+        val_metrics['evaluation_completed_successfully'] = False
         return val_metrics
 
     def fit(self, num_epochs: int, max_wall_clock_seconds: float | None = None):
@@ -1378,6 +1416,18 @@ class TrainingLoop:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'train_loss': train_loss,
             'hyperparams': self.hyperparams,
+            # P0-6 (Part B3): embedded for consistency with save_checkpoint(),
+            # but last_checkpoint.pt can NEVER become deployment-eligible --
+            # it has no 'val_metrics' key at all (see
+            # checkpoint_manifest.deployment_eligibility_errors()), so this
+            # never gets a manifest (Part B4/F6.7).
+            'checkpoint_schema_version': checkpoint_manifest.CHECKPOINT_SCHEMA_VERSION,
+            # getattr(): a bare TrainingLoop.__new__() test double (bypassing
+            # __init__) may not set self.deployed_sha -- real production
+            # instances always go through __init__, which defaults it to
+            # "unknown" anyway, so this is behaviorally identical there.
+            'training_code_sha': getattr(self, 'deployed_sha', 'unknown'),
+            'model_contract': checkpoint_manifest.MODEL_CONTRACT,
         }
         # P0-2 fix (2026-07-16): same identity-embedding contract as
         # save_checkpoint() -- omit the key entirely (not a placeholder
@@ -1401,6 +1451,12 @@ class TrainingLoop:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'val_metrics': metrics,
             'hyperparams': self.hyperparams,
+            # P0-6 (Part B3): identity fields verified checkpoint deployment
+            # (src/checkpoint_manifest.py) requires before a manifest may
+            # reference this checkpoint.
+            'checkpoint_schema_version': checkpoint_manifest.CHECKPOINT_SCHEMA_VERSION,
+            'training_code_sha': getattr(self, 'deployed_sha', 'unknown'),
+            'model_contract': checkpoint_manifest.MODEL_CONTRACT,
         }
         # P0-2 fix (2026-07-16): omit the key entirely (not a placeholder
         # value) when self.split_identity is "unknown", so
@@ -1410,13 +1466,110 @@ class TrainingLoop:
         if self.split_identity != "unknown":
             checkpoint['split_membership_sha256'] = self.split_identity
 
-        torch.save(checkpoint, checkpoint_path)
+        # P0-6 (collision-safety correction): determine the active manifest's
+        # protected checkpoint, and this new checkpoint's own eligibility,
+        # BEFORE writing a single byte to disk. Both checks are pure
+        # in-memory operations (deployment_eligibility_errors() only reads
+        # the `checkpoint` dict; it never touches the filesystem), so this
+        # ordering costs nothing and closes a real gap: the derived filename
+        # is deterministic from (epoch, rounded val_score) alone, so a
+        # repeated/resumed epoch that lands on the SAME rounded score as the
+        # currently-deployed checkpoint would otherwise have its bytes
+        # silently destroyed by torch.save() before eligibility or the
+        # active manifest were ever consulted.
+        #
+        # Fail-closed (adversarial finding 24): uses the shared production
+        # manifest parser/validator
+        # (checkpoint_manifest.read_active_manifest_checkpoint_path()), which
+        # raises on ANY malformed JSON, duplicate/unknown/missing key, invalid
+        # value, unsafe checkpoint filename, symlink, directory escape, or
+        # missing referenced checkpoint file. This intentionally propagates --
+        # never caught and downgraded to a warning -- because a malformed or
+        # ambiguous active manifest means we cannot safely determine what to
+        # protect, and proceeding anyway risks deleting or overwriting the
+        # checkpoint a still-active (just unparseable-by-us) manifest
+        # references. Nothing is written to disk if this raises.
+        manifest_path = self.checkpoint_dir / checkpoint_manifest.MANIFEST_FILENAME
+        protected_checkpoint_path = checkpoint_manifest.read_active_manifest_checkpoint_path(self.checkpoint_dir)
+        eligibility_errors = checkpoint_manifest.deployment_eligibility_errors(checkpoint)
+
+        collides_with_active = (
+            protected_checkpoint_path is not None
+            and checkpoint_path.resolve() == protected_checkpoint_path.resolve()
+        )
+
+        if collides_with_active and eligibility_errors:
+            # An ineligible checkpoint must never be allowed to destroy the
+            # active eligible checkpoint's bytes -- refuse outright, before
+            # any write, rather than silently discarding it under a
+            # different name (there is no legitimate reason to keep an
+            # ineligible checkpoint that only exists because it happened to
+            # collide with the deployed one).
+            raise RuntimeError(
+                f"Refusing to save checkpoint {checkpoint_path} -- its derived filename "
+                f"collides with the checkpoint currently referenced by the active "
+                f"deployment manifest ({manifest_path}), and this new checkpoint is NOT "
+                f"deployment-eligible:\n" + "\n".join(f"  - {e}" for e in eligibility_errors) +
+                "\nWriting to this path would destroy the active checkpoint's bytes with "
+                "nothing eligible to replace it. No file was written."
+            )
+
+        if collides_with_active:
+            # Eligible checkpoint that happens to share a filename with the
+            # currently-deployed one (e.g. a resumed/repeated epoch landing
+            # on the identical rounded val_score). Never overwrite the active
+            # file in place -- save under a disambiguated filename instead,
+            # so the active checkpoint's bytes remain completely untouched at
+            # their original path for the entire duration of this call, and
+            # only the NEW manifest (written further below, after this new
+            # checkpoint is safely on disk) ever starts referencing the new
+            # filename.
+            disambiguator = 1
+            while True:
+                candidate_path = self.checkpoint_dir / f"epoch_{epoch}_val_score_{val_score:.4f}_r{disambiguator}.pt"
+                if not candidate_path.exists():
+                    break
+                disambiguator += 1
+            logger.warning(
+                f"Derived checkpoint filename {checkpoint_path} collides with the actively "
+                f"manifested checkpoint -- saving to {candidate_path} instead so the active "
+                f"checkpoint is never overwritten."
+            )
+            checkpoint_path = candidate_path
+
+        # P0-6 (fsync correction): save-then-fsync via the shared production
+        # helper -- torch.save() alone only guarantees a Python-level
+        # flush/close, not that the bytes are durably on disk, which matters
+        # here because write_checkpoint_manifest() (below) immediately hashes
+        # this same file.
+        checkpoint_manifest.save_checkpoint_file(checkpoint, checkpoint_path)
         logger.info(f"Saved checkpoint: {checkpoint_path}")
         self.best_checkpoint_path = str(checkpoint_path)
 
-        # Clean up old checkpoints (keep last 3)
+        # P0-6 (Part B4/B5): only a checkpoint that passes every deployment-
+        # eligibility check may get a manifest -- see
+        # checkpoint_manifest.deployment_eligibility_errors() for the full
+        # rule set (capped/partial/zero-node/zero-edge/structural-zero/
+        # unknown-SHA/missing-split/malformed-hyperparameter/failed-evaluation
+        # checkpoints are all rejected here, never manifested).
+        if eligibility_errors:
+            logger.info(
+                f"Checkpoint {checkpoint_path} is NOT deployment-eligible -- no manifest "
+                f"created/replaced. Reasons:\n" + "\n".join(f"  - {e}" for e in eligibility_errors)
+            )
+        else:
+            checkpoint_manifest.write_checkpoint_manifest(checkpoint_path, checkpoint=checkpoint)
+            protected_checkpoint_path = checkpoint_path
+            logger.info(f"Deployment manifest written/replaced: {manifest_path}")
+
+        # Clean up old checkpoints (keep last 3), but never delete the
+        # checkpoint currently referenced by the active deployment manifest,
+        # regardless of where it falls in the mtime ranking (Part B6).
         checkpoints = sorted(self.checkpoint_dir.glob("epoch_*.pt"),
                             key=lambda p: p.stat().st_mtime, reverse=True)
+        if protected_checkpoint_path is not None:
+            resolved_protected = protected_checkpoint_path.resolve()
+            checkpoints = [p for p in checkpoints if p.resolve() != resolved_protected]
         for old_checkpoint in checkpoints[3:]:
             old_checkpoint.unlink()
             logger.info(f"Deleted old checkpoint: {old_checkpoint}")
