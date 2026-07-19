@@ -2,15 +2,19 @@
 Tests for GPU sanity gate infrastructure (GPU_SANITY_GATE_DESIGN_2026-07-18_v4.md).
 
 Wave 1 (this section, Part A): CompetitionDataset's sample_id_allowlist constructor
-param, and src/deployment_provenance.py's post-bootstrap provenance helpers
-(validate_git_sha_file, verify_import_origins). The exact-one discovery functions
-(find_all_kaggle_input_dirs / find_exactly_one_kaggle_input_dir) are deliberately
-NOT re-tested here against this module -- they are already covered against the
-production kernel scripts' own literal copies by
-tests/test_p07_training_integrity.py's TestExactOneSourceDiscovery, and
-src/deployment_provenance.py's copy is verified byte-for-byte identical to those
-by direct inspection (see the module's own docstring for why it can't be imported
-at the point those scripts need it).
+param, and every function in src/deployment_provenance.py (find_all_kaggle_input_dirs,
+find_exactly_one_kaggle_input_dir, validate_git_sha_file, verify_import_origins).
+
+TestExactOneDiscoveryOnSharedModule DOES exercise this module's own copy of the
+exact-one discovery functions (not a re-test of the kernel scripts) -- this is
+necessary, not redundant: src/deployment_provenance.py's copy is a separate,
+independently-editable piece of code, and only test_p07_training_integrity.py's
+TestExactOneSourceDiscovery covers the kernel scripts' own literal copies (via
+AST extraction of kaggle_kernel/train_kernel.py). Without this module's own
+tests, a future edit to src/deployment_provenance.py's copy alone could regress
+silently. See the module's own docstring for why the kernel scripts can't
+import this module's copy at the point they need discovery (a bootstrap
+ordering constraint), which is why both copies exist and both need coverage.
 
 Run: py -m pytest tests/test_p08_gpu_sanity_gate_infrastructure.py -v
 """
@@ -166,6 +170,30 @@ class TestSampleIdAllowlist:
         )
         assert all(sample_id == "a" for sample_id, _ in dataset.pairs)
         assert dataset.pairs != []
+
+    def test_post_build_invariant_catches_mutation_during_build_pair_index(self, tmp_path, monkeypatch):
+        """Codex review, PR #4, 2026-07-19: proves the invariant runs AFTER
+        _build_pair_index() and is actually EFFECTIVE at catching mutation,
+        not merely unreachable-by-construction. Monkeypatches
+        _build_pair_index to call the real implementation and then corrupt
+        self.sample_ids afterward -- simulating a bug introduced during index
+        construction that a check positioned only right after the pre-build
+        filter step could never observe (it would already have run and
+        returned by the time such a mutation happened)."""
+        split_path = _write_split_file(tmp_path, ["a", "b"])
+        real_build_pair_index = CompetitionDataset._build_pair_index
+
+        def corrupting_build_pair_index(self):
+            real_build_pair_index(self)
+            self.sample_ids.append("mutated_during_build")
+
+        monkeypatch.setattr(CompetitionDataset, "_build_pair_index", corrupting_build_pair_index)
+
+        with pytest.raises(RuntimeError, match="invariant violated"):
+            CompetitionDataset(
+                data_dir=tmp_path, split_file=split_path, split_type="train",
+                sample_id_allowlist=["a"],
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -332,3 +360,13 @@ class TestVerifyImportOrigins:
         # deliberately no __file__ set
         with pytest.raises(RuntimeError, match="no __file__"):
             verify_import_origins(root, [fake_mod])
+
+    def test_empty_module_list_raises_instead_of_vacuously_succeeding(self, tmp_path):
+        """Codex review, PR #4, 2026-07-19: an empty modules list must not
+        silently 'pass' -- that would defeat the entire point of this
+        provenance gate for a caller that (by bug) forgot to supply its
+        module list."""
+        root = tmp_path / "st-act-src"
+        root.mkdir()
+        with pytest.raises(RuntimeError, match="empty module list"):
+            verify_import_origins(root, [])

@@ -116,18 +116,25 @@ class CompetitionDataset(Dataset):
                   runs -- every downstream coverage primitive (expected_sample_ids
                   etc.) reflects only the allowlisted subset, in split_file's own
                   original relative order (never re-ordered to match the
-                  allowlist argument's order -- see the post-filter invariant
-                  check immediately below for why this matters).
-                - Post-filter invariant (mandatory, always executed when
-                  sample_id_allowlist is not None): the resulting
+                  allowlist argument's order -- see the post-BUILD invariant
+                  check below for why this matters).
+                - Post-BUILD invariant (mandatory, always executed when
+                  sample_id_allowlist is not None, AFTER self._build_pair_index()
+                  returns -- not merely right after the pre-build filter step):
                   set(self.sample_ids) must exactly equal set(sample_id_allowlist)
-                  -- raises RuntimeError with a diagnostic otherwise. Provably
-                  unreachable given the duplicate/missing-ID checks above, same
-                  as this codebase's other "should be unreachable but checked
-                  anyway" invariants (e.g. train.py's edge_targets.numel()==0
-                  check) -- if it ever fires, a prior check was silently bypassed
-                  or self.sample_ids was mutated between the filter and this
-                  point, not a legitimate reachable state.
+                  -- raises RuntimeError with a diagnostic otherwise. Checking
+                  after the build, not just after the filter, is what lets this
+                  catch self.sample_ids being mutated during index construction,
+                  not only a bypassed pre-build check -- a pre-build-only check
+                  can never observe a post-build mutation (Codex review, PR #4,
+                  2026-07-19). Provably unreachable in the current
+                  implementation given the duplicate/missing-ID checks above and
+                  _build_pair_index() not itself reassigning self.sample_ids,
+                  kept anyway per this codebase's "should be unreachable but
+                  checked anyway" convention (e.g. train.py's
+                  edge_targets.numel()==0 check) -- proven effective, not just
+                  unreachable, by
+                  test_post_build_invariant_catches_mutation_during_build_pair_index.
                 strict_sample_coverage composes on top of this, unaffected: it
                 still governs only whether a genuinely missing/unreadable Zarr
                 *within the filtered selection* raises vs. soft-skips -- it never
@@ -191,22 +198,6 @@ class CompetitionDataset(Dataset):
                     f"{sorted(missing_from_split)}"
                 )
             self.sample_ids = [s for s in self.sample_ids if s in allowlist_set]
-
-            # Mandatory post-filter invariant (design §3.0's "assert actual_ids
-            # == configured_ids", applied here at the input-selection level --
-            # provably unreachable given the duplicate/missing-ID checks above,
-            # checked explicitly anyway per this codebase's established
-            # fail-closed pattern).
-            if set(self.sample_ids) != allowlist_set:
-                raise RuntimeError(
-                    f"sample_id_allowlist invariant violated: filtered "
-                    f"self.sample_ids {sorted(set(self.sample_ids))} does not "
-                    f"exactly equal the configured allowlist "
-                    f"{sorted(allowlist_set)}. This should be unreachable given "
-                    f"the checks above -- if it fires, self.sample_ids was "
-                    f"mutated between the filter and this point."
-                )
-
             logger.info(
                 f"sample_id_allowlist active: filtered {len(split_set)} -> "
                 f"{len(self.sample_ids)} samples for split '{split_type}'"
@@ -231,6 +222,29 @@ class CompetitionDataset(Dataset):
         # CLAUDE.md for the underlying bug this exists to prevent.
         self.annotation_pair_stats: dict[str, Any] | None = None
         self._build_pair_index()
+
+        # Mandatory post-BUILD invariant (Codex review, PR #4, 2026-07-19):
+        # design §3.0's "assert actual_ids == configured_ids" must run AFTER
+        # _build_pair_index(), not merely re-check the filter step that
+        # immediately preceded it -- checking right after the filter can only
+        # ever re-validate that same filter and can never detect
+        # self.sample_ids being mutated during index construction. Checking
+        # here, after _build_pair_index() has actually run, is the only
+        # position that can catch that class of bug. See
+        # TestSampleIdAllowlist::test_post_build_invariant_catches_mutation_during_build_pair_index
+        # for a regression test that proves this position is effective, not
+        # just unreachable-by-construction.
+        if sample_id_allowlist is not None:
+            allowlist_set = set(sample_id_allowlist)
+            if set(self.sample_ids) != allowlist_set:
+                raise RuntimeError(
+                    f"sample_id_allowlist invariant violated: self.sample_ids "
+                    f"{sorted(set(self.sample_ids))} does not exactly equal the "
+                    f"configured allowlist {sorted(allowlist_set)} after "
+                    f"_build_pair_index() ran. This should be unreachable given "
+                    f"the checks performed before filtering -- if it fires, "
+                    f"self.sample_ids was mutated during index construction."
+                )
 
     def _get_loader(self, sample_id: str) -> AnisotropicZarrLoader:
         """Return this instance's cached loader for sample_id, opening it on first use."""

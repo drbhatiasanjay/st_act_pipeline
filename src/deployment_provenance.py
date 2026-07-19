@@ -102,7 +102,19 @@ def verify_import_origins(expected_root: str | Path, modules: list[ModuleType]) 
     attached dataset, or anywhere else. Raises loudly on any module resolving
     outside expected_root. Caller supplies the exact module list since different
     callers (train_kernel.py, inference_kernel.py, the GPU sanity gate) depend on
-    different production modules."""
+    different production modules -- and remains responsible for supplying every
+    one of them: this function only verifies what it's given.
+
+    modules must be non-empty (Codex review, PR #4, 2026-07-19): an empty list
+    would otherwise vacuously "succeed" without verifying anything at all,
+    silently defeating the entire purpose of this provenance gate for a caller
+    that (by bug) passed no modules."""
+    if not modules:
+        raise RuntimeError(
+            "verify_import_origins() called with an empty module list -- this "
+            "would vacuously succeed without verifying anything. The caller "
+            "must supply every production module it imports."
+        )
     expected_root_resolved = Path(expected_root).resolve()
     for module in modules:
         module_file = getattr(module, "__file__", None)
