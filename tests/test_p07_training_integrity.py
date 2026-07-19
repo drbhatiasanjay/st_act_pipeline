@@ -714,6 +714,96 @@ class TestStrictValidationIntegrity:
         assert result['validation_samples_evaluated'] == 3
 
 
+class TestMissingGeffHandling:
+    """P0-7 COUNTED_THEN_FATAL: missing GEFF must be counted then raised in
+    strict mode, not silently skipped (the pre-fix bug was that the
+    `if geff_path.exists():` branch was simply not entered, so the except
+    block was never reached and evaluation_failure stayed 0)."""
+
+    def test_strict_mode_missing_geff_raises_immediately(self, monkeypatch):
+        # evaluate_submission must NOT be called after a missing-GEFF failure.
+        evaluate_submission_called = {"called": False}
+
+        def failing_evaluate(*args, **kwargs):
+            evaluate_submission_called["called"] = True
+            return {}
+
+        loop = _make_validate_harness(
+            monkeypatch,
+            expected_sample_ids=["s1"],
+            sample_ids_with_batches=["s1"],
+            strict_integrity_mode=True,
+            evaluate_submission_side_effect=failing_evaluate,
+        )
+        # GEFF does not exist -- no load_geff_ground_truth mock needed because
+        # the FileNotFoundError fires before that call.
+        monkeypatch.setattr(Path, "exists", lambda self: False)
+
+        with pytest.raises(RuntimeError, match="strict_integrity_mode=True"):
+            loop.validate_epoch()
+
+        assert loop.epoch_fallback_counts['evaluation_failure'] == 1
+        assert not evaluate_submission_called["called"], (
+            "evaluate_submission must not be called after a missing-GEFF failure"
+        )
+
+    def test_strict_mode_missing_geff_error_includes_sample_and_path(self, monkeypatch):
+        loop = _make_validate_harness(
+            monkeypatch,
+            expected_sample_ids=["my_sample"],
+            sample_ids_with_batches=["my_sample"],
+            strict_integrity_mode=True,
+        )
+        monkeypatch.setattr(Path, "exists", lambda self: False)
+
+        with pytest.raises(RuntimeError, match="my_sample"):
+            loop.validate_epoch()
+
+    def test_non_strict_missing_geff_counted_circuit_breaker_not_triggered(self, monkeypatch):
+        # 1 of 3 samples has a missing GEFF -- well below the 50% circuit breaker.
+        call_count = {"n": 0}
+
+        def selective_load_geff(path):
+            call_count["n"] += 1
+            return object(), {}
+
+        loop = _make_validate_harness(
+            monkeypatch,
+            expected_sample_ids=["s1", "s2", "s3"],
+            sample_ids_with_batches=["s1", "s2", "s3"],
+            strict_integrity_mode=False,
+            load_geff_ground_truth_side_effect=selective_load_geff,
+            evaluate_submission_side_effect=_fake_evaluate_submission,
+        )
+        existing = {"s2", "s3"}
+        monkeypatch.setattr(Path, "exists", lambda self: any(s in str(self) for s in existing))
+
+        result = loop.validate_epoch()  # must not raise
+
+        assert loop.epoch_fallback_counts['evaluation_failure'] == 1
+        assert call_count["n"] == 2  # load_geff_ground_truth called for s2 and s3 only
+        assert result is not None
+
+    def test_missing_geff_not_double_counted(self, monkeypatch):
+        # A missing GEFF must increment evaluation_failure exactly once.
+        # With 1/1 samples failing, the circuit-breaker fires in non-strict mode
+        # (100% > 50% threshold), so we expect that raise -- the important
+        # invariant is that the counter is 1, not 0 or 2.
+        loop = _make_validate_harness(
+            monkeypatch,
+            expected_sample_ids=["s1"],
+            sample_ids_with_batches=["s1"],
+            strict_integrity_mode=False,
+            evaluate_submission_side_effect=_fake_evaluate_submission,
+        )
+        monkeypatch.setattr(Path, "exists", lambda self: False)
+
+        with pytest.raises(RuntimeError, match="GT loading failed"):
+            loop.validate_epoch()
+
+        assert loop.epoch_fallback_counts['evaluation_failure'] == 1
+
+
 # ---------------------------------------------------------------------------
 # Section D -- kaggle_kernel/train_kernel.py provenance: exact-one discovery,
 # strict GIT_SHA.txt validation, import-origin verification. Exercised against

@@ -1358,10 +1358,17 @@ class TrainingLoop:
         for sample_id in all_pred_graphs:
             try:
                 geff_path = self.data_dir / f"{sample_id}.geff"
-                if geff_path.exists():
-                    gt_graph, gt_metadata = load_geff_ground_truth(str(geff_path))
-                    all_gt_graphs[sample_id] = gt_graph
-                    all_gt_metadata[sample_id] = gt_metadata
+                if not geff_path.exists():
+                    # P0-7 COUNTED_THEN_FATAL: a missing GEFF is a technical
+                    # GT-load failure; raise so the except block counts it and
+                    # raises in strict mode rather than silently continuing.
+                    raise FileNotFoundError(
+                        f"expected .geff not found for sample {sample_id} "
+                        f"at {geff_path}"
+                    )
+                gt_graph, gt_metadata = load_geff_ground_truth(str(geff_path))
+                all_gt_graphs[sample_id] = gt_graph
+                all_gt_metadata[sample_id] = gt_metadata
             except Exception as e:
                 self.epoch_fallback_counts['evaluation_failure'] += 1
                 # P0-7 STRICT VALIDATION INTEGRITY: no ">50% tolerated" behavior
