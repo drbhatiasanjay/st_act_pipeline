@@ -231,7 +231,30 @@ def generate_edge_targets(
         (edge_labels, metadata) tuple where:
         - edge_labels: (n_t * n_t1,) binary tensor [0, 1], row-major over (i, j)
         - metadata: dict with stats (num_candidates, num_matched_to_gt,
-          num_positive_edges, class_imbalance_ratio, division_mask, etc.)
+          num_positive_edges, class_imbalance_ratio, division_mask, etc.), plus
+          the GPU-sanity-gate hard/easy negative split (2026-07-19, GT-topology
+          only -- never derived from model logits/predictions, since target
+          classification must not depend on the output of the model being
+          trained/evaluated against those same targets):
+          - hard_negative_mask: (n_t * n_t1,) bool tensor, aligned exactly with
+            edge_labels. True where BOTH endpoints independently matched a real
+            GT node within max_distance, but no real GT edge connects those two
+            matched GT nodes -- i.e. both endpoints are real, GT-confirmed
+            cells, and only edge-level topology disqualifies the pair. These
+            are "hard" negatives: indistinguishable from a positive at the
+            node-matching level.
+          - easy_negative_mask: (n_t * n_t1,) bool tensor, aligned exactly with
+            edge_labels. True where AT LEAST ONE endpoint has no GT match
+            within max_distance at all.
+          - num_hard_negative_edges / num_easy_negative_edges: mask sums.
+          Invariant (always holds, enforced by construction, not just
+          documented): hard_negative_mask and easy_negative_mask never
+          overlap, their union equals exactly (edge_labels == 0), and neither
+          ever includes a positive (edge_labels == 1) edge -- every candidate
+          falls into exactly one of {positive, hard negative, easy negative}.
+          num_hard_negative_edges == 0 is a legitimate, expected outcome (not
+          every frame pair has two independently-real, unconnected cells) --
+          never raised, never substituted for.
     """
     # Load ground truth
     try:
@@ -254,6 +277,10 @@ def generate_edge_targets(
             'num_negative_edges': 0,
             'class_imbalance_ratio': 0.0,
             'division_mask': torch.zeros(0, dtype=torch.bool),
+            'hard_negative_mask': torch.zeros(0, dtype=torch.bool),
+            'easy_negative_mask': torch.zeros(0, dtype=torch.bool),
+            'num_hard_negative_edges': 0,
+            'num_easy_negative_edges': 0,
         }
 
     node_attrs_df = graph.node_attrs(attr_keys=['t', 'node_id', 'z', 'y', 'x'])
@@ -298,6 +325,7 @@ def generate_edge_targets(
 
     edge_labels = []
     division_mask = []
+    hard_negative_mask = []
     num_matched_pairs = 0
 
     for i in range(n_t):
@@ -306,20 +334,34 @@ def generate_edge_targets(
             gt_tgt = matched_t1[j]
             label = 0
             is_division = False
-            if gt_src is not None and gt_tgt is not None:
+            both_matched = gt_src is not None and gt_tgt is not None
+            if both_matched:
                 num_matched_pairs += 1
                 if graph.has_edge(gt_src, gt_tgt):
                     label = 1
                     is_division = gt_src in dividing
             edge_labels.append(label)
             division_mask.append(is_division)
+            # Hard negative: both endpoints are real, GT-matched cells, but no
+            # real GT edge connects them (label stayed 0 despite both_matched).
+            # GT-topology-only -- no dependence on model output whatsoever.
+            hard_negative_mask.append(both_matched and label == 0)
 
     edge_labels = torch.tensor(edge_labels, dtype=torch.long)
     division_mask = torch.tensor(division_mask, dtype=torch.bool)
+    hard_negative_mask = torch.tensor(hard_negative_mask, dtype=torch.bool)
+    # Easy negative: everything else that's negative -- at least one endpoint
+    # unmatched. By construction (both_matched and label==0) vs. (label==0),
+    # this is exactly (edge_labels == 0) & ~hard_negative_mask, so the two
+    # masks partition (edge_labels == 0) exactly: no overlap, union == all
+    # negatives, neither ever includes a positive.
+    easy_negative_mask = (edge_labels == 0) & ~hard_negative_mask
     candidate_count = n_t * n_t1
 
     num_positive = int((edge_labels == 1).sum().item())
     num_negative = int((edge_labels == 0).sum().item())
+    num_hard_negative = int(hard_negative_mask.sum().item())
+    num_easy_negative = int(easy_negative_mask.sum().item())
 
     metadata = {
         'sample_id': sample_id,
@@ -331,6 +373,10 @@ def generate_edge_targets(
         'class_imbalance_ratio': num_positive / candidate_count if candidate_count > 0 else 0.0,
         'num_division_edges': int(division_mask.sum().item()),
         'division_mask': division_mask,
+        'hard_negative_mask': hard_negative_mask,
+        'easy_negative_mask': easy_negative_mask,
+        'num_hard_negative_edges': num_hard_negative,
+        'num_easy_negative_edges': num_easy_negative,
     }
 
     return edge_labels, metadata

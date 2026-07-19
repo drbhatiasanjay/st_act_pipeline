@@ -247,7 +247,17 @@ def _make_edge_loss_harness(
         'gt_node_load_failure': 0,
         'retained_pair_zero_gt_nodes_failure': 0,
     }
-    loop.epoch_biological_zero_counts = {'legitimate_zero_positive_edge_batches': 0}
+    loop.epoch_biological_zero_counts = {
+        'legitimate_zero_positive_edge_batches': 0,
+        # GPU sanity gate Wave 2 (2026-07-19), PR #5 remediation: keeps this
+        # harness's dict shape matching production TrainingLoop.__init__ --
+        # src/train.py's train_epoch() now unconditionally increments
+        # edge_supervised_batches_total (Codex review Finding 1: an
+        # all-negative batch is still genuinely edge-supervised), which this
+        # file's Rule D (all-negative) tests exercise directly.
+        'edge_supervised_batches_total': 0,
+        'edge_supervised_batches_with_nonzero_transformer_grad': 0,
+    }
     loop._global_step = 0
     loop._geff_cache = {}
     loop.last_epoch_wall_clock_seconds = 0.0
