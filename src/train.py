@@ -439,11 +439,12 @@ class TrainingLoop:
         # edge batch is not a failure and must never be conflated with one.
         # GPU sanity gate Wave 2 (2026-07-19) adds two more: edge_supervised_
         # batches_total counts batches where the transformer actually received
-        # real edge supervision (edge_targets not None, real edge_logits
-        # produced, at least one positive edge present); ...with_nonzero_
-        # transformer_grad is the subset of those where the captured gradient
-        # snapshot (see self.last_transformer_gradient_snapshot below) was
-        # finite and nonzero. Both are bookkeeping/observability counters, not
+        # real edge supervision (non-empty edge_targets and real edge_logits),
+        # including legitimate all-negative batches that teach false-edge
+        # rejection; ...with_nonzero_transformer_grad is the positive-edge
+        # subset where the captured gradient snapshot (see
+        # self.last_transformer_gradient_snapshot below) was finite and
+        # nonzero. Both are bookkeeping/observability counters, not
         # fail-closed gates themselves -- the gate's own pass/fail logic
         # (Wave 4) reads them, this class only measures and reports.
         self.epoch_biological_zero_counts = {
@@ -762,8 +763,11 @@ class TrainingLoop:
         grads = [p.grad.detach() for p in parameters if p.grad is not None]
         if not grads:
             return None
-        total_sq = sum(float((g.float() ** 2).sum().item()) for g in grads)
-        return total_sq ** 0.5
+        # Keep all per-parameter reductions on-device, then synchronize once
+        # for the final scalar. A per-parameter .item() loop would force one
+        # CUDA synchronization per tensor on every training batch.
+        per_param_norms = torch.stack([torch.linalg.vector_norm(g.float()) for g in grads])
+        return float(torch.linalg.vector_norm(per_param_norms).item())
 
     def train_epoch(self) -> float:
         """
@@ -786,6 +790,11 @@ class TrainingLoop:
             self.epoch_fallback_counts[key] = 0
         for key in self.epoch_biological_zero_counts:
             self.epoch_biological_zero_counts[key] = 0
+        # Snapshots describe this epoch. Without resetting them, an epoch with
+        # no qualifying transformer batch could expose a stale nonzero value
+        # from a prior epoch while its current supervision counters are zero.
+        self.last_unet_gradient_snapshot = None
+        self.last_transformer_gradient_snapshot = None
 
         max_batches = self.hyperparams.get('max_batches_per_epoch')
 
@@ -1002,22 +1011,28 @@ class TrainingLoop:
             self.optimizer.zero_grad()
             self.scaler.scale(total_loss_item).backward()
 
+            # Convert AMP-scaled gradients back to real gradient magnitudes
+            # before both instrumentation and clipping. Calling unscale_ once
+            # here preserves the existing optimizer/scaler step semantics.
+            self.scaler.unscale_(self.optimizer)
+
             # GPU sanity gate Wave 2 (2026-07-19): live gradient-snapshot
             # capture, read directly off backward()'s own output -- no extra
             # forward/backward pass. UNet: this point is only reached after
             # detection loss already succeeded (an earlier failure would have
             # raised before here), so every batch reaching here qualifies.
-            # Transformer: only on batches with real positive-edge
-            # supervision (has_positive_edges), matching design §8.1's
-            # edge_supervised_batches_total condition -- edge_targets is
-            # already guaranteed non-None/non-empty by the raises above, so
-            # that condition reduces to this one check.
+            # Every successful non-empty target/logit batch supplies real edge
+            # supervision, including an all-negative false-edge-rejection
+            # batch. Transformer snapshots remain positive-edge-gated so the
+            # nonzero-gradient counter measures the intended learning signal.
+            if edge_logits.numel() > 0:
+                self.epoch_biological_zero_counts['edge_supervised_batches_total'] += 1
+
             unet_grad_norm = self._compute_param_grad_norm(self.unet3d.parameters())
             if unet_grad_norm is not None:
                 self.last_unet_gradient_snapshot = unet_grad_norm
 
             if has_positive_edges:
-                self.epoch_biological_zero_counts['edge_supervised_batches_total'] += 1
                 transformer_grad_norm = self._compute_param_grad_norm(self.transformer.parameters())
                 if transformer_grad_norm is not None:
                     self.last_transformer_gradient_snapshot = transformer_grad_norm
@@ -1026,9 +1041,8 @@ class TrainingLoop:
                             'edge_supervised_batches_with_nonzero_transformer_grad'
                         ] += 1
 
-            # Gradient clipping. unscale_() first so clip_grad_norm_ sees
-            # real (not scaler-multiplied) gradient magnitudes.
-            self.scaler.unscale_(self.optimizer)
+            # Gradient clipping now sees the real (already-unscaled) gradient
+            # magnitudes captured above.
             torch.nn.utils.clip_grad_norm_(
                 list(self.unet3d.parameters()) + list(self.transformer.parameters()),
                 self.hyperparams['grad_clip']

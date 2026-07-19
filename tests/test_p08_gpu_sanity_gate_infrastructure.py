@@ -637,12 +637,12 @@ class TestGradientSnapshotAndEdgeSupervisionCounters:
         assert loop.epoch_biological_zero_counts['edge_supervised_batches_with_nonzero_transformer_grad'] == 1
         assert loop.epoch_biological_zero_counts['legitimate_zero_positive_edge_batches'] == 0
 
-    def test_transformer_snapshot_and_counter_not_touched_on_all_negative_batch(self, monkeypatch):
+    def test_all_negative_batch_counts_supervision_without_transformer_snapshot(self, monkeypatch):
         """Rule D legitimate-zero-positive-edge batch: UNet gradient must
         still be captured (detection loss is independent of edge positivity),
-        but the transformer gradient snapshot and edge_supervised_batches_*
-        counters must NOT be touched -- this batch never satisfies the
-        has_positive_edges gate."""
+        but the transformer gradient snapshot/nonzero counter must NOT be
+        touched. edge_supervised_batches_total still increments because the
+        valid all-negative targets train false-edge rejection."""
         edge_labels = torch.tensor([0, 0])  # all-negative -- no positive edges at all
         metadata = {'division_mask': torch.zeros(2, dtype=torch.bool)}
         loop = _make_grad_harness(monkeypatch, generate_edge_targets_return=(edge_labels, metadata))
@@ -652,6 +652,60 @@ class TestGradientSnapshotAndEdgeSupervisionCounters:
         assert loop.last_unet_gradient_snapshot is not None
         assert loop.last_unet_gradient_snapshot > 0.0
         assert loop.last_transformer_gradient_snapshot is None
-        assert loop.epoch_biological_zero_counts['edge_supervised_batches_total'] == 0
+        assert loop.epoch_biological_zero_counts['edge_supervised_batches_total'] == 1
         assert loop.epoch_biological_zero_counts['edge_supervised_batches_with_nonzero_transformer_grad'] == 0
         assert loop.epoch_biological_zero_counts['legitimate_zero_positive_edge_batches'] == 1
+
+    def test_snapshots_are_unscaled_before_capture(self, monkeypatch):
+        class _ScaleByEight:
+            def scale(self, loss):
+                return loss * 8.0
+
+            def unscale_(self, optimizer):
+                for group in optimizer.param_groups:
+                    for parameter in group['params']:
+                        if parameter.grad is not None:
+                            parameter.grad.div_(8.0)
+
+            def step(self, optimizer):
+                optimizer.step()
+
+            def update(self):
+                pass
+
+        edge_labels = torch.tensor([1, 0])
+        metadata = {'division_mask': torch.zeros(2, dtype=torch.bool)}
+        loop = _make_grad_harness(monkeypatch, generate_edge_targets_return=(edge_labels, metadata))
+        loop.scaler = _ScaleByEight()
+
+        loop.train_epoch()
+
+        # Each tiny module contributes d(p**2)/dp == 2 at p == 1. Capturing
+        # before unscale_ would incorrectly report 16 instead.
+        assert loop.last_unet_gradient_snapshot == pytest.approx(2.0)
+        assert loop.last_transformer_gradient_snapshot == pytest.approx(2.0)
+
+    def test_transformer_snapshot_resets_when_next_epoch_has_no_positive_edges(self, monkeypatch):
+        positive = (
+            torch.tensor([1, 0]),
+            {'division_mask': torch.zeros(2, dtype=torch.bool)},
+        )
+        loop = _make_grad_harness(monkeypatch, generate_edge_targets_return=positive)
+        loop.train_epoch()
+        assert loop.last_transformer_gradient_snapshot is not None
+
+        all_negative = (
+            torch.tensor([0, 0]),
+            {'division_mask': torch.zeros(2, dtype=torch.bool)},
+        )
+        monkeypatch.setattr(
+            train_module,
+            "generate_edge_targets",
+            lambda *args, **kwargs: all_negative,
+        )
+        loop.train_epoch()
+
+        assert loop.last_unet_gradient_snapshot is not None
+        assert loop.last_transformer_gradient_snapshot is None
+        assert loop.epoch_biological_zero_counts['edge_supervised_batches_total'] == 1
+        assert loop.epoch_biological_zero_counts['edge_supervised_batches_with_nonzero_transformer_grad'] == 0
