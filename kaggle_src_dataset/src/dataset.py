@@ -54,6 +54,7 @@ class CompetitionDataset(Dataset):
         anisotropy: tuple[float, float, float] = (4.0, 1.0, 1.0),
         zip_path: str | Path | None = None,
         filter_unannotated_pairs: bool = False,
+        strict_sample_coverage: bool = False,
     ):
         """
         Initialize CompetitionDataset.
@@ -82,6 +83,15 @@ class CompetitionDataset(Dataset):
                 evaluation, test/submission inference -- must leave this False so
                 pair coverage matches the real frame timeline, not GT coverage.
                 Default False: the pre-P0-1 unconditional behavior.
+            strict_sample_coverage: P0-7 (2026-07-19). If True, a missing/
+                unreadable expected Zarr, or a sample that opens successfully but
+                produces zero usable (frame_t, frame_t+1) pairs, raises RuntimeError
+                during __init__ instead of being silently soft-skipped -- see
+                expected_sample_ids/successfully_opened_sample_ids/
+                zero_pairs_sample_ids/failed_sample_ids below. Default False
+                preserves the pre-P0-7 soft-skip behavior (expected for local/CI
+                checkouts where only a handful of a split's samples are staged).
+                Kaggle production training/validation datasets must pass True.
         """
         self.data_dir = Path(data_dir)
         self.split_type = split_type
@@ -90,6 +100,7 @@ class CompetitionDataset(Dataset):
         self.physical_voxel_size = (1.625, 0.40625, 0.40625)  # um
         self.zip_path = Path(zip_path) if zip_path else None
         self.filter_unannotated_pairs = filter_unannotated_pairs
+        self.strict_sample_coverage = strict_sample_coverage
 
         # Load split file
         split_file = Path(split_file)
@@ -231,6 +242,18 @@ class CompetitionDataset(Dataset):
         leave it False -- filtering any of those would alter graph construction /
         official metric aggregation, out of scope for the P0-1 fix this filtering
         exists for.
+
+        P0-7 (2026-07-19) coverage primitives: every sample_id in self.sample_ids
+        (== self.expected_sample_ids) is classified into exactly one of
+        successfully_opened_sample_ids / zero_pairs_sample_ids / failed_sample_ids
+        by the time this method returns (without raising) -- see
+        self.strict_sample_coverage docstring in __init__. A pre-existing,
+        unconditional (not gated on strict_sample_coverage) failure mode is
+        untouched: a missing/unparseable/empty .geff for a filter_unannotated_pairs
+        sample whose Zarr DOES exist still always raises out of
+        _get_gt_counts_by_time (Cases 2/3/4 below) -- that is a training-data
+        correctness failure regardless of strict_sample_coverage, not a coverage
+        gap this flag is about.
         """
         if self.filter_unannotated_pairs:
             self.annotation_pair_stats = {
@@ -242,12 +265,27 @@ class CompetitionDataset(Dataset):
                 'per_sample': {},
             }
 
+        self.expected_sample_ids: list[str] = list(self.sample_ids)
+        self.successfully_opened_sample_ids: list[str] = []
+        self.zero_pairs_sample_ids: list[str] = []
+        self.failed_sample_ids: list[str] = []
+
         for sample_id in self.sample_ids:
-            # Case 1 (preserved exactly): sample has no local Zarr at all -- expected
-            # in local/CI checkouts where only a handful of the split's samples are
-            # staged. Soft-skip, not an error.
+            # Case 1: sample has no local Zarr at all -- expected in local/CI
+            # checkouts where only a handful of the split's samples are staged.
+            # Soft-skip (recorded, not raised) unless strict_sample_coverage.
             zarr_path = self.data_dir / f"{sample_id}.zarr"
             if not zarr_path.exists():
+                self.failed_sample_ids.append(sample_id)
+                # getattr(..., False): a bare CompetitionDataset.__new__() test
+                # double (bypassing __init__) may not set self.strict_sample_coverage --
+                # real production instances always go through __init__, which
+                # defaults it to False anyway.
+                if getattr(self, 'strict_sample_coverage', False):
+                    raise RuntimeError(
+                        f"strict_sample_coverage=True: expected Zarr not found for "
+                        f"sample {sample_id} at {zarr_path}."
+                    )
                 logger.debug(
                     f"Sample {sample_id} not found locally (OK for local testing)"
                 )
@@ -257,8 +295,16 @@ class CompetitionDataset(Dataset):
                 loader = self._get_loader(sample_id)
                 num_frames = loader.get_shape()[0]
             except Exception as e:
+                self.failed_sample_ids.append(sample_id)
+                if getattr(self, 'strict_sample_coverage', False):
+                    raise RuntimeError(
+                        f"strict_sample_coverage=True: failed to open expected Zarr "
+                        f"for sample {sample_id} at {zarr_path}: {e}"
+                    ) from e
                 logger.warning(f"Failed to open Zarr for sample {sample_id}: {e}")
                 continue
+
+            pairs_before = len(self.pairs)
 
             if not self.filter_unannotated_pairs:
                 # Unconditional behavior, unchanged from before this fix.
@@ -267,51 +313,79 @@ class CompetitionDataset(Dataset):
                 logger.debug(
                     f"Sample {sample_id}: {num_frames} frames → {num_frames - 1} pairs"
                 )
-                continue
+            else:
+                # Cases 2/3/4 (deliberately NOT caught here): a missing/unparseable/
+                # empty .geff for a sample whose Zarr DOES exist is a training-data
+                # correctness failure, not a benign "sample not staged" gap -- must
+                # propagate all the way out of __init__, not be swallowed into a
+                # logger.warning like the Zarr-existence check above.
+                gt_counts = self._get_gt_counts_by_time(sample_id)
 
-            # Cases 2/3/4 (deliberately NOT caught here): a missing/unparseable/
-            # empty .geff for a sample whose Zarr DOES exist is a training-data
-            # correctness failure, not a benign "sample not staged" gap -- must
-            # propagate all the way out of __init__, not be swallowed into a
-            # logger.warning like the Zarr-existence check above.
-            gt_counts = self._get_gt_counts_by_time(sample_id)
+                sample_stats = {
+                    'candidate_pairs': 0,
+                    'retained': 0,
+                    'excluded_both_zero': 0,
+                    'excluded_t_zero': 0,
+                    'excluded_t1_zero': 0,
+                }
+                for frame_idx in range(num_frames - 1):
+                    sample_stats['candidate_pairs'] += 1
+                    count_t = gt_counts.get(frame_idx, 0)
+                    count_t1 = gt_counts.get(frame_idx + 1, 0)
 
-            sample_stats = {
-                'candidate_pairs': 0,
-                'retained': 0,
-                'excluded_both_zero': 0,
-                'excluded_t_zero': 0,
-                'excluded_t1_zero': 0,
-            }
-            for frame_idx in range(num_frames - 1):
-                sample_stats['candidate_pairs'] += 1
-                count_t = gt_counts.get(frame_idx, 0)
-                count_t1 = gt_counts.get(frame_idx + 1, 0)
+                    if count_t > 0 and count_t1 > 0:
+                        self.pairs.append((sample_id, frame_idx))
+                        sample_stats['retained'] += 1
+                    elif count_t == 0 and count_t1 == 0:
+                        sample_stats['excluded_both_zero'] += 1
+                    elif count_t == 0:
+                        sample_stats['excluded_t_zero'] += 1
+                    else:
+                        sample_stats['excluded_t1_zero'] += 1
 
-                if count_t > 0 and count_t1 > 0:
-                    self.pairs.append((sample_id, frame_idx))
-                    sample_stats['retained'] += 1
-                elif count_t == 0 and count_t1 == 0:
-                    sample_stats['excluded_both_zero'] += 1
-                elif count_t == 0:
-                    sample_stats['excluded_t_zero'] += 1
-                else:
-                    sample_stats['excluded_t1_zero'] += 1
+                self.annotation_pair_stats['per_sample'][sample_id] = sample_stats
+                self.annotation_pair_stats['total_candidate_pairs'] += sample_stats['candidate_pairs']
+                self.annotation_pair_stats['retained_annotated_pairs'] += sample_stats['retained']
+                self.annotation_pair_stats['excluded_both_zero'] += sample_stats['excluded_both_zero']
+                self.annotation_pair_stats['excluded_t_zero'] += sample_stats['excluded_t_zero']
+                self.annotation_pair_stats['excluded_t1_zero'] += sample_stats['excluded_t1_zero']
 
-            self.annotation_pair_stats['per_sample'][sample_id] = sample_stats
-            self.annotation_pair_stats['total_candidate_pairs'] += sample_stats['candidate_pairs']
-            self.annotation_pair_stats['retained_annotated_pairs'] += sample_stats['retained']
-            self.annotation_pair_stats['excluded_both_zero'] += sample_stats['excluded_both_zero']
-            self.annotation_pair_stats['excluded_t_zero'] += sample_stats['excluded_t_zero']
-            self.annotation_pair_stats['excluded_t1_zero'] += sample_stats['excluded_t1_zero']
+                logger.info(
+                    f"Sample {sample_id}: candidate_pairs={sample_stats['candidate_pairs']} "
+                    f"retained={sample_stats['retained']} "
+                    f"excluded_both_zero={sample_stats['excluded_both_zero']} "
+                    f"excluded_t_zero={sample_stats['excluded_t_zero']} "
+                    f"excluded_t1_zero={sample_stats['excluded_t1_zero']}"
+                )
 
-            logger.info(
-                f"Sample {sample_id}: candidate_pairs={sample_stats['candidate_pairs']} "
-                f"retained={sample_stats['retained']} "
-                f"excluded_both_zero={sample_stats['excluded_both_zero']} "
-                f"excluded_t_zero={sample_stats['excluded_t_zero']} "
-                f"excluded_t1_zero={sample_stats['excluded_t1_zero']}"
-            )
+            # P0-7 Section F: opened successfully but produced zero usable pairs is
+            # a COVERAGE-INTEGRITY failure, distinct from the technical
+            # missing/unreadable-Zarr failures above -- never placed in
+            # failed_sample_ids.
+            pairs_added = len(self.pairs) - pairs_before
+            if pairs_added == 0:
+                self.zero_pairs_sample_ids.append(sample_id)
+                if getattr(self, 'strict_sample_coverage', False):
+                    raise RuntimeError(
+                        f"strict_sample_coverage=True: sample {sample_id} opened "
+                        f"successfully but produced zero usable (frame_t, frame_t+1) "
+                        f"pairs (num_frames={num_frames}, "
+                        f"filter_unannotated_pairs={self.filter_unannotated_pairs})."
+                    )
+                logger.warning(
+                    f"Sample {sample_id} opened successfully but produced zero "
+                    f"usable pairs (num_frames={num_frames}, "
+                    f"filter_unannotated_pairs={self.filter_unannotated_pairs})."
+                )
+            else:
+                self.successfully_opened_sample_ids.append(sample_id)
+
+        logger.info(
+            f"Coverage: expected={len(self.expected_sample_ids)} "
+            f"successfully_opened={len(self.successfully_opened_sample_ids)} "
+            f"zero_pairs={len(self.zero_pairs_sample_ids)} "
+            f"failed={len(self.failed_sample_ids)}"
+        )
 
         if self.filter_unannotated_pairs:
             s = self.annotation_pair_stats

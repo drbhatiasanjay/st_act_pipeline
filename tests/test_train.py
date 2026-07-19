@@ -70,14 +70,18 @@ class TestGetGtNodesGeffCache:
         )
         assert len(loop._geff_cache) == 1
 
-    def test_missing_geff_file_returns_none_not_a_crash(self):
+    def test_missing_geff_file_raises_not_returns_none(self):
+        """P0-7 (2026-07-19) Rule A: a missing .geff is a TECHNICAL GT-load
+        failure and must raise, never silently return None -- supersedes the
+        pre-P0-7 contract this test used to assert (a None return let a real
+        regression in a retained training pair hide as if it were a benign
+        data gap)."""
         loop = make_bare_training_loop(
             data_dir=Path("data/staging/train"), _geff_cache={}
         )
 
-        result = loop._get_gt_nodes("sample_id_with_no_geff_anywhere", t_idx=0)
-
-        assert result is None
+        with pytest.raises(RuntimeError, match="Technical GT-load failure"):
+            loop._get_gt_nodes("sample_id_with_no_geff_anywhere", t_idx=0)
 
     def test_returns_zero_row_tensor_for_timepoint_with_no_gt_nodes(self):
         """Real geff has GT nodes only at specific t values (e.g. t=0..2, 27-33,

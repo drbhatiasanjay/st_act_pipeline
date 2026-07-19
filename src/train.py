@@ -247,6 +247,7 @@ class TrainingLoop:
         deployed_sha: str = "unknown",
         progress_file: str | Path | None = None,
         split_identity: str = "unknown",
+        strict_integrity_mode: bool = False,
     ):
         """
         Initialize training loop.
@@ -279,6 +280,18 @@ class TrainingLoop:
                 validate_checkpoint_split_compatibility()'s legacy-checkpoint
                 handling, which treats an absent/unknown identity as a
                 warning, not a hard failure.
+            strict_integrity_mode: P0-7 (2026-07-19). If True, validate_epoch()'s
+                technical sample-evaluation/GT-load failures increment their
+                counter then immediately raise -- no ">50% tolerated" behavior.
+                If False (default), retains the pre-P0-7 count-and-continue
+                behavior including the existing >50% circuit-breaker. Independent
+                of CompetitionDataset's strict_sample_coverage. Kaggle production
+                training must pass True. Note: train_epoch()'s own fail-closed
+                rules (technical GT-load failure, retained-pair empty GT, edge-
+                target/edge-loss technical failure) are unconditional -- see
+                _get_gt_nodes()/train_epoch() docstrings -- and do NOT depend on
+                this flag, since a batch from self.train_loader is always a
+                retained training pair by construction.
         """
         self.unet3d = unet3d
         self.transformer = transformer
@@ -291,6 +304,7 @@ class TrainingLoop:
         self.deployed_sha = deployed_sha
         self.progress_file = Path(progress_file) if progress_file else None
         self.split_identity = split_identity
+        self.strict_integrity_mode = strict_integrity_mode
 
         # Create checkpoint directory
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -411,6 +425,20 @@ class TrainingLoop:
             'edge_target_generation_failure': 0,
             'edge_loss_computation_failure': 0,
             'evaluation_failure': 0,
+            # P0-7 (2026-07-19) new technical-failure counters: COUNTED_THEN_FATAL,
+            # never tolerated. gt_node_load_failure covers a technical exception
+            # from _get_gt_nodes() itself (missing GEFF, parse failure, malformed
+            # attrs -- Rule A); retained_pair_zero_gt_nodes_failure covers a
+            # DIFFERENT, successfully-parsed-but-empty-result case (Rule B) --
+            # never conflated, see train_epoch()'s handling of each.
+            'gt_node_load_failure': 0,
+            'retained_pair_zero_gt_nodes_failure': 0,
+        }
+        # P0-7 (2026-07-19): biological-zero counter, kept separate from the
+        # technical-failure counters above per ORD-2 -- a legitimate zero-positive-
+        # edge batch is not a failure and must never be conflated with one.
+        self.epoch_biological_zero_counts = {
+            'legitimate_zero_positive_edge_batches': 0,
         }
         self.last_epoch_wall_clock_seconds = 0.0
         self.last_epoch_num_batches = 0
@@ -555,22 +583,43 @@ class TrainingLoop:
             logger.warning(f"Failed to write batch heartbeat: {e}")
         _post_ntfy_heartbeat(payload)
 
-    def _get_gt_nodes(self, sample_id: str, t_idx: int) -> torch.Tensor | None:
+    def _get_gt_nodes(self, sample_id: str, t_idx: int) -> torch.Tensor:
         """
         Extract GT node coordinates from .geff at a specific timepoint.
+
+        P0-7 (2026-07-19) Rule A: a TECHNICAL GT-load failure (missing .geff, GEFF
+        parse exception, malformed node attributes) now RAISES instead of silently
+        returning None -- this method's sole production call site (train_epoch())
+        always operates on a RETAINED training pair (self.train_loader's
+        CompetitionDataset is built with filter_unannotated_pairs=True), where a
+        technical load failure is a real regression, never a benign data gap. A
+        successfully-parsed .geff with genuinely zero GT nodes at a valid
+        timepoint still returns an empty (0,3) tensor (Rule B) -- that alone is
+        NOT a technical failure; train_epoch() separately treats an empty result
+        from a retained pair as fatal (the retained-pair invariant), since this
+        method alone cannot know whether its caller is operating on a retained
+        pair.
 
         Args:
             sample_id: Dataset sample ID
             t_idx: Timepoint index
 
         Returns:
-            (n_nodes, 3) tensor of [z, y, x] coordinates, or None if load fails
-        """
-        try:
-            geff_path = self.data_dir / f"{sample_id}.geff"
-            if not geff_path.exists():
-                return None
+            (n_nodes, 3) tensor of [z, y, x] coordinates. n_nodes may be 0 for a
+            valid timepoint with no GT nodes -- this never returns None.
 
+        Raises:
+            RuntimeError: on any technical GT-load failure (missing/unparseable
+                .geff, malformed node attributes).
+        """
+        geff_path = self.data_dir / f"{sample_id}.geff"
+        if not geff_path.exists():
+            raise RuntimeError(
+                f"Technical GT-load failure: expected .geff not found for sample "
+                f"{sample_id} at {geff_path}."
+            )
+
+        try:
             graph, _ = load_geff_cached(geff_path, self._geff_cache)
             node_attrs = graph.node_attrs(attr_keys=['t', 'z', 'y', 'x'])
             nodes_at_t = node_attrs.filter(node_attrs['t'] == t_idx)
@@ -588,8 +637,11 @@ class TrainingLoop:
             )
             return torch.from_numpy(coords).float()
         except Exception as e:
-            logger.warning(f"Failed to get GT nodes for {sample_id} at t={t_idx}: {e}")
-            return None
+            raise RuntimeError(
+                f"Technical GT-load failure: failed to parse .geff or read node "
+                f"attributes for sample {sample_id} at t={t_idx} "
+                f"(path={geff_path}): {e}"
+            ) from e
 
     @staticmethod
     def _compute_warmup_lr(global_step: int, warmup_steps: int, start_lr: float, target_lr: float) -> float:
@@ -697,6 +749,8 @@ class TrainingLoop:
         # Reset fallback counters for this epoch
         for key in self.epoch_fallback_counts:
             self.epoch_fallback_counts[key] = 0
+        for key in self.epoch_biological_zero_counts:
+            self.epoch_biological_zero_counts[key] = 0
 
         max_batches = self.hyperparams.get('max_batches_per_epoch')
 
@@ -761,65 +815,144 @@ class TrainingLoop:
             detection_loss = self.detection_loss_fn(logits.float(), heatmap_target)
 
             # === EDGE LOSS (teacher forcing) ===
-            edge_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+            # P0-7 (2026-07-19) Rule A / COUNTED_THEN_FATAL: _get_gt_nodes() now
+            # RAISES on any technical GT-load failure (missing GEFF, parse
+            # exception, malformed node attributes) instead of returning None --
+            # this call site always operates on a RETAINED training pair
+            # (self.train_loader is built with filter_unannotated_pairs=True),
+            # so a technical failure here is a real regression, never a benign
+            # data gap. Wrapped in a single try/except covering BOTH calls so a
+            # failure loading either t or t+1 increments gt_node_load_failure
+            # exactly once (not twice) for this batch, then immediately
+            # propagates -- distinct from retained_pair_zero_gt_nodes_failure
+            # below, which covers a DIFFERENT case (successful parse but an
+            # empty node set), never a substitute for this counter.
+            try:
+                nodes_t = self._get_gt_nodes(sample_id, t_idx)
+                nodes_t1 = self._get_gt_nodes(sample_id, t_idx + 1)
+            except Exception as e:
+                self.epoch_fallback_counts['gt_node_load_failure'] += 1
+                raise RuntimeError(
+                    f"Technical GT node load failure for retained training pair "
+                    f"sample_id={sample_id} t_idx={t_idx}: {e}"
+                ) from e
 
-            # Get GT nodes at frame t and t+1
-            nodes_t = self._get_gt_nodes(sample_id, t_idx)
-            nodes_t1 = self._get_gt_nodes(sample_id, t_idx + 1)
+            # Rule B: a retained pair is guaranteed by CompetitionDataset's
+            # GT-count filtering to have >=1 GT node at BOTH t_idx and t_idx+1.
+            # An empty result here means that invariant was violated (a real bug
+            # -- coordinate/indexing error, GT-count filtering bypassed, etc.),
+            # NOT a legitimate biological zero -- must abort with a counted
+            # failure, never silently fall through to the unconditional
+            # edge_loss=0.0 default with no visibility (the exact bug this
+            # closes).
+            if nodes_t.shape[0] == 0 or nodes_t1.shape[0] == 0:
+                self.epoch_fallback_counts['retained_pair_zero_gt_nodes_failure'] += 1
+                raise RuntimeError(
+                    f"Retained training pair produced zero GT nodes at one or "
+                    f"both timepoints: sample_id={sample_id} t_idx={t_idx} "
+                    f"n_nodes_t={nodes_t.shape[0]} n_nodes_t1={nodes_t1.shape[0]}. "
+                    f"CompetitionDataset's GT-count filtering should guarantee "
+                    f">=1 GT node at both timepoints for a retained pair -- this "
+                    f"indicates a real bug, not an expected data gap."
+                )
 
-            if nodes_t is not None and nodes_t1 is not None and nodes_t.shape[0] > 0 and nodes_t1.shape[0] > 0:
-                nodes_t = nodes_t.to(self.device)
-                nodes_t1 = nodes_t1.to(self.device)
+            nodes_t = nodes_t.to(self.device)
+            nodes_t1 = nodes_t1.to(self.device)
 
-                # Extract features at GT node locations
-                z_t = torch.clamp(nodes_t[:, 0].long(), 0, features.shape[2] - 1)
-                y_t = torch.clamp(nodes_t[:, 1].long(), 0, features.shape[3] - 1)
-                x_t = torch.clamp(nodes_t[:, 2].long(), 0, features.shape[4] - 1)
-                features_t = features[0, :, z_t, y_t, x_t].t()  # (n_t, 128)
+            # Extract features at GT node locations
+            z_t = torch.clamp(nodes_t[:, 0].long(), 0, features.shape[2] - 1)
+            y_t = torch.clamp(nodes_t[:, 1].long(), 0, features.shape[3] - 1)
+            x_t = torch.clamp(nodes_t[:, 2].long(), 0, features.shape[4] - 1)
+            features_t = features[0, :, z_t, y_t, x_t].t()  # (n_t, 128)
 
-                z_t1 = torch.clamp(nodes_t1[:, 0].long(), 0, features.shape[2] - 1)
-                y_t1 = torch.clamp(nodes_t1[:, 1].long(), 0, features.shape[3] - 1)
-                x_t1 = torch.clamp(nodes_t1[:, 2].long(), 0, features.shape[4] - 1)
-                features_t1 = features[0, :, z_t1, y_t1, x_t1].t()  # (n_t1, 128)
+            z_t1 = torch.clamp(nodes_t1[:, 0].long(), 0, features.shape[2] - 1)
+            y_t1 = torch.clamp(nodes_t1[:, 1].long(), 0, features.shape[3] - 1)
+            x_t1 = torch.clamp(nodes_t1[:, 2].long(), 0, features.shape[4] - 1)
+            features_t1 = features[0, :, z_t1, y_t1, x_t1].t()  # (n_t1, 128)
 
-                # Generate real GT edge targets
-                try:
-                    edge_targets, edge_metadata = generate_edge_targets(
-                        sample_id,
-                        str(self.data_dir / f"{sample_id}.geff"),
-                        nodes_t,
-                        nodes_t1,
-                        t=t_idx,
-                        max_distance=DEFAULT_MAX_DISTANCE,
-                        physical_voxel_size=DEFAULT_SCALE,
-                        geff_cache=self._geff_cache,
-                    )
-                    edge_targets = edge_targets.to(self.device)
-                    division_mask = edge_metadata.get('division_mask', torch.zeros_like(edge_targets, dtype=torch.bool))
-                    division_mask = division_mask.to(self.device)
-                except Exception as e:
-                    logger.warning(f"Edge target generation failed for {sample_id}: {e}")
-                    self.epoch_fallback_counts['edge_target_generation_failure'] += 1
-                    edge_targets = None
+            # Generate real GT edge targets. Rule C: a technical failure here is
+            # counted then immediately re-raised -- no edge_targets=None
+            # continuation.
+            try:
+                edge_targets, edge_metadata = generate_edge_targets(
+                    sample_id,
+                    str(self.data_dir / f"{sample_id}.geff"),
+                    nodes_t,
+                    nodes_t1,
+                    t=t_idx,
+                    max_distance=DEFAULT_MAX_DISTANCE,
+                    physical_voxel_size=DEFAULT_SCALE,
+                    geff_cache=self._geff_cache,
+                )
+            except Exception as e:
+                self.epoch_fallback_counts['edge_target_generation_failure'] += 1
+                raise RuntimeError(
+                    f"Edge target generation failed for retained training pair "
+                    f"sample_id={sample_id} t_idx={t_idx}: {e}"
+                ) from e
 
-                # Compute edge predictions and loss
-                if edge_targets is not None:
-                    try:
-                        edge_logits = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
-                        if len(edge_logits) > 0:
-                            # Convert targets to float for BCE
-                            edge_targets_float = edge_targets.float()
-                            edge_loss = self.division_loss_fn(
-                                edge_logits.view(-1),
-                                edge_targets_float,
-                                division_mask
-                            )
-                        else:
-                            edge_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-                    except Exception as e:
-                        logger.warning(f"Edge loss computation failed for {sample_id}: {e}")
-                        self.epoch_fallback_counts['edge_loss_computation_failure'] += 1
-                        edge_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
+            edge_targets = edge_targets.to(self.device)
+            division_mask = edge_metadata.get('division_mask', torch.zeros_like(edge_targets, dtype=torch.bool))
+            division_mask = division_mask.to(self.device)
+
+            # generate_edge_targets() (src/targets.py) returns a (n_t * n_t1,)
+            # tensor and ONLY returns empty (0,) when n_t==0 or n_t1==0 --
+            # verified directly against its source. Rule B above already
+            # guarantees nodes_t/nodes_t1 are both non-empty by this point, so
+            # edge_targets.numel() == 0 here is provably unreachable given that
+            # invariant -- if it ever fires anyway, that invariant was silently
+            # violated (a real bug, e.g. generate_edge_targets() re-deriving
+            # n_t/n_t1 from something other than nodes_t/nodes_t1), not a
+            # legitimate empty-candidate path. Treated as a counted technical
+            # integrity failure, never as biological zero.
+            if edge_targets.numel() == 0:
+                self.epoch_fallback_counts['edge_target_generation_failure'] += 1
+                raise RuntimeError(
+                    f"generate_edge_targets() returned zero candidate edges for "
+                    f"a retained pair with non-empty nodes_t/nodes_t1 "
+                    f"(n_t={nodes_t.shape[0]} n_t1={nodes_t1.shape[0]}): "
+                    f"sample_id={sample_id} t_idx={t_idx}. This contradicts the "
+                    f"n_t * n_t1 candidate-edge contract -- a real bug, not a "
+                    f"legitimate empty-candidate case."
+                )
+
+            # Rule D: generate_edge_targets() succeeded and produced a non-empty
+            # but ALL-NEGATIVE target (no positive lineage/continuation edge) --
+            # a legitimate biological zero, NOT a technical failure. This is
+            # still real, valid training data (the transformer's false-edge
+            # rejection signal) and must still run the transformer and
+            # DivisionLoss over it, not be replaced with a disconnected
+            # edge_loss=0.0 -- only the fallback COUNTER differs from the
+            # ordinary positive-target path below; loss computation and Rule E's
+            # fail-closed handling are identical either way.
+            if edge_targets.sum().item() == 0:
+                self.epoch_biological_zero_counts['legitimate_zero_positive_edge_batches'] += 1
+
+            # Rule E: a technical failure in the transformer call or DivisionLoss
+            # is counted then immediately re-raised -- a caught technical
+            # exception must never become edge_loss=0.0.
+            try:
+                edge_logits = self.transformer(nodes_t, nodes_t1, features_t, features_t1)
+                edge_targets_float = edge_targets.float()
+                edge_loss = self.division_loss_fn(
+                    edge_logits.view(-1),
+                    edge_targets_float,
+                    division_mask
+                )
+            except Exception as e:
+                self.epoch_fallback_counts['edge_loss_computation_failure'] += 1
+                raise RuntimeError(
+                    f"Edge loss computation failed for retained training pair "
+                    f"sample_id={sample_id} t_idx={t_idx}: {e}"
+                ) from e
+
+            if not torch.isfinite(edge_loss):
+                self.epoch_fallback_counts['edge_loss_computation_failure'] += 1
+                raise RuntimeError(
+                    f"edge_loss is non-finite (NaN/Inf) for retained training "
+                    f"pair sample_id={sample_id} t_idx={t_idx}: "
+                    f"{edge_loss.item()}"
+                )
 
             # Total loss
             total_loss_item = (
@@ -1015,14 +1148,26 @@ class TrainingLoop:
                     f"max_validation_samples must be a positive int, got {max_validation_samples}"
                 )
 
-        # Derive ordered unique sample IDs from dataset.pairs whenever the
-        # dataset exposes them -- not only when a cap is configured -- so
-        # validation_samples_total is a trustworthy full-fold count in the
-        # uncapped case too. getattr(..., None) (not a bare .dataset
-        # access) so a val_loader without a .dataset attribute at all (a
-        # bare list, as used by several existing unit tests) degrades to
-        # "pairs unavailable" instead of raising AttributeError.
+        # P0-7 (2026-07-19): validation accounting prefers CompetitionDataset's
+        # own expected_sample_ids (the full split-file membership list) over
+        # dataset.pairs -- deriving the "total" from .pairs let a sample that
+        # silently failed to open (missing/unreadable Zarr) vanish from the
+        # denominator too, undercounting validation_samples_total instead of
+        # surfacing the shortfall in validation_samples_evaluated (bug F6).
+        # Falls back to the pre-P0-7 .pairs-derived unique-sample-id list when
+        # expected_sample_ids isn't available (e.g. test doubles predating
+        # P0-7's dataset coverage contract that only mock .pairs) -- preserves
+        # existing P0-4 cap-selection test coverage unrelated to bug F6.
+        # getattr(..., None) (not a bare .dataset access) so a val_loader
+        # without a .dataset attribute at all (a bare list, as used by several
+        # existing unit tests) degrades to "expected ids unavailable" instead
+        # of raising AttributeError.
         val_dataset = getattr(self.val_loader, 'dataset', None)
+        has_expected_ids = (
+            val_dataset is not None
+            and hasattr(val_dataset, 'expected_sample_ids')
+            and val_dataset.expected_sample_ids is not None
+        )
         has_pairs = (
             val_dataset is not None
             and hasattr(val_dataset, 'pairs')
@@ -1030,41 +1175,47 @@ class TrainingLoop:
         )
 
         allowed_sample_ids = None
+        expected_fold_ids = None
         validation_samples_total = None
         validation_sample_cap = max_validation_samples
 
-        if has_pairs:
-            unique_sample_ids = []
+        if has_expected_ids:
+            expected_fold_ids = list(val_dataset.expected_sample_ids)
+        elif has_pairs:
+            expected_fold_ids = []
             seen = set()
             for sample_id, _ in val_dataset.pairs:
                 if sample_id not in seen:
-                    unique_sample_ids.append(sample_id)
+                    expected_fold_ids.append(sample_id)
                     seen.add(sample_id)
-            validation_samples_total = len(unique_sample_ids)
+
+        if expected_fold_ids is not None:
+            validation_samples_total = len(expected_fold_ids)
 
             if max_validation_samples is not None:
                 n_select = min(max_validation_samples, validation_samples_total)
-                allowed_sample_ids = set(unique_sample_ids[:n_select])
+                allowed_sample_ids = set(expected_fold_ids[:n_select])
                 logger.info(
                     f"Validation sample selection: {len(allowed_sample_ids)} of "
-                    f"{validation_samples_total} samples selected "
+                    f"{validation_samples_total} expected samples selected "
                     f"(cap={max_validation_samples}). Selected: {sorted(allowed_sample_ids)}"
                 )
         elif max_validation_samples is not None:
             raise RuntimeError(
                 f"max_validation_samples={max_validation_samples} requested but "
-                f"val_loader.dataset does not expose 'pairs' attribute for safe sample selection. "
-                f"Cannot guarantee complete sample evaluation."
+                f"val_loader.dataset does not expose 'expected_sample_ids' or "
+                f"'pairs' for safe sample selection. Cannot guarantee complete "
+                f"sample evaluation."
             )
 
-        # Coverage-based provenance: a fold is "full" iff every available
-        # sample was selected, not merely because a cap was SUPPLIED --
-        # None -> full fold; cap >= total -> full fold (selection covers
-        # everything anyway); cap < total -> not full fold.
-        if allowed_sample_ids is not None:
-            validation_is_full_fold = (len(allowed_sample_ids) == validation_samples_total)
-        else:
-            validation_is_full_fold = True
+        # validation_is_full_fold is computed a-posteriori, after the batch loop
+        # and GT-loading below determine which expected sample IDs were
+        # ACTUALLY, COMPLETELY evaluated -- see the assignment near
+        # all_gt_graphs below. Default True here only for the legacy path
+        # (expected_fold_ids unavailable, no cap requested), matching the
+        # pre-P0-7 assumption for callers (e.g. bare-list unit tests) that
+        # don't expose real coverage information at all.
+        validation_is_full_fold = expected_fold_ids is None
 
         # max_batches_per_epoch is a training-only cap (P0-4); log this ONCE
         # before the loop when configured, not per-batch -- validate_epoch()
@@ -1212,8 +1363,22 @@ class TrainingLoop:
                     all_gt_graphs[sample_id] = gt_graph
                     all_gt_metadata[sample_id] = gt_metadata
             except Exception as e:
-                logger.warning(f"Failed to load GT for {sample_id}: {e}")
                 self.epoch_fallback_counts['evaluation_failure'] += 1
+                # P0-7 STRICT VALIDATION INTEGRITY: no ">50% tolerated" behavior
+                # in strict mode -- a technical GT-load failure is counted then
+                # immediately raised, not tolerated up to the 50% threshold below.
+                # getattr(..., False): a bare TrainingLoop.__new__() test double
+                # (bypassing __init__) may not set self.strict_integrity_mode --
+                # real production instances always go through __init__, which
+                # defaults it to False anyway, so this is behaviorally identical
+                # there (matches this class's existing getattr(self,
+                # "deployed_sha", ...) pattern for the same reason).
+                if getattr(self, 'strict_integrity_mode', False):
+                    raise RuntimeError(
+                        f"strict_integrity_mode=True: technical GT-load failure "
+                        f"for sample {sample_id}: {e}"
+                    ) from e
+                logger.warning(f"Failed to load GT for {sample_id}: {e}")
 
         # Hard-fail if most samples' GT couldn't load: train_epoch() already
         # has this protection (added after the polars bug ran silently for
@@ -1232,6 +1397,29 @@ class TrainingLoop:
                     f"({eval_failure_rate * 100:.1f}%, threshold 50%). val_score would be "
                     f"meaningless -- diagnose the root cause before retrying."
                 )
+
+        # P0-7 VALIDATION ACCOUNTING (a-posteriori): "evaluated" tracks the
+        # PREDICTION side (all_pred_graphs) -- matching the pre-existing P0-4
+        # convention -- computed here, after the batch loop, rather than
+        # a-priori from the selection set, so a sample that was selected but
+        # never produced a predicted window is correctly excluded. Deliberately
+        # NOT intersected with all_gt_graphs: in strict_integrity_mode, any
+        # per-sample GT-load failure already aborts validate_epoch() entirely
+        # (see the loop above), so pred/gt coverage always coincide there; in
+        # non-strict mode, treating a GT-load failure as "not evaluated" would
+        # break existing pre-P0-7 test coverage that (correctly) counts a
+        # sample as evaluated once its predictions are complete, independent of
+        # a separately-tracked (epoch_fallback_counts['evaluation_failure'])
+        # GT-load outcome.
+        evaluated_sample_ids = set(all_pred_graphs)
+        if expected_fold_ids is not None:
+            validation_is_full_fold = (evaluated_sample_ids == set(expected_fold_ids))
+
+        if getattr(self, 'strict_integrity_mode', False) and not all_gt_graphs:
+            raise RuntimeError(
+                "strict_integrity_mode=True: validation produced zero usable GT "
+                "graphs -- val_score would be meaningless."
+            )
 
         # Evaluate if we have GT graphs
         if all_gt_graphs:
@@ -1265,7 +1453,10 @@ class TrainingLoop:
                 # legitimate adjusted_edge_jaccard of exactly 0.0.
                 val_metrics_clean['evaluation_completed_successfully'] = True
                 val_metrics_clean['validation_is_full_fold'] = validation_is_full_fold
-                val_metrics_clean['validation_samples_evaluated'] = len(all_pred_graphs)
+                val_metrics_clean['validation_samples_evaluated'] = (
+                    len(evaluated_sample_ids) if expected_fold_ids is not None
+                    else len(all_pred_graphs)
+                )
                 val_metrics_clean['validation_samples_total'] = (
                     validation_samples_total if validation_samples_total is not None
                     else len(all_pred_graphs)
@@ -1283,8 +1474,13 @@ class TrainingLoop:
 
                 return val_metrics_clean
             except Exception as e:
-                logger.warning(f"Evaluation failed: {e}")
                 self.epoch_fallback_counts['evaluation_failure'] += 1
+                if getattr(self, 'strict_integrity_mode', False):
+                    raise RuntimeError(
+                        f"strict_integrity_mode=True: evaluate_submission() "
+                        f"failed: {e}"
+                    ) from e
+                logger.warning(f"Evaluation failed: {e}")
                 val_metrics = {
                     'edge_jaccard': 0.0,
                     'adjusted_edge_jaccard': 0.0,
@@ -1303,7 +1499,10 @@ class TrainingLoop:
         val_metrics['predicted_nodes_total'] = total_predicted_nodes
         val_metrics['predicted_edges_total'] = total_predicted_edges
         val_metrics['validation_is_full_fold'] = validation_is_full_fold
-        val_metrics['validation_samples_evaluated'] = len(all_pred_graphs)
+        val_metrics['validation_samples_evaluated'] = (
+            len(evaluated_sample_ids) if expected_fold_ids is not None
+            else len(all_pred_graphs)
+        )
         val_metrics['validation_samples_total'] = (
             validation_samples_total if validation_samples_total is not None
             else len(all_pred_graphs)

@@ -157,7 +157,24 @@ class TestSimpleNodeTransformer:
             out = m(nodes_t, nodes_t1, feat_t, feat_t1)
 
         assert out.shape == (n_t * n_t1,)
-        assert torch.all((out >= 0) & (out <= 1)), "edge_scorer ends in Sigmoid, output must be in [0,1]"
+
+    def test_edge_scorer_final_layer_is_linear_not_sigmoid(self):
+        """P0-7 (2026-07-19): stale P0-5 test correction. edge_scorer's final
+        layer is nn.Linear (raw, unbounded logits) -- P0-5 (commit 3a7fba3)
+        moved this model to BCEWithLogitsLoss, so no final Sigmoid may be
+        assumed anywhere, including a bounds check on forward()'s own output.
+        Regression-guards the raw-logit contract directly against the module
+        structure, not against an output-range assumption a future edit could
+        silently violate without this test noticing."""
+        m = self.make_model()
+        assert isinstance(m.edge_scorer[-1], torch.nn.Linear), (
+            "edge_scorer's final layer must be nn.Linear (raw logits) -- "
+            "found a final Sigmoid or other non-Linear layer instead"
+        )
+        assert not any(isinstance(layer, torch.nn.Sigmoid) for layer in m.edge_scorer), (
+            "edge_scorer must not contain a Sigmoid layer anywhere -- P0-5 "
+            "requires raw logits for BCEWithLogitsLoss"
+        )
 
     def test_zero_nodes_returns_empty_tensor_without_crashing(self):
         m = self.make_model()
