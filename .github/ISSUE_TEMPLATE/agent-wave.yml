@@ -1,0 +1,51 @@
+name: Agent wave
+description: Request one bounded implementation wave with human approval
+title: "[agent-wave] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue defines one bounded unit of work. Creating it does not start an
+        agent or authorize merge, deployment, training, Kaggle actions, or later waves.
+  - type: input
+    id: wave
+    attributes:
+      label: Wave
+      placeholder: wave-2
+    validations:
+      required: true
+  - type: input
+    id: base_sha
+    attributes:
+      label: Exact base SHA
+      description: Use the reviewed 40-character commit on master.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Authorized scope
+      description: List allowed files or the rule used to determine them.
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Behavioral contract
+      description: State invariants, failure behavior, and required evidence.
+    validations:
+      required: true
+  - type: textarea
+    id: prohibited
+    attributes:
+      label: Explicit prohibitions
+      value: |
+        - No merge
+        - No next wave
+        - No deployment or training
+        - No Kaggle push or run
+        - No GIT_SHA.txt update
+    validations:
+      required: true
+
