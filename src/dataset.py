@@ -55,6 +55,7 @@ class CompetitionDataset(Dataset):
         zip_path: str | Path | None = None,
         filter_unannotated_pairs: bool = False,
         strict_sample_coverage: bool = False,
+        sample_id_allowlist: list[str] | None = None,
     ):
         """
         Initialize CompetitionDataset.
@@ -92,6 +93,55 @@ class CompetitionDataset(Dataset):
                 preserves the pre-P0-7 soft-skip behavior (expected for local/CI
                 checkouts where only a handful of a split's samples are staged).
                 Kaggle production training/validation datasets must pass True.
+            sample_id_allowlist: GPU sanity gate (2026-07-19). Fail-closed contract,
+                deliberately stricter than an ordinary optional filter:
+                - None (default): no restriction, unchanged pre-existing behavior.
+                - Explicitly [] (empty list): raises ValueError. A GPU sanity gate
+                  run is only ever meaningful against a real, non-empty configured
+                  subset -- an empty allowlist almost certainly means a caller bug
+                  upstream (e.g. an unpopulated K-expansion result), not "train on
+                  zero samples", so this is refused rather than silently accepted
+                  as a valid (if useless) zero-sample dataset.
+                - Duplicate IDs: raises ValueError listing the exact duplicates.
+                  Never silently collapsed via set() -- a caller passing duplicates
+                  has a real bug (e.g. double-counting in a candidate-expansion
+                  loop) that a silent dedup would hide.
+                - IDs absent from split_file's split_type list: raises ValueError
+                  listing them (distinct from strict_sample_coverage, which is
+                  about a listed sample's Zarr being missing/unreadable on disk,
+                  not about the allowlist itself naming an ID the split doesn't
+                  even claim to have).
+                - Valid, duplicate-free, fully-present IDs: self.sample_ids is
+                  filtered to exactly this set, applied BEFORE _build_pair_index()
+                  runs -- every downstream coverage primitive (expected_sample_ids
+                  etc.) reflects only the allowlisted subset, in split_file's own
+                  original relative order (never re-ordered to match the
+                  allowlist argument's order -- see the post-BUILD invariant
+                  check below for why this matters).
+                - Post-BUILD invariant (mandatory, always executed when
+                  sample_id_allowlist is not None, AFTER self._build_pair_index()
+                  returns -- not merely right after the pre-build filter step):
+                  set(self.sample_ids) must exactly equal set(sample_id_allowlist)
+                  -- raises RuntimeError with a diagnostic otherwise. Checking
+                  after the build, not just after the filter, is what lets this
+                  catch self.sample_ids being mutated during index construction,
+                  not only a bypassed pre-build check -- a pre-build-only check
+                  can never observe a post-build mutation (Codex review, PR #4,
+                  2026-07-19). Provably unreachable in the current
+                  implementation given the duplicate/missing-ID checks above and
+                  _build_pair_index() not itself reassigning self.sample_ids,
+                  kept anyway per this codebase's "should be unreachable but
+                  checked anyway" convention (e.g. train.py's
+                  edge_targets.numel()==0 check) -- proven effective, not just
+                  unreachable, by
+                  test_post_build_invariant_catches_mutation_during_build_pair_index.
+                strict_sample_coverage composes on top of this, unaffected: it
+                still governs only whether a genuinely missing/unreadable Zarr
+                *within the filtered selection* raises vs. soft-skips -- it never
+                reaches samples excluded by the allowlist, which are filtered out
+                of self.sample_ids before _build_pair_index()'s per-sample loop
+                even starts (excluded samples' Zarr/.geff are never opened,
+                touched, or even existence-checked).
         """
         self.data_dir = Path(data_dir)
         self.split_type = split_type
@@ -101,6 +151,7 @@ class CompetitionDataset(Dataset):
         self.zip_path = Path(zip_path) if zip_path else None
         self.filter_unannotated_pairs = filter_unannotated_pairs
         self.strict_sample_coverage = strict_sample_coverage
+        self.sample_id_allowlist = sample_id_allowlist
 
         # Load split file
         split_file = Path(split_file)
@@ -115,6 +166,42 @@ class CompetitionDataset(Dataset):
             f"Loaded {len(self.sample_ids)} samples for split '{split_type}' "
             f"from {split_file}"
         )
+
+        if sample_id_allowlist is not None:
+            if len(sample_id_allowlist) == 0:
+                raise ValueError(
+                    "sample_id_allowlist must not be an empty list -- pass None "
+                    "to disable filtering. An explicitly empty allowlist is "
+                    "refused rather than silently accepted as a valid "
+                    "zero-sample dataset."
+                )
+
+            seen: set[str] = set()
+            duplicates: set[str] = set()
+            for sid in sample_id_allowlist:
+                if sid in seen:
+                    duplicates.add(sid)
+                seen.add(sid)
+            if duplicates:
+                raise ValueError(
+                    f"sample_id_allowlist contains duplicate sample IDs "
+                    f"(not silently collapsed): {sorted(duplicates)}"
+                )
+
+            allowlist_set = set(sample_id_allowlist)
+            split_set = set(self.sample_ids)
+            missing_from_split = allowlist_set - split_set
+            if missing_from_split:
+                raise ValueError(
+                    f"sample_id_allowlist contains sample IDs not present in "
+                    f"split '{split_type}' of {split_file}: "
+                    f"{sorted(missing_from_split)}"
+                )
+            self.sample_ids = [s for s in self.sample_ids if s in allowlist_set]
+            logger.info(
+                f"sample_id_allowlist active: filtered {len(split_set)} -> "
+                f"{len(self.sample_ids)} samples for split '{split_type}'"
+            )
 
         # Build index of (frame_t, frame_t+1) pairs
         self.pairs = []
@@ -135,6 +222,29 @@ class CompetitionDataset(Dataset):
         # CLAUDE.md for the underlying bug this exists to prevent.
         self.annotation_pair_stats: dict[str, Any] | None = None
         self._build_pair_index()
+
+        # Mandatory post-BUILD invariant (Codex review, PR #4, 2026-07-19):
+        # design §3.0's "assert actual_ids == configured_ids" must run AFTER
+        # _build_pair_index(), not merely re-check the filter step that
+        # immediately preceded it -- checking right after the filter can only
+        # ever re-validate that same filter and can never detect
+        # self.sample_ids being mutated during index construction. Checking
+        # here, after _build_pair_index() has actually run, is the only
+        # position that can catch that class of bug. See
+        # TestSampleIdAllowlist::test_post_build_invariant_catches_mutation_during_build_pair_index
+        # for a regression test that proves this position is effective, not
+        # just unreachable-by-construction.
+        if sample_id_allowlist is not None:
+            allowlist_set = set(sample_id_allowlist)
+            if set(self.sample_ids) != allowlist_set:
+                raise RuntimeError(
+                    f"sample_id_allowlist invariant violated: self.sample_ids "
+                    f"{sorted(set(self.sample_ids))} does not exactly equal the "
+                    f"configured allowlist {sorted(allowlist_set)} after "
+                    f"_build_pair_index() ran. This should be unreachable given "
+                    f"the checks performed before filtering -- if it fires, "
+                    f"self.sample_ids was mutated during index construction."
+                )
 
     def _get_loader(self, sample_id: str) -> AnisotropicZarrLoader:
         """Return this instance's cached loader for sample_id, opening it on first use."""
