@@ -124,7 +124,33 @@ class _FakeEdgeTransformer(torch.nn.Module):
         return torch.full((n_t * n_t1,), 100.0)  # sigmoid(100) ~= 1.0
 
 
-def _make_loop(val_loader, hyperparams_overrides=None):
+def _supply_geff_double(monkeypatch):
+    """Supply a GEFF presence + load test double for tests whose subject is
+    batch-processing behavior, not GT loading. P0-7 (COUNTED_THEN_FATAL):
+    a missing .geff raises FileNotFoundError which increments evaluation_failure
+    and, at 100% rate (1/1 samples), fires the circuit breaker. This helper
+    intercepts both the existence check and the load so validate_epoch() can
+    return normally, without restoring the old silent-skip behavior."""
+    import src.train as _train_mod
+    _orig_exists = Path.exists
+    monkeypatch.setattr(
+        Path, "exists",
+        lambda self: str(self).endswith(".geff") or _orig_exists(self),
+    )
+
+    def _fake_load(path):
+        g = td.graph.IndexedRXGraph()
+        for key in ("z", "y", "x"):
+            try:
+                g.add_node_attr_key(key, pl.Float64, 0.0)
+            except ValueError:
+                pass
+        return g, _FakeMetadata(1000)
+
+    monkeypatch.setattr(_train_mod, "load_geff_ground_truth", _fake_load)
+
+
+def _make_loop(val_loader, hyperparams_overrides=None, monkeypatch=None):
     hyperparams = {
         "detection_threshold": 0.5,
         "max_positive_voxel_fraction": 0.005,
@@ -134,15 +160,16 @@ def _make_loop(val_loader, hyperparams_overrides=None):
     }
     if hyperparams_overrides:
         hyperparams.update(hyperparams_overrides)
+    if monkeypatch is not None:
+        # P0-7: .geff absence raises FileNotFoundError → circuit breaker fires.
+        # Tests that check batch-processing behaviour (not GT loading) must
+        # supply a GEFF double so validate_epoch() can return normally.
+        _supply_geff_double(monkeypatch)
     return make_bare_training_loop(
         unet3d=_FakeAlwaysDetectingUNet3D(),
         transformer=_FakeEdgeTransformer(),
         device=torch.device("cpu"),
         _amp_enabled=False,
-        # Nonexistent path: geff_path.exists() is False, so GT loading is
-        # skipped cleanly (no exception, no evaluation_failure count) --
-        # these tests only care about which batches get PROCESSED, not
-        # about a real score.
         data_dir=Path("nonexistent_test_dir_for_p04_hermetic_tests"),
         hyperparams=hyperparams,
         val_loader=val_loader,
@@ -507,7 +534,7 @@ class TestValidationCapIsolation:
         though it's set far smaller than the real batch count -- it is a
         training-only cap after P0-4."""
         batches = [_make_fake_val_batch("sample_a", t) for t in range(6)]
-        loop = _make_loop(batches, hyperparams_overrides={"max_batches_per_epoch": 2})
+        loop = _make_loop(batches, hyperparams_overrides={"max_batches_per_epoch": 2}, monkeypatch=monkeypatch)
         seen = _count_peaks_for_channel_calls(monkeypatch, loop)
 
         val_metrics = loop.validate_epoch()
@@ -535,7 +562,7 @@ class TestCompleteSampleValidationCap:
     def test_max_validation_samples_one_selects_first_sample_completely(self, monkeypatch):
         pairs, batches = self._two_samples_pairs_and_batches()
         val_loader = _FakeValLoaderWithPairs(batches, pairs)
-        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 1})
+        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 1}, monkeypatch=monkeypatch)
         seen = _count_peaks_for_channel_calls(monkeypatch, loop)
 
         val_metrics = loop.validate_epoch()
@@ -554,7 +581,7 @@ class TestCompleteSampleValidationCap:
         presence, is what determines full-fold status)."""
         pairs, batches = self._two_samples_pairs_and_batches()
         val_loader = _FakeValLoaderWithPairs(batches, pairs)
-        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 2})
+        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 2}, monkeypatch=monkeypatch)
         seen = _count_peaks_for_channel_calls(monkeypatch, loop)
 
         val_metrics = loop.validate_epoch()
@@ -570,7 +597,7 @@ class TestCompleteSampleValidationCap:
         coverage still means full fold."""
         pairs, batches = self._two_samples_pairs_and_batches()
         val_loader = _FakeValLoaderWithPairs(batches, pairs)
-        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 1000})
+        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 1000}, monkeypatch=monkeypatch)
         seen = _count_peaks_for_channel_calls(monkeypatch, loop)
 
         val_metrics = loop.validate_epoch()
@@ -584,7 +611,7 @@ class TestCompleteSampleValidationCap:
     def test_max_validation_samples_none_evaluates_full_fold(self, monkeypatch):
         pairs, batches = self._two_samples_pairs_and_batches()
         val_loader = _FakeValLoaderWithPairs(batches, pairs)
-        loop = _make_loop(val_loader)  # max_validation_samples not set -> None
+        loop = _make_loop(val_loader, monkeypatch=monkeypatch)  # max_validation_samples not set -> None
         seen = _count_peaks_for_channel_calls(monkeypatch, loop)
 
         val_metrics = loop.validate_epoch()
@@ -658,7 +685,7 @@ class TestInterleavedPairs:
             ("sample_b", 0), ("sample_b", 1),
         ]
         val_loader = _FakeValLoaderWithPairs(interleaved_batches, canonical_pairs)
-        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 1})
+        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 1}, monkeypatch=monkeypatch)
         seen = _count_peaks_for_channel_calls(monkeypatch, loop)
 
         val_metrics = loop.validate_epoch()
@@ -688,13 +715,13 @@ class TestProvenance:
         assert 'edge_jaccard' in result
         assert 'adjusted_edge_jaccard' in result
 
-    def test_training_loop_provenance_full_fold(self):
+    def test_training_loop_provenance_full_fold(self, monkeypatch):
         """TrainingLoop.validate_epoch() sets validation_is_full_fold=True
         with no cap configured."""
         pairs = [("sample_a", 0), ("sample_a", 1)]
         batches = [_make_fake_val_batch(sid, t) for sid, t in pairs]
         val_loader = _FakeValLoaderWithPairs(batches, pairs)
-        loop = _make_loop(val_loader)
+        loop = _make_loop(val_loader, monkeypatch=monkeypatch)
 
         val_metrics = loop.validate_epoch()
 
@@ -702,13 +729,13 @@ class TestProvenance:
         assert val_metrics['validation_samples_evaluated'] == 1
         assert val_metrics['validation_samples_total'] == 1
 
-    def test_training_loop_provenance_capped(self):
+    def test_training_loop_provenance_capped(self, monkeypatch):
         """TrainingLoop.validate_epoch() sets validation_is_full_fold=False
         and records the true total when a cap is explicitly configured."""
         pairs = [("sample_a", 0), ("sample_a", 1), ("sample_b", 0)]
         batches = [_make_fake_val_batch(sid, t) for sid, t in pairs]
         val_loader = _FakeValLoaderWithPairs(batches, pairs)
-        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 1})
+        loop = _make_loop(val_loader, hyperparams_overrides={"max_validation_samples": 1}, monkeypatch=monkeypatch)
 
         val_metrics = loop.validate_epoch()
 

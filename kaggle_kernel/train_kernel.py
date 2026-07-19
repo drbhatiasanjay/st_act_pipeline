@@ -26,42 +26,54 @@ from torch.utils.data import DataLoader
 # Kaggle Dataset (drbhatiasanjay/st-act-src, containing src/ + data_split.json)
 # attached via dataset_sources in kernel-metadata.json.
 #
-# The assumed mount path (/kaggle/input/st-act-src) 404'd on import TWICE
-# despite the dataset showing as attached in the website editor's Input
-# panel -- rather than guess a third exact path, search every directory
-# under /kaggle/input for one that actually contains src/dataset.py, and use
-# whatever that real path turns out to be.
-#
-# A one-level os.listdir() scan is NOT enough: Kaggle's current layout
-# nests attached datasets under /kaggle/input/datasets/<owner>/<slug>/ (and
-# competition data under /kaggle/input/competitions/<slug>/) rather than
-# flat /kaggle/input/<slug>/. Confirmed by a real failed run (Version #17
-# and #18 both) whose own diagnostic logged
-# "/kaggle/input contents: ['competitions', 'datasets']" -- neither of
-# those top-level names itself contains src/dataset.py, so the old loop
-# always left KAGGLE_SRC_DATASET_DIR as None and every run died on
-# `from src.dataset import CompetitionDataset` before training ever
-# started. Walk recursively instead (capped at a shallow depth so this
-# can't run away scanning a huge competition input tree), and take the
-# first directory that actually contains src/dataset.py.
-KAGGLE_SRC_DATASET_DIR = None
-if os.path.exists("/kaggle/input"):
-    MAX_SEARCH_DEPTH = 5
+# P0-7 (2026-07-19): exact-one discovery, matching
+# kaggle_kernel_inference/inference_kernel.py's Part C1 -- never silently
+# select the first directory, directory order, or modification time. Zero
+# matches raises; multiple matches raises and lists every candidate. This
+# replaces the earlier "take the first directory that actually contains
+# src/dataset.py" loop, which could silently pick the WRONG attached dataset
+# if more than one happened to contain a src/dataset.py.
+MAX_SEARCH_DEPTH = 5
+
+
+def find_all_kaggle_input_dirs(marker_relpath: str, max_depth: int = MAX_SEARCH_DEPTH) -> list[str]:
+    if not os.path.exists("/kaggle/input"):
+        return []
+    matches: list[str] = []
     for dirpath, dirnames, _filenames in os.walk("/kaggle/input"):
         depth = dirpath[len("/kaggle/input"):].count(os.sep)
-        if depth >= MAX_SEARCH_DEPTH:
+        if depth >= max_depth:
             dirnames[:] = []
             continue
-        if "src" in dirnames and os.path.isfile(os.path.join(dirpath, "src", "dataset.py")):
-            KAGGLE_SRC_DATASET_DIR = dirpath
-            break
+        if os.path.isfile(os.path.join(dirpath, marker_relpath)):
+            matches.append(dirpath)
+    return matches
 
-if KAGGLE_SRC_DATASET_DIR:
+
+def find_exactly_one_kaggle_input_dir(marker_relpath: str) -> str:
+    matches = find_all_kaggle_input_dirs(marker_relpath)
+    if not matches:
+        raise RuntimeError(f"No directory beneath /kaggle/input contains {marker_relpath!r}.")
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"Multiple directories beneath /kaggle/input contain {marker_relpath!r}, exactly "
+            f"one is required: {sorted(matches)}"
+        )
+    return matches[0]
+
+
+# Detect environment early -- needed by exact-one discovery below, before
+# logging is configured.
+KAGGLE_MODE = os.path.exists("/kaggle/input")
+
+if KAGGLE_MODE:
+    # Kaggle mode: never fall back to repository-local source code.
+    KAGGLE_SRC_DATASET_DIR = find_exactly_one_kaggle_input_dir(os.path.join("src", "dataset.py"))
     sys.path.insert(0, KAGGLE_SRC_DATASET_DIR)
 else:
-    # Local run (or dataset not found/attached): src/ is a sibling of this
-    # file's parent directory locally; on Kaggle this leaves imports to fail
-    # loudly below rather than silently resolving to the wrong "src".
+    # Local non-Kaggle execution: src/ is a sibling of this file's parent
+    # directory locally.
+    KAGGLE_SRC_DATASET_DIR = None
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configure logging
@@ -71,8 +83,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("KaggleTraining")
 
-# Detect environment
-KAGGLE_MODE = os.path.exists("/kaggle/input")
 if KAGGLE_MODE:
     INPUT_DIR = Path("/kaggle/input/competitions/biohub-cell-tracking-during-development")
     WORKING_DIR = Path("/kaggle/working")
@@ -109,11 +119,28 @@ logger.info(f"{'='*80}")
 # scripts/sync_kaggle_src.py -- turns "is this run using the code I think I
 # committed" into a 2-second check of the first few log lines instead of a
 # post-mortem after a multi-hour run (see DEFERRED_IMPROVEMENTS.md).
-DEPLOYED_SHA = "unknown (GIT_SHA.txt not found -- was this pushed via scripts/sync_kaggle_src.py?)"
-if KAGGLE_SRC_DATASET_DIR:
-    sha_file = Path(KAGGLE_SRC_DATASET_DIR) / "GIT_SHA.txt"
-    if sha_file.exists():
-        DEPLOYED_SHA = sha_file.read_text().strip()
+#
+# P0-7 (2026-07-19): strict validation in Kaggle mode, matching
+# kaggle_kernel_inference/inference_kernel.py's Part C3 -- missing/empty/
+# malformed values raise. "unknown" is never a valid fallback in Kaggle mode.
+if KAGGLE_MODE:
+    _sha_file = Path(KAGGLE_SRC_DATASET_DIR) / "GIT_SHA.txt"
+    if not _sha_file.exists():
+        raise RuntimeError(
+            f"GIT_SHA.txt not found in selected source dataset {KAGGLE_SRC_DATASET_DIR} -- "
+            f"was this pushed via scripts/sync_kaggle_src.py?"
+        )
+    _raw_sha = _sha_file.read_text(encoding="utf-8").strip()
+    if not _raw_sha:
+        raise RuntimeError(f"GIT_SHA.txt at {_sha_file} is empty or whitespace-only.")
+    if len(_raw_sha) != 40 or _raw_sha != _raw_sha.lower() or not all(c in "0123456789abcdef" for c in _raw_sha):
+        raise RuntimeError(
+            f"GIT_SHA.txt at {_sha_file} does not contain a 40-character lowercase hex git "
+            f"SHA: {_raw_sha!r}"
+        )
+    DEPLOYED_SHA = _raw_sha
+else:
+    DEPLOYED_SHA = "unknown (local execution)"
 logger.info(f"Deployed code SHA: {DEPLOYED_SHA}")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -359,6 +386,10 @@ if KAGGLE_MODE:
 # For local development: import from src/
 # For Kaggle: dependencies come from the attached st-act-src Dataset
 try:
+    import src.dataset
+    import src.model
+    import src.split_utils
+    import src.train
     from src.dataset import CompetitionDataset
     from src.model import SimpleNodeTransformer, UNet3D
     from src.split_utils import get_split_identity, load_and_validate_split, resolve_split_file_path
@@ -372,6 +403,37 @@ except ImportError:
     raise
 
 logger.info(f"Local imports: {LOCAL_IMPORTS}")
+
+
+def verify_import_origins(expected_root: str | Path) -> None:
+    """P0-7 (2026-07-19): after importing every production module this kernel
+    actually depends on, verify each one's real __file__ resolves underneath the
+    exact-one selected source dataset -- never underneath a stray repository
+    checkout, a different attached dataset, or anywhere else. Matches
+    kaggle_kernel_inference/inference_kernel.py's verify_import_origins() (Part
+    C2) as closely as practical; only verifies modules train_kernel.py actually
+    imports (src.dataset, src.model, src.split_utils, src.train) -- does not
+    import extra submission/inference modules merely to verify them."""
+    expected_root_resolved = Path(expected_root).resolve()
+    modules_to_check = [src.dataset, src.model, src.split_utils, src.train]
+    for module in modules_to_check:
+        module_file = getattr(module, "__file__", None)
+        if module_file is None:
+            raise RuntimeError(f"Module {module.__name__} has no __file__ -- cannot verify import origin.")
+        resolved = Path(module_file).resolve()
+        try:
+            resolved.relative_to(expected_root_resolved)
+        except ValueError as e:
+            raise RuntimeError(
+                f"Module {module.__name__} resolved to {resolved}, which is NOT beneath the "
+                f"selected source dataset {expected_root_resolved} -- refusing to run "
+                f"training against code from an unverified location."
+            ) from e
+        logger.info(f"Verified import origin: {module.__name__} -> {resolved}")
+
+
+if KAGGLE_MODE:
+    verify_import_origins(KAGGLE_SRC_DATASET_DIR)
 
 # === DATA LOADING ===
 logger.info("\n" + f"{'='*80}")
@@ -417,15 +479,21 @@ try:
         # that may drop unannotated (t, t+1) pairs. See
         # CompetitionDataset.__init__'s filter_unannotated_pairs docstring.
         filter_unannotated_pairs=True,
+        # P0-7 (2026-07-19): Kaggle production training/validation datasets must
+        # fail closed on missing/unreadable expected Zarrs or zero-usable-pairs
+        # samples, not soft-skip -- see CompetitionDataset's
+        # strict_sample_coverage docstring.
+        strict_sample_coverage=True,
     )
     val_dataset = CompetitionDataset(
         data_dir=train_data_dir,
         split_file=data_split_file,
         split_type='validation',
-        normalize=True
+        normalize=True,
         # filter_unannotated_pairs intentionally omitted (defaults False):
         # validation performs inference/graph construction, not training, and
         # must see every real consecutive pair regardless of GT coverage.
+        strict_sample_coverage=True,
     )
     logger.info(f"Train dataset size: {len(train_dataset)}")
     logger.info(f"Val dataset size: {len(val_dataset)}")
@@ -504,6 +572,10 @@ training_loop = TrainingLoop(
     deployed_sha=DEPLOYED_SHA,
     progress_file=progress_file,
     split_identity=split_identity,
+    # P0-7 (2026-07-19): Kaggle production training must fail closed on
+    # technical validation-integrity failures instead of tolerating them up to
+    # the existing 50% circuit-breaker threshold.
+    strict_integrity_mode=True,
 )
 
 logger.info("Training loop initialized")

@@ -70,14 +70,18 @@ class TestGetGtNodesGeffCache:
         )
         assert len(loop._geff_cache) == 1
 
-    def test_missing_geff_file_returns_none_not_a_crash(self):
+    def test_missing_geff_file_raises_not_returns_none(self):
+        """P0-7 (2026-07-19) Rule A: a missing .geff is a TECHNICAL GT-load
+        failure and must raise, never silently return None -- supersedes the
+        pre-P0-7 contract this test used to assert (a None return let a real
+        regression in a retained training pair hide as if it were a benign
+        data gap)."""
         loop = make_bare_training_loop(
             data_dir=Path("data/staging/train"), _geff_cache={}
         )
 
-        result = loop._get_gt_nodes("sample_id_with_no_geff_anywhere", t_idx=0)
-
-        assert result is None
+        with pytest.raises(RuntimeError, match="Technical GT-load failure"):
+            loop._get_gt_nodes("sample_id_with_no_geff_anywhere", t_idx=0)
 
     def test_returns_zero_row_tensor_for_timepoint_with_no_gt_nodes(self):
         """Real geff has GT nodes only at specific t values (e.g. t=0..2, 27-33,
@@ -554,12 +558,25 @@ class TestValidateEpochCircuitBreaker:
         # the old version raised after only 20 (10 batches).
         assert len(seen_batches) == 30
 
-    def test_chronologically_empty_boundary_frames_do_not_cause_a_false_failure(self):
+    def test_chronologically_empty_boundary_frames_do_not_cause_a_false_failure(self, monkeypatch):
         """The exact P0-3 regression case: a model whose first several
         chronological batches are genuinely empty (real biological boundary
         frames), but later batches show real detections. Under
         shuffle=False, the OLD first-10-batches breaker would have falsely
-        aborted here. The new post-pass check must NOT raise."""
+        aborted here. The new post-pass check must NOT raise.
+
+        This test is about the DETECTION-side circuit breaker only, not GT
+        loading -- P0-7's missing-GEFF fix (COUNTED_THEN_FATAL) now correctly
+        counts/raises on this class's nonexistent data_dir, which used to be a
+        silent no-op GT skip that this test's fixture relied on as an
+        (unrelated) implementation detail. Decouple from that entirely by
+        making GT loading succeed trivially, so this test again exercises only
+        what it's actually about."""
+        monkeypatch.setattr(Path, "exists", lambda self: True)
+        monkeypatch.setattr(
+            train_module, "load_geff_ground_truth",
+            lambda geff_path: (tracksdata.graph.InMemoryGraph(), object()),
+        )
         loop = self.make_loop(
             _FakeLateBloomerUNet3D(zero_calls=12), num_batches=15, transformer=_FakeEdgeTransformer(),
         )

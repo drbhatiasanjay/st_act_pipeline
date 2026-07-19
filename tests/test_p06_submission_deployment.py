@@ -1402,9 +1402,16 @@ class TestEvaluationSuccessProvenance:
         assert result['evaluation_completed_successfully'] is False
 
     def test_validate_epoch_no_gt_fallback_sets_provenance_false(self, tmp_path):
-        """Real end-to-end validate_epoch() call where no .geff file exists
-        for the sample at all (the 'no usable GT' branch) -- the returned
-        dict must have evaluation_completed_successfully=False."""
+        """P0-7 (COUNTED_THEN_FATAL): a missing .geff raises FileNotFoundError,
+        which increments evaluation_failure and fires the circuit breaker at
+        100% rate (1/1 samples > 50% threshold). evaluate_submission is never
+        reached, so evaluation_completed_successfully cannot be True -- missing
+        GT cannot produce successful evaluation provenance.
+
+        Contract change from pre-P0-7: validate_epoch() now RAISES rather than
+        returning a dict with evaluation_completed_successfully=False. The adjacent
+        test_validate_epoch_exception_fallback_sets_provenance_false covers the
+        evaluate_submission exception path (where GT loads but scoring fails)."""
         import src.train as train_module
 
         unet3d = _FakePeakUNet3D({0: {0: (0, 1, 1), 1: (0, 1, 2)}})
@@ -1419,8 +1426,10 @@ class TestEvaluationSuccessProvenance:
         loop.epoch_fallback_counts = {'evaluation_failure': 0}
         loop._amp_enabled = False
 
-        result = loop.validate_epoch()
-        assert result['evaluation_completed_successfully'] is False
+        # P0-7: missing .geff -> circuit breaker fires (1/1 = 100% > 50%)
+        with pytest.raises(RuntimeError, match="GT loading failed"):
+            loop.validate_epoch()
+        assert loop.epoch_fallback_counts['evaluation_failure'] == 1
 
 
 # ---------------------------------------------------------------------------
