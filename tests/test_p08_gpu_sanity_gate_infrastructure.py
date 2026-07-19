@@ -16,6 +16,11 @@ silently. See the module's own docstring for why the kernel scripts can't
 import this module's copy at the point they need discovery (a bootstrap
 ordering constraint), which is why both copies exist and both need coverage.
 
+Wave 2 (Sections B-C): src/targets.py's generate_edge_targets() GT-topology-only
+hard/easy negative edge split (no dependence on model logits anywhere), and
+src/train.py's TrainingLoop gradient-snapshot/edge-supervision-counter
+instrumentation in train_epoch().
+
 Run: py -m pytest tests/test_p08_gpu_sanity_gate_infrastructure.py -v
 """
 import json
@@ -25,8 +30,12 @@ import types
 from pathlib import Path
 
 import pytest
+import torch
+import torch.nn as nn
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import src.targets as targets_module
+import src.train as train_module
 from src.dataset import CompetitionDataset
 from src.deployment_provenance import (
     find_all_kaggle_input_dirs,
@@ -34,6 +43,8 @@ from src.deployment_provenance import (
     validate_git_sha_file,
     verify_import_origins,
 )
+from src.targets import generate_edge_targets
+from src.train import TrainingLoop
 
 # ---------------------------------------------------------------------------
 # Section A1 -- CompetitionDataset(sample_id_allowlist=...)
@@ -370,3 +381,277 @@ class TestVerifyImportOrigins:
         root.mkdir()
         with pytest.raises(RuntimeError, match="empty module list"):
             verify_import_origins(root, [])
+
+
+# ---------------------------------------------------------------------------
+# Section B -- src/targets.py: generate_edge_targets() hard/easy negative
+# split (Wave 2, GT-topology only, no model logits anywhere)
+# ---------------------------------------------------------------------------
+
+class _FakeEdgeGraph:
+    """Minimal stand-in for the loaded .geff ground-truth graph --
+    implements only what generate_edge_targets() actually calls:
+    node_attrs(attr_keys=...), dividing_nodes(), has_edge(src, tgt)."""
+
+    def __init__(self, gt_rows, edges=(), dividing=()):
+        self._gt_rows = gt_rows
+        self._edges = set(edges)
+        self._dividing = set(dividing)
+
+    def node_attrs(self, attr_keys=None):
+        import polars as pl
+        return pl.DataFrame(self._gt_rows)
+
+    def dividing_nodes(self):
+        return self._dividing
+
+    def has_edge(self, src, tgt):
+        return (src, tgt) in self._edges
+
+
+def _patch_geff_load(monkeypatch, graph):
+    monkeypatch.setattr(targets_module, "load_geff_cached", lambda path, cache: (graph, object()))
+
+
+class TestEdgeHardEasyNegativeSplit:
+    def _three_way_fixture(self):
+        """2x2 candidate grid engineered to produce all three categories at
+        once: (A,C) positive, (B,C) hard negative (both matched, no GT edge),
+        (A,D) and (B,D) easy negative (D unmatched at t+1)."""
+        gt_rows = [
+            {"t": 0, "node_id": "gA", "z": 0.0, "y": 0.0, "x": 0.0},
+            {"t": 0, "node_id": "gB", "z": 0.0, "y": 10.0, "x": 10.0},
+            {"t": 1, "node_id": "gC", "z": 0.0, "y": 0.0, "x": 0.0},
+        ]
+        graph = _FakeEdgeGraph(gt_rows, edges={("gA", "gC")})
+        nodes_t = torch.tensor([[0.0, 0.0, 0.0], [0.0, 10.0, 10.0]])       # A, B
+        nodes_t1 = torch.tensor([[0.0, 0.0, 0.0], [0.0, 500.0, 500.0]])    # C, D (D unmatched)
+        return graph, nodes_t, nodes_t1
+
+    def test_three_way_partition_matches_expected_composition(self, monkeypatch):
+        graph, nodes_t, nodes_t1 = self._three_way_fixture()
+        _patch_geff_load(monkeypatch, graph)
+
+        edge_labels, metadata = generate_edge_targets(
+            sample_id="fake", geff_path="unused.geff",
+            nodes_t=nodes_t, nodes_t1=nodes_t1, t=0,
+        )
+
+        # row-major (i,j): (A,C) (A,D) (B,C) (B,D)
+        assert edge_labels.tolist() == [1, 0, 0, 0]
+        assert metadata["hard_negative_mask"].tolist() == [False, False, True, False]
+        assert metadata["easy_negative_mask"].tolist() == [False, True, False, True]
+        assert metadata["num_positive_edges"] == 1
+        assert metadata["num_hard_negative_edges"] == 1
+        assert metadata["num_easy_negative_edges"] == 2
+        assert metadata["num_negative_edges"] == 3
+
+    def test_masks_aligned_no_overlap_union_equals_negatives_never_include_positive(self, monkeypatch):
+        graph, nodes_t, nodes_t1 = self._three_way_fixture()
+        _patch_geff_load(monkeypatch, graph)
+
+        edge_labels, metadata = generate_edge_targets(
+            sample_id="fake", geff_path="unused.geff",
+            nodes_t=nodes_t, nodes_t1=nodes_t1, t=0,
+        )
+        hard = metadata["hard_negative_mask"]
+        easy = metadata["easy_negative_mask"]
+
+        assert hard.shape == edge_labels.shape
+        assert easy.shape == edge_labels.shape
+        assert not (hard & easy).any(), "hard/easy negative masks must never overlap"
+        assert torch.equal(hard | easy, edge_labels == 0), "union of both masks must equal exactly the negatives"
+        assert not (hard & (edge_labels == 1)).any(), "hard_negative_mask must never include a positive edge"
+        assert not (easy & (edge_labels == 1)).any(), "easy_negative_mask must never include a positive edge"
+        assert metadata["num_hard_negative_edges"] == int(hard.sum().item())
+        assert metadata["num_easy_negative_edges"] == int(easy.sum().item())
+
+    def test_zero_hard_negatives_is_legitimate_not_raised(self, monkeypatch):
+        """A scenario with no both-matched-but-unconnected pairs at all --
+        num_hard_negative_edges must be exactly 0, never raised, never
+        substituted for."""
+        gt_rows = [
+            {"t": 0, "node_id": "gA", "z": 0.0, "y": 0.0, "x": 0.0},
+            {"t": 1, "node_id": "gC", "z": 0.0, "y": 0.0, "x": 0.0},
+        ]
+        graph = _FakeEdgeGraph(gt_rows, edges={("gA", "gC")})
+        _patch_geff_load(monkeypatch, graph)
+        nodes_t = torch.tensor([[0.0, 0.0, 0.0]])          # matches gA
+        nodes_t1 = torch.tensor([[0.0, 500.0, 500.0]])      # unmatched (far from gC)
+
+        edge_labels, metadata = generate_edge_targets(
+            sample_id="fake", geff_path="unused.geff",
+            nodes_t=nodes_t, nodes_t1=nodes_t1, t=0,
+        )
+
+        assert metadata["num_hard_negative_edges"] == 0
+        assert metadata["hard_negative_mask"].tolist() == [False]
+        assert metadata["num_easy_negative_edges"] == 1
+
+    def test_empty_node_set_returns_empty_masks_and_zero_counts(self, monkeypatch):
+        graph = _FakeEdgeGraph(gt_rows=[])
+        _patch_geff_load(monkeypatch, graph)
+
+        edge_labels, metadata = generate_edge_targets(
+            sample_id="fake", geff_path="unused.geff",
+            nodes_t=torch.zeros((0, 3)), nodes_t1=torch.zeros((3, 3)), t=0,
+        )
+
+        assert metadata["hard_negative_mask"].shape == (0,)
+        assert metadata["easy_negative_mask"].shape == (0,)
+        assert metadata["num_hard_negative_edges"] == 0
+        assert metadata["num_easy_negative_edges"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Section C -- src/train.py: TrainingLoop gradient-snapshot capture and
+# edge-supervision counters (Wave 2)
+# ---------------------------------------------------------------------------
+
+class TestComputeParamGradNorm:
+    def test_returns_none_when_no_gradients_present(self):
+        p = nn.Parameter(torch.ones(3))  # never used in a backward pass
+        assert TrainingLoop._compute_param_grad_norm([p]) is None
+
+    def test_computes_l2_norm_across_params(self):
+        p1 = nn.Parameter(torch.zeros(2))
+        p2 = nn.Parameter(torch.zeros(2))
+        p1.grad = torch.tensor([3.0, 0.0])
+        p2.grad = torch.tensor([4.0, 0.0])
+        # L2 norm of concatenated grads [3, 0, 4, 0] == 5.0
+        assert TrainingLoop._compute_param_grad_norm([p1, p2]) == pytest.approx(5.0)
+
+    def test_ignores_params_with_no_grad(self):
+        p1 = nn.Parameter(torch.zeros(1))
+        p2 = nn.Parameter(torch.zeros(1))
+        p1.grad = torch.tensor([3.0])
+        # p2.grad left None -- must be ignored, not treated as zero-contribution
+        # in a way that changes None-vs-real-value semantics for the caller.
+        assert TrainingLoop._compute_param_grad_norm([p1, p2]) == pytest.approx(3.0)
+
+
+def _make_grad_harness(monkeypatch, *, generate_edge_targets_return):
+    """Minimal TrainingLoop (via __new__ bypass) whose train_epoch() runs ONE
+    real backward() pass through a tiny real nn.Module graph -- unlike
+    test_p07_training_integrity.py's harness (which deliberately multiplies
+    fake output by 0.0*self.p so gradients are always exactly zero by
+    construction, fine for THAT file's purposes), this harness needs REAL,
+    generally-nonzero gradients on both unet3d and transformer parameters to
+    exercise the gradient-snapshot capture meaningfully."""
+    device = torch.device("cpu")
+    z, y, x = 4, 4, 4
+
+    class _RealGradUNet3D(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.p = nn.Parameter(torch.ones(1))
+
+        def forward(self, x_in):
+            return torch.zeros(1, 2, z, y, x) + self.p, torch.zeros(1, 8, z, y, x)
+
+    class _RealGradTransformer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.p = nn.Parameter(torch.ones(1))
+
+        def forward(self, nodes_t, nodes_t1, features_t, features_t1):
+            n = nodes_t.shape[0] * nodes_t1.shape[0]
+            return self.p.expand(n).clone()
+
+    unet3d = _RealGradUNet3D()
+    transformer = _RealGradTransformer()
+
+    loop = TrainingLoop.__new__(TrainingLoop)
+    loop.unet3d = unet3d
+    loop.transformer = transformer
+    loop.device = device
+    loop.data_dir = Path("unused")
+    loop.hyperparams = {
+        'heatmap_loss_weight': 1.0, 'grad_clip': 1.0, 'warmup_steps': 0,
+        'max_batches_per_epoch': None,
+    }
+    loop.optimizer = torch.optim.AdamW(
+        list(unet3d.parameters()) + list(transformer.parameters()), lr=1e-4,
+    )
+    loop._amp_enabled = False
+    loop.scaler = torch.amp.GradScaler('cpu', enabled=False)
+    # Real (not disconnected-constant) losses so backward() actually populates
+    # .grad on both fake modules' parameters via a real computation graph.
+    loop.detection_loss_fn = lambda logits, target: (logits ** 2).mean()
+    loop.division_loss_fn = lambda logits, targets, mask: (logits ** 2).mean()
+    loop.epoch_fallback_counts = {
+        'heatmap_generation_failure': 0,
+        'edge_target_generation_failure': 0,
+        'edge_loss_computation_failure': 0,
+        'evaluation_failure': 0,
+        'gt_node_load_failure': 0,
+        'retained_pair_zero_gt_nodes_failure': 0,
+    }
+    loop.epoch_biological_zero_counts = {
+        'legitimate_zero_positive_edge_batches': 0,
+        'edge_supervised_batches_total': 0,
+        'edge_supervised_batches_with_nonzero_transformer_grad': 0,
+    }
+    loop.last_unet_gradient_snapshot = None
+    loop.last_transformer_gradient_snapshot = None
+    loop._global_step = 0
+    loop._geff_cache = {}
+    loop.last_epoch_wall_clock_seconds = 0.0
+    loop.last_epoch_num_batches = 0
+    loop.progress_file = None
+
+    batch = {
+        "frame_t": torch.zeros(1, 1, z, y, x),
+        "frame_t1": torch.zeros(1, 1, z, y, x),
+        "sample_id": ["fake_sample"],
+        "t_idx": torch.tensor([0]),
+    }
+    loop.train_loader = [batch]
+
+    monkeypatch.setattr(
+        loop, "_generate_and_validate_heatmap_target",
+        lambda sample_id, t_idx, volume_shape, z_, y_, x_: torch.zeros(1, 2, z_, y_, x_),
+    )
+    monkeypatch.setattr(
+        loop, "_get_gt_nodes",
+        lambda sample_id, t_idx: torch.tensor([[1.0, 1.0, 1.0]]),
+    )
+    monkeypatch.setattr(train_module, "generate_edge_targets", lambda *a, **kw: generate_edge_targets_return)
+
+    return loop
+
+
+class TestGradientSnapshotAndEdgeSupervisionCounters:
+    def test_unet_snapshot_captured_and_transformer_counters_fire_on_positive_edges(self, monkeypatch):
+        edge_labels = torch.tensor([1, 0])  # at least one positive edge
+        metadata = {'division_mask': torch.zeros(2, dtype=torch.bool)}
+        loop = _make_grad_harness(monkeypatch, generate_edge_targets_return=(edge_labels, metadata))
+
+        loop.train_epoch()
+
+        assert loop.last_unet_gradient_snapshot is not None
+        assert loop.last_unet_gradient_snapshot > 0.0
+        assert loop.last_transformer_gradient_snapshot is not None
+        assert loop.last_transformer_gradient_snapshot > 0.0
+        assert loop.epoch_biological_zero_counts['edge_supervised_batches_total'] == 1
+        assert loop.epoch_biological_zero_counts['edge_supervised_batches_with_nonzero_transformer_grad'] == 1
+        assert loop.epoch_biological_zero_counts['legitimate_zero_positive_edge_batches'] == 0
+
+    def test_transformer_snapshot_and_counter_not_touched_on_all_negative_batch(self, monkeypatch):
+        """Rule D legitimate-zero-positive-edge batch: UNet gradient must
+        still be captured (detection loss is independent of edge positivity),
+        but the transformer gradient snapshot and edge_supervised_batches_*
+        counters must NOT be touched -- this batch never satisfies the
+        has_positive_edges gate."""
+        edge_labels = torch.tensor([0, 0])  # all-negative -- no positive edges at all
+        metadata = {'division_mask': torch.zeros(2, dtype=torch.bool)}
+        loop = _make_grad_harness(monkeypatch, generate_edge_targets_return=(edge_labels, metadata))
+
+        loop.train_epoch()
+
+        assert loop.last_unet_gradient_snapshot is not None
+        assert loop.last_unet_gradient_snapshot > 0.0
+        assert loop.last_transformer_gradient_snapshot is None
+        assert loop.epoch_biological_zero_counts['edge_supervised_batches_total'] == 0
+        assert loop.epoch_biological_zero_counts['edge_supervised_batches_with_nonzero_transformer_grad'] == 0
+        assert loop.epoch_biological_zero_counts['legitimate_zero_positive_edge_batches'] == 1
