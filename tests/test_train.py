@@ -558,12 +558,25 @@ class TestValidateEpochCircuitBreaker:
         # the old version raised after only 20 (10 batches).
         assert len(seen_batches) == 30
 
-    def test_chronologically_empty_boundary_frames_do_not_cause_a_false_failure(self):
+    def test_chronologically_empty_boundary_frames_do_not_cause_a_false_failure(self, monkeypatch):
         """The exact P0-3 regression case: a model whose first several
         chronological batches are genuinely empty (real biological boundary
         frames), but later batches show real detections. Under
         shuffle=False, the OLD first-10-batches breaker would have falsely
-        aborted here. The new post-pass check must NOT raise."""
+        aborted here. The new post-pass check must NOT raise.
+
+        This test is about the DETECTION-side circuit breaker only, not GT
+        loading -- P0-7's missing-GEFF fix (COUNTED_THEN_FATAL) now correctly
+        counts/raises on this class's nonexistent data_dir, which used to be a
+        silent no-op GT skip that this test's fixture relied on as an
+        (unrelated) implementation detail. Decouple from that entirely by
+        making GT loading succeed trivially, so this test again exercises only
+        what it's actually about."""
+        monkeypatch.setattr(Path, "exists", lambda self: True)
+        monkeypatch.setattr(
+            train_module, "load_geff_ground_truth",
+            lambda geff_path: (tracksdata.graph.InMemoryGraph(), object()),
+        )
         loop = self.make_loop(
             _FakeLateBloomerUNet3D(zero_calls=12), num_batches=15, transformer=_FakeEdgeTransformer(),
         )
