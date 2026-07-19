@@ -39,7 +39,7 @@ The goal is for Codex to adversarially review the bug findings and the empirical
 ### Bug 2 — Detection threshold not recalibrated across normalization codomains
 - **Current:** threshold=0.4 on `[0,1]` data = top-60th-percentile filter
 - **After norm fix:** threshold=0.4 on `[0,4]` data = ~10th-percentile filter (almost all voxels pass)
-- **Measured effect:** At thr=0.4 with reference norm → 11,759 peaks across 15 frames (capped to 800/frame). At thr=1.5+ → 0 peaks (exceeds 99.9th percentile). No working threshold exists for raw-intensity NMS.
+- **Measured effect (verified from actual run):** At thr=0.4 with reference norm → **12,000 peaks** (800/frame × 15 frames; hard-capped by `MAX_DETS_PER_FRAME`). At thr=1.0 → 11,759 peaks (still no TP). At thr=1.5+ → 0 peaks (exceeds 99.9th percentile). No working threshold exists for raw-intensity NMS.
 
 ### Bug 3 — `add_node_attr_key` called with 2 args, needs 3 (in dry_run_bugfix_impact.py)
 - **Current:** `g.add_node_attr_key("z", 0.0)` — raises TypeError
@@ -81,7 +81,7 @@ The goal is for Codex to adversarially review the bug findings and the empirical
 > under-prediction *reward* (~1.10× multiplier). The previously reported `adj_J = 0.3143`
 > was produced by this invalid combination and is not a valid competition-comparable score.
 > No window-specific `estimated_number_of_nodes` estimate exists in this repository;
-> `gt_n_win` (20 sparse labels) is not a valid substitute.
+> `gt_n_win` (15 sparse labels in this window) is not a valid substitute.
 >
 > **node_recall = N/A for all rows.** The previously reported value divided
 > `edge_tp` by `gt_n_win` — matched edges ÷ GT node count — which is dimensionally
@@ -99,7 +99,7 @@ At t=20:
 
 GT-labeled cell centroids are NOT local intensity maxima. Light-sheet microscopy background scatter and neighbouring structures are routinely brighter than the annotated centroid. Raw NMS on pixel intensity cannot detect GT cells at any threshold under any normalization.
 
-**Implication:** Bug fixes 1 and 2 are real and must land in `src/data_loader.py` before the next training run. Their effect is exclusively on what the UNet3D sees during training — not on any heuristic detector.
+**Implication:** Bug fixes 1 and 2 are real and must land in `src/data_loader.py` before the next training run. Their effect is on **both training and inference**: `AnisotropicZarrLoader` is called with `normalize=True` in `src/submission_pipeline.py:135-139` (`load_timepoint_block(..., normalize=True)`) as well as in `src/train.py`. Changing normalization therefore requires (a) retraining the UNet3D under the correct `[0, 4]`-clipped distribution, and (b) recalibrating the production `detection_threshold` on post-sigmoid model outputs — not on raw-intensity NMS, which is a heuristic-only code path unrelated to competition inference.
 
 ---
 
