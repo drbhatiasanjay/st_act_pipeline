@@ -14,6 +14,7 @@ The brightest voxel in the GT cell's NMS kernel is 8.9um away -- outside the
 7um match gate. Raw-intensity NMS cannot detect GT cells regardless of threshold.
 A trained UNet3D is the only path to TP > 0.
 """
+import itertools
 import sys
 import time
 import warnings
@@ -76,8 +77,15 @@ def norm_reference(raw, q_lo, q_hi):
     v = (raw.astype(np.float32) - q_lo) / max(q_hi - q_lo, 1e-6)
     return np.clip(v, 0.0, 4.0)
 
-def build_and_score(detections_by_t, gt_g, T_true, gt_n_win):
-    """Build prediction graph from voxel-space coords and score against GT."""
+def build_and_score(detections_by_t, gt_g):
+    """Build prediction graph from voxel-space coords and score against GT.
+
+    adj_edge_jaccard and node_recall are reported as NaN: a partial-window
+    prediction cannot produce a defensible estimated_number_of_nodes for the
+    adjustment formula, and edge_tp/gt_n_win is dimensionally invalid as
+    node recall (edge count ÷ node count). per_sample_metrics() returns NaN
+    when n_total=float("nan"), per its documented API contract.
+    """
     g = td.graph.IndexedRXGraph()
     g.add_node_attr_key("z", pl.Float64, 0.0)
     g.add_node_attr_key("y", pl.Float64, 0.0)
@@ -88,7 +96,7 @@ def build_and_score(detections_by_t, gt_g, T_true, gt_n_win):
             nid = g.add_node({"t": int(t), "z": float(z), "y": float(y), "x": float(x)})
             nmap[(t, i)] = nid
     ts = sorted(detections_by_t.keys())
-    for ta, tb in zip(ts, ts[1:]):
+    for ta, tb in itertools.pairwise(ts):
         if tb != ta + 1: continue
         S, D = detections_by_t[ta], detections_by_t[tb]
         if len(S) == 0 or len(D) == 0: continue
@@ -103,10 +111,12 @@ def build_and_score(detections_by_t, gt_g, T_true, gt_n_win):
                 used.add(j)
                 g.add_edge(nmap[(ta, i)], nmap[(tb, j)], {})
     er = evaluate(g, gt_g, scale=tuple(SCALE), max_distance=MAX_DIST_UM)
-    m  = per_sample_metrics(er, T_true, er.edge_tp / max(gt_n_win, 1))
+    # n_total=nan -> adj_edge_jaccard=nan (no valid window-specific estimate exists)
+    # node_recall=nan (edge_tp/gt_n_win is dimensionally invalid: edge ÷ node)
+    m  = per_sample_metrics(er, float("nan"), float("nan"))
     return m, er, sum(len(v) for v in detections_by_t.values())
 
-def run_scenario(label, q_lo, q_hi, thr, nms_um, ref_norm, vol, gt_g, T_true, gt_n_win):
+def run_scenario(label, q_lo, q_hi, thr, nms_um, ref_norm, vol, gt_g):
     dets = {}
     for t in sorted(T_WINDOW):
         raw   = np.array(vol[t])
@@ -116,7 +126,7 @@ def run_scenario(label, q_lo, q_hi, thr, nms_um, ref_norm, vol, gt_g, T_true, gt
             scores = norm[peaks[:, 0], peaks[:, 1], peaks[:, 2]]
             peaks  = peaks[np.argsort(scores)[::-1][:MAX_DETS_PER_FRAME]]
         dets[t] = peaks
-    m, er, total = build_and_score(dets, gt_g, T_true, gt_n_win)
+    m, er, total = build_and_score(dets, gt_g)
     return {"label": label, "peaks": total,
             "tp": er.edge_tp, "fp": er.edge_fp, "fn": er.edge_fn,
             "ej": m["edge_jaccard"], "aj": m["adj_edge_jaccard"]}
@@ -168,52 +178,63 @@ def main():
     results = []
     for args in scenarios:
         t0 = time.time()
-        r  = run_scenario(*args, vol=vol, gt_g=gt_g, T_true=T_true, gt_n_win=gt_n_win)
+        r  = run_scenario(*args, vol=vol, gt_g=gt_g)
         dt = time.time() - t0
         results.append(r)
-        aj = f"{r['aj']:.4f}" if r['aj'] == r['aj'] else "  nan"
         print(f"[{dt:4.1f}s] {r['label']}")
         print(f"         peaks={r['peaks']:5d}  TP={r['tp']} FP={r['fp']} FN={r['fn']}"
-              f"  edge_J={r['ej']:.4f}  adj_J={aj}")
+              f"  edge_J={r['ej']:.4f}  adj_J=N/A")
 
-    # Upper bound: GT centroids as perfect detector
-    print("\n[Upper bound: GT centroids -> greedy linker]")
+    # Partial-window diagnostic: GT centroids + greedy linker.
+    # NOT an upper bound — only covers t=T_WINDOW, uses a greedy linker (not ILP),
+    # and the adj_edge_jaccard is not computable (no valid window n_total estimate).
+    print("\n[Partial-window GT-centroid + greedy-link diagnostic (NOT an upper bound)]")
     gt_dets = {}
     for row in gt_df.iter_rows(named=True):
         t = int(row["t"])
         if t in T_WINDOW:
             gt_dets.setdefault(t, []).append([row["z"], row["y"], row["x"]])
     gt_dets = {t: np.array(v) for t, v in gt_dets.items()}
-    m_ub, er_ub, n_ub = build_and_score(gt_dets, gt_g, T_true, gt_n_win)
-    ub_aj = m_ub["adj_edge_jaccard"]
+    m_ub, er_ub, n_ub = build_and_score(gt_dets, gt_g)
     print(f"         peaks={n_ub:5d}  TP={er_ub.edge_tp} FP={er_ub.edge_fp} FN={er_ub.edge_fn}"
-          f"  edge_J={m_ub['edge_jaccard']:.4f}  adj_J={ub_aj:.4f}")
+          f"  edge_J={m_ub['edge_jaccard']:.4f}  adj_J=N/A")
 
     print("\n" + "=" * 74)
-    print(f"{'Scenario':<46} {'Peaks':>6} {'edge_J':>7} {'adj_J':>7}  {'TP':>3} {'FP':>5} {'FN':>4}")
+    print(f"{'Scenario':<46} {'Peaks':>6} {'edge_J':>7} {'adj_J':>8}  {'TP':>3} {'FP':>5} {'FN':>4}")
+    print(f"{'(adj_J = N/A: no valid partial-window n_total)':<46}")
     print("-" * 74)
     for r in results:
-        aj = f"{r['aj']:.4f}" if r['aj']==r['aj'] else "   nan"
-        print(f"{r['label'][:45]:<46} {r['peaks']:>6} {r['ej']:>7.4f} {aj:>7}"
+        print(f"{r['label'][:45]:<46} {r['peaks']:>6} {r['ej']:>7.4f} {'N/A':>8}"
               f"  {r['tp']:>3} {r['fp']:>5} {r['fn']:>4}")
-    print(f"{'UPPER-BOUND: GT centroids + greedy':<46} {n_ub:>6}"
-          f" {m_ub['edge_jaccard']:>7.4f} {ub_aj:>7.4f}"
+    print(f"{'Partial-window GT-centroid + greedy (NOT UB)':<46} {n_ub:>6}"
+          f" {m_ub['edge_jaccard']:>7.4f} {'N/A':>8}"
           f"  {er_ub.edge_tp:>3} {er_ub.edge_fp:>5} {er_ub.edge_fn:>4}")
 
-    before = [r["aj"] for r in results if "BEFORE" in r["label"] and r["aj"]==r["aj"]]
-    after  = [r["aj"] for r in results if "AFTER"  in r["label"] and r["aj"]==r["aj"]]
-    bb = max(before) if before else 0.0
-    ba = max(after)  if after  else 0.0
+    best_ej_before = max((r["ej"] for r in results if "BEFORE" in r["label"]), default=0.0)
+    best_ej_after  = max((r["ej"] for r in results if "AFTER"  in r["label"]), default=0.0)
+    diag_ej = m_ub["edge_jaccard"]
 
     print(f"""
 ======== VERIFIED NUMBERS ON REAL DATA =============================
-  BEFORE (current code, best):        adj_edge_jaccard = {bb:.4f}
-  AFTER  (norm + threshold fix, best):adj_edge_jaccard = {ba:.4f}
-  UPPER BOUND (perfect detection):    adj_edge_jaccard = {ub_aj:.4f}
+  BEFORE (current code, best):        edge_jaccard = {best_ej_before:.4f}
+  AFTER  (norm + threshold fix, best):edge_jaccard = {best_ej_after:.4f}
+  Partial-window GT-centroid + greedy:edge_jaccard = {diag_ej:.4f}
+    (TP={er_ub.edge_tp}, FP={er_ub.edge_fp}, FN={er_ub.edge_fn} over {gt_n_win} GT nodes in window)
 
-  Delta from bug fixes alone:         {ba - bb:+.4f}
-  Remaining gap to floor  (0.763):    {0.763 - ba:.4f}
-  Remaining gap to winner (0.875):    {0.875 - ba:.4f}
+  adj_edge_jaccard: NOT REPORTED.
+    Reason: this script evaluates only t={min(T_WINDOW)}..{max(T_WINDOW)} (partial window).
+    The adjustment formula requires estimated_number_of_nodes for the FULL
+    sample (T_true={T_true:,}). Passing T_true into a 15-frame prediction
+    turns the over-prediction penalty into an under-prediction reward (factor
+    ~1.10) because T_pred << T_true. No window-specific n_total estimate
+    exists in this repository -- gt_n_win ({gt_n_win} sparse labels) is not
+    a valid substitute for estimated_number_of_nodes. adj_edge_jaccard is
+    therefore N/A for all scenarios in this diagnostic.
+
+  node_recall: NOT REPORTED.
+    Reason: edge_tp/gt_n_win is dimensionally invalid (matched edges divided
+    by GT node count). No valid node-recall helper is available for the
+    partial-window graph produced here.
 
   ROOT CAUSE: GT cells are NOT intensity maxima in their neighbourhood.
   Brightest voxel in GT cell's NMS kernel is 8.9um away (> 7um gate).
@@ -221,11 +242,11 @@ def main():
   A trained UNet3D detection map is the only path to TP > 0.
 
 CONCLUSION:
-  1. Bug fixes move the score by {ba-bb:+.4f} without training (real, not theoretical).
-  2. Even PERFECT detection + greedy linking only reaches {ub_aj:.4f} due to:
-     - Sparse GT ({gt_n_win} labeled nodes) vs T_true={T_true:,} -> penalty
-  3. Gap to 0.763 = {0.763-ba:.4f}. Cannot close without a TRAINED detector.
-  4. Bug fixes ARE valid -- they affect UNet3D training input, not raw NMS.
+  1. Bug fixes ARE valid -- they affect UNet3D training input, not raw NMS.
+  2. The partial-window diagnostic (GT centroids + greedy) achieves
+     edge_J={diag_ej:.4f} -- the raw overlap, not a competition-comparable score.
+  3. adj_edge_jaccard cannot be computed without a valid full-sample n_total.
+  4. Competition-comparable performance requires a trained UNet3D detector.
 =====================================================================""")
 
 if __name__ == "__main__":

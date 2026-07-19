@@ -63,16 +63,30 @@ The goal is for Codex to adversarially review the bug findings and the empirical
 
 | Scenario | Peaks | TP | edge_J | adj_J |
 |---|---|---|---|---|
-| BEFORE-A curr[0,1] thr=0.30 | 12,000 | 0 | 0.0000 | 0.0000 |
-| BEFORE-B curr[0,1] thr=0.40 (P1 baseline) | 12,000 | 0 | 0.0000 | 0.0000 |
-| BEFORE-C curr[0,1] thr=0.50 | 12,000 | 0 | 0.0000 | 0.0000 |
-| AFTER-1a ref[0,4] thr=0.40 | 12,000 | 0 | 0.0000 | 0.0000 |
-| AFTER-1b ref[0,4] thr=1.00 | 11,759 | 0 | 0.0000 | 0.0000 |
-| AFTER-1c ref[0,4] thr=1.50 | 0 | 0 | 0.0000 | 0.0000 |
-| AFTER-1d ref[0,4] thr=2.00 | 0 | 0 | 0.0000 | 0.0000 |
-| **UPPER BOUND** (GT centroids + greedy) | **15** | **14** | **0.2857** | **0.3143** |
+| BEFORE-A curr[0,1] thr=0.30 | 12,000 | 0 | 0.0000 | N/A |
+| BEFORE-B curr[0,1] thr=0.40 (P1 baseline) | 12,000 | 0 | 0.0000 | N/A |
+| BEFORE-C curr[0,1] thr=0.50 | 12,000 | 0 | 0.0000 | N/A |
+| AFTER-1a ref[0,4] thr=0.40 | 12,000 | 0 | 0.0000 | N/A |
+| AFTER-1b ref[0,4] thr=1.00 | 11,759 | 0 | 0.0000 | N/A |
+| AFTER-1c ref[0,4] thr=1.50 | 0 | 0 | 0.0000 | N/A |
+| AFTER-1d ref[0,4] thr=2.00 | 0 | 0 | 0.0000 | N/A |
+| **Partial-window GT-centroid + greedy** *(not an upper bound)* | **15** | **14** | **0.2857** | **N/A** |
 
-**BEFORE best: 0.0000 | AFTER best: 0.0000 | Delta: +0.0000**
+**BEFORE best edge_J: 0.0000 | AFTER best edge_J: 0.0000 | Delta: +0.0000**
+
+> **adj_J = N/A for all rows.** This script evaluates only t=20..34 (15 frames, a
+> partial window). The competition adjustment formula requires `estimated_number_of_nodes`
+> for the **full sample** (`T_true` = 32,795). Feeding that value into a 15-frame
+> prediction makes `T_pred ≪ T_true`, turning the over-prediction *penalty* into an
+> under-prediction *reward* (~1.10× multiplier). The previously reported `adj_J = 0.3143`
+> was produced by this invalid combination and is not a valid competition-comparable score.
+> No window-specific `estimated_number_of_nodes` estimate exists in this repository;
+> `gt_n_win` (20 sparse labels) is not a valid substitute.
+>
+> **node_recall = N/A for all rows.** The previously reported value divided
+> `edge_tp` by `gt_n_win` — matched edges ÷ GT node count — which is dimensionally
+> invalid. No correct node-recall computation is available for this partial-window
+> diagnostic.
 
 ---
 
@@ -98,10 +112,27 @@ GT-labeled cell centroids are NOT local intensity maxima. Light-sheet microscopy
    The heatmap GT generation and UNet3D forward pass must see `[0, 4]`-clipped data, not `[0, 1]`.
 
 3. **Does the detection threshold in `run_pipeline.py` / inference kernel match the reference normalization codomain?**  
-   thr=0.4 on `[0,4]` data passes ~everything; needs recalibration to ~1.0–1.5.
+   Codex confirmed: in production validation/inference (`src/train.py:1108`,
+   `src/submission_pipeline.py:135-139`), sigmoid is applied to detection logits before
+   NMS thresholding. Production `detection_threshold` must remain in `[0,1]`; a value
+   of 1.0–1.5 would yield zero detections or be rejected by the manifest validator.
+   The original 1.0–1.5 recommendation conflated raw-input intensity (heuristic path
+   only) with post-sigmoid model output probability — that recommendation was wrong and
+   is retracted. Threshold calibration for the trained model must happen on post-sigmoid
+   heatmap outputs after retraining under the chosen normalization.
 
-4. **Is the upper bound of 0.3143 mathematically correct?**  
-   With 15 GT nodes across 15 frames and T_true=32,795, verify the over-prediction penalty formula produces this value and the sparse-GT window isn't introducing a calculation error.
+4. **Was `adj_J = 0.3143` a valid "upper bound"? (Corrected: No)**
+   Codex confirmed this was arithmetically reproducible but fundamentally wrong. Feeding
+   a partial-window `T_pred` (≈15 nodes) against full-sample `T_true` (32,795) makes
+   `(T_pred − T_true) / T_true ≈ −1`, which turns the over-prediction penalty into a
+   ~1.10× reward. The label "upper bound" was also false — it was a greedy-linker
+   diagnostic on one window, not a mathematical ceiling on full-sample or competition
+   performance. **Fixed in `dry_run_investigation.py`**: `per_sample_metrics()` is now
+   called with `n_total=float("nan")` (the documented API contract for "unavailable"),
+   which returns `adj_edge_jaccard=NaN` for all scenarios. The row is relabelled
+   "Partial-window GT-centroid + greedy-link diagnostic (NOT an upper bound)".
+   `gt_n_win` was deliberately NOT used as `n_total` — the sparse annotated label count
+   is not the `estimated_number_of_nodes` the formula requires.
 
 5. **Has any checkpoint been trained with the wrong (current) normalization?**  
    If yes, applying the fix at inference without retraining would degrade, not improve, performance.
