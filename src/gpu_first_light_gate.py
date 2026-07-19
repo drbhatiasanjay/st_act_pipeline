@@ -31,7 +31,7 @@ DEFAULT_TIME_BUDGET_SECONDS = 600.0
 
 
 def _positive_finite(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value) and value > 0
 
 
 def _positive_int(value: Any) -> bool:
