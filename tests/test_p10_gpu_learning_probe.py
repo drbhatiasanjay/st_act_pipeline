@@ -135,7 +135,7 @@ def test_opening_any_unselected_validation_sample_fails_boundedness_contract():
         ("evaluation_completed_successfully", False, "did not complete"),
         ("validation_samples_evaluated", 1, "exactly the requested"),
         ("validation_sample_cap", None, "sample cap"),
-        ("validation_samples_total", 1, "fold total"),
+        ("validation_samples_total", 1, "requested sample subset"),
         ("predicted_nodes_total", 0, "no predicted nodes"),
         ("validation_is_full_fold", False, "processed completely"),
         ("is_structural_zero", True, "structurally zero"),
