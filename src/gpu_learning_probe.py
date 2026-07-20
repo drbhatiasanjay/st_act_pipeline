@@ -84,6 +84,8 @@ def evaluate_learning_probe_report(report: dict[str, Any], *, require_checkpoint
 
     requested_batches = report.get("requested_train_batches")
     completed_batches = report.get("completed_train_batches")
+    if requested_batches != DEFAULT_TRAIN_BATCHES:
+        reasons.append(f"requested training batches must equal {DEFAULT_TRAIN_BATCHES}")
     if (
         not _positive_int(requested_batches)
         or not _positive_int(completed_batches)
@@ -122,9 +124,11 @@ def evaluate_learning_probe_report(report: dict[str, Any], *, require_checkpoint
         or len(selected_validation) != requested_validation
         or len(selected_validation) != len(set(selected_validation))
         or not isinstance(opened_validation, list)
-        or set(selected_validation) != set(opened_validation)
+        or selected_validation != opened_validation
     ):
         reasons.append("selected validation sample identity/coverage is incomplete")
+    if requested_validation != DEFAULT_VALIDATION_SAMPLES:
+        reasons.append(f"requested validation samples must equal {DEFAULT_VALIDATION_SAMPLES}")
     if not _positive_int(source_validation_total) or (
         _positive_int(requested_validation) and source_validation_total < requested_validation
     ):
@@ -177,6 +181,8 @@ def evaluate_learning_probe_report(report: dict[str, Any], *, require_checkpoint
 
     elapsed = report.get("elapsed_seconds")
     budget = report.get("time_budget_seconds")
+    if budget != DEFAULT_TIME_BUDGET_SECONDS:
+        reasons.append(f"time budget must equal {DEFAULT_TIME_BUDGET_SECONDS} seconds")
     if not _positive_finite(elapsed) or not _positive_finite(budget):
         reasons.append("elapsed time or time budget is absent, non-finite, or non-positive")
     elif elapsed > budget:
@@ -266,6 +272,12 @@ def run_gpu_learning_probe(
             raise ValueError(f"{name} must be a positive integer")
     if not _positive_finite(time_budget_seconds):
         raise ValueError("time_budget_seconds must be finite and positive")
+    if train_batches != DEFAULT_TRAIN_BATCHES:
+        raise ValueError(f"train_batches must equal {DEFAULT_TRAIN_BATCHES}")
+    if validation_samples != DEFAULT_VALIDATION_SAMPLES:
+        raise ValueError(f"validation_samples must equal {DEFAULT_VALIDATION_SAMPLES}")
+    if time_budget_seconds != DEFAULT_TIME_BUDGET_SECONDS:
+        raise ValueError(f"time_budget_seconds must equal {DEFAULT_TIME_BUDGET_SECONDS}")
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
