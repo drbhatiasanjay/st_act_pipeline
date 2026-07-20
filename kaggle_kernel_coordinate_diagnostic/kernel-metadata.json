@@ -1,0 +1,16 @@
+{
+  "id": "drbhatiasanjay/st-act-gpu-coordinate-diagnostic",
+  "title": "ST ACT GPU Coordinate Diagnostic",
+  "code_file": "gpu_coordinate_diagnostic_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": ["drbhatiasanjay/st-act-src"],
+  "competition_sources": ["biohub-cell-tracking-during-development"],
+  "kernel_sources": ["drbhatiasanjay/st-act-gpu-learning-probe"],
+  "model_sources": []
+}
