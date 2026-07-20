@@ -43,13 +43,15 @@ def _passing_report():
         "successfully_opened_train_sample_ids": ["train-a", "train-b"],
         "requested_validation_samples": 2,
         "selected_validation_sample_ids": ["val-a", "val-b"],
-        "successfully_opened_validation_sample_ids": ["val-a", "val-b", "val-c"],
+        "successfully_opened_validation_sample_ids": ["val-a", "val-b"],
+        "source_validation_fold_sample_count": 3,
+        "full_fold_validation_performed": False,
         "validation_metrics": {
             "evaluation_completed_successfully": True,
             "validation_samples_evaluated": 2,
-            "validation_samples_total": 3,
+            "validation_samples_total": 2,
             "validation_sample_cap": 2,
-            "validation_is_full_fold": False,
+            "validation_is_full_fold": True,
             "predicted_nodes_total": 10,
             "predicted_edges_total": 4,
             "is_structural_zero": False,
@@ -121,6 +123,12 @@ def test_incomplete_selected_validation_coverage_fails():
     assert any("validation sample identity" in reason for reason in evaluate_learning_probe_report(report))
 
 
+def test_opening_any_unselected_validation_sample_fails_boundedness_contract():
+    report = _passing_report()
+    report["successfully_opened_validation_sample_ids"].append("val-c")
+    assert any("validation sample identity" in reason for reason in evaluate_learning_probe_report(report))
+
+
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
@@ -129,7 +137,7 @@ def test_incomplete_selected_validation_coverage_fails():
         ("validation_sample_cap", None, "sample cap"),
         ("validation_samples_total", 1, "fold total"),
         ("predicted_nodes_total", 0, "no predicted nodes"),
-        ("validation_is_full_fold", True, "full-fold flag"),
+        ("validation_is_full_fold", False, "processed completely"),
         ("is_structural_zero", True, "structurally zero"),
         ("score", float("nan"), "metric score"),
     ],
@@ -244,6 +252,11 @@ def test_probe_calls_validation_but_never_generates_manifest_or_pushes_kaggle():
     kernel_source = KERNEL_PATH.read_text(encoding="utf-8")
     assert "kaggle kernels push" not in kernel_source
     assert "kaggle datasets version" not in kernel_source
+
+
+def test_validation_dataset_is_bounded_before_dataloader_iteration():
+    source = (REPO_ROOT / "src" / "gpu_learning_probe.py").read_text(encoding="utf-8")
+    assert "sample_id_allowlist=selected_validation_ids" in source
 
 
 def test_default_probe_is_512_batches_two_validation_samples_one_hour():

@@ -115,15 +115,22 @@ def evaluate_learning_probe_report(report: dict[str, Any], *, require_checkpoint
     requested_validation = report.get("requested_validation_samples")
     selected_validation = report.get("selected_validation_sample_ids")
     opened_validation = report.get("successfully_opened_validation_sample_ids")
+    source_validation_total = report.get("source_validation_fold_sample_count")
     if (
         not _positive_int(requested_validation)
         or not isinstance(selected_validation, list)
         or len(selected_validation) != requested_validation
         or len(selected_validation) != len(set(selected_validation))
         or not isinstance(opened_validation, list)
-        or not set(selected_validation).issubset(set(opened_validation))
+        or set(selected_validation) != set(opened_validation)
     ):
         reasons.append("selected validation sample identity/coverage is incomplete")
+    if not _positive_int(source_validation_total) or (
+        _positive_int(requested_validation) and source_validation_total < requested_validation
+    ):
+        reasons.append("source validation fold count is missing or smaller than the requested subset")
+    if report.get("full_fold_validation_performed") is not False:
+        reasons.append("learning probe must explicitly report that full-fold validation was not performed")
 
     metrics = report.get("validation_metrics")
     if not isinstance(metrics, dict):
@@ -135,14 +142,10 @@ def evaluate_learning_probe_report(report: dict[str, Any], *, require_checkpoint
             reasons.append("validation did not evaluate exactly the requested sample count")
         if metrics.get("validation_sample_cap") != requested_validation:
             reasons.append("validation sample cap does not match the requested sample count")
-        if not _positive_int(metrics.get("validation_samples_total")) or (
-            _positive_int(requested_validation) and metrics["validation_samples_total"] < requested_validation
-        ):
-            reasons.append("validation fold total is smaller than the requested sample count")
-        elif metrics.get("validation_is_full_fold") is not (
-            metrics["validation_samples_total"] == requested_validation
-        ):
-            reasons.append("validation full-fold flag is inconsistent with evaluated coverage")
+        if metrics.get("validation_samples_total") != requested_validation:
+            reasons.append("validation loader does not contain exactly the requested sample subset")
+        if metrics.get("validation_is_full_fold") is not True:
+            reasons.append("selected validation subset was not processed completely")
         if not _positive_int(metrics.get("predicted_nodes_total")):
             reasons.append("validation produced no predicted nodes")
         if not _nonnegative_int(metrics.get("predicted_edges_total")):
@@ -284,6 +287,7 @@ def run_gpu_learning_probe(
         "gpu_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
         "requested_train_batches": train_batches,
         "requested_validation_samples": validation_samples,
+        "full_fold_validation_performed": False,
         "time_budget_seconds": float(time_budget_seconds),
         "deployment_manifest_generated": False,
         "probe_checkpoint_saved": False,
@@ -324,6 +328,7 @@ def run_gpu_learning_probe(
             normalize=True,
             filter_unannotated_pairs=False,
             strict_sample_coverage=True,
+            sample_id_allowlist=selected_validation_ids,
         )
         generator = torch.Generator().manual_seed(seed)
         train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True, generator=generator)
@@ -389,6 +394,7 @@ def run_gpu_learning_probe(
                 "train_fallback_counts": train_fallback_counts,
                 "train_biological_counts": train_biological_counts,
                 "selected_validation_sample_ids": selected_validation_ids,
+                "source_validation_fold_sample_count": len(validation_ids),
                 "successfully_opened_validation_sample_ids": list(validation_dataset.successfully_opened_sample_ids),
                 "validation_metrics": validation_metrics,
                 "post_validation_fallback_counts": dict(loop.epoch_fallback_counts),
