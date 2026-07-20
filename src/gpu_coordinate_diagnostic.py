@@ -267,7 +267,13 @@ def build_sweep(
 def build_alignment_hypotheses(
     predicted_zyx: np.ndarray, ground_truth_zyx: np.ndarray, volume_shape: tuple[int, int, int]
 ) -> dict[str, Any]:
-    """Evaluate axis-order and scale alternatives without changing production output."""
+    """Conditionally compare transforms for one identity-ranked peak set.
+
+    This is a sensitivity table, not an alignment adjudication: the threshold/NMS
+    point was selected under the production coordinate convention.  The report
+    states that limitation explicitly so a favorable alternative transform cannot
+    be mistaken for an independently optimized result.
+    """
     predicted = np.asarray(predicted_zyx, dtype=np.float64).reshape(-1, 3)
     ground_truth = np.asarray(ground_truth_zyx, dtype=np.float64).reshape(-1, 3)
     axis_names = ("z", "y", "x")
@@ -322,6 +328,8 @@ def build_alignment_hypotheses(
                 }
             )
     return {
+        "interpretation": "conditional_sensitivity_at_identity_ranked_best_point",
+        "can_adjudicate_alignment": False,
         "axis_permutations": permutations,
         "scale_variants": scale_rows,
         "ungated_nearest_prediction_per_gt": nearest,
@@ -724,6 +732,8 @@ def run_gpu_coordinate_diagnostic(
                 "diagnostic_outcome": classify_outcome(probability, grid),
             }
         )
+        report["deployment_manifest_generated"] = manifest_path.exists()
+        report["new_checkpoint_generated"] = any(output_dir.glob("*.pt"))
         reasons = evaluate_coordinate_diagnostic_report(report, probability, probability_path)
         contract_evaluated = True
         report["failure_reasons"] = reasons
@@ -734,6 +744,10 @@ def run_gpu_coordinate_diagnostic(
     finally:
         report["deployment_manifest_generated"] = manifest_path.exists()
         report["new_checkpoint_generated"] = any(output_dir.glob("*.pt"))
+        for field in ("deployment_manifest_generated", "new_checkpoint_generated"):
+            reason = f"{field} must remain false"
+            if report[field] is True and reason not in report["failure_reasons"]:
+                report["failure_reasons"].append(reason)
         if not contract_evaluated and not report["failure_reasons"]:
             report["failure_reasons"] = evaluate_coordinate_diagnostic_report(
                 report,

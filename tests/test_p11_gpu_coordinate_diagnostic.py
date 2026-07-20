@@ -171,6 +171,7 @@ def test_complete_report_recomputes_from_frozen_volume():
         ("inference_autocast_dtype", "float32", "float16 autocast"),
         ("optimizer_steps", 1, "optimizer_steps"),
         ("adaptive_fallback_calls", 1, "adaptive_fallback_calls"),
+        ("deployment_manifest_generated", True, "deployment_manifest_generated"),
         ("new_checkpoint_generated", True, "new_checkpoint_generated"),
         ("model_state_sha256_after", "e" * 64, "model state changed"),
     ],
@@ -282,6 +283,8 @@ def test_alignment_hypotheses_expose_axis_permutation_signal():
     predicted = np.asarray([[6.0, 0.0, 0.0]])
     gt = np.asarray([[0.0, 0.0, 6.0]])
     result = build_alignment_hypotheses(predicted, gt, (8, 8, 8))
+    assert result["can_adjudicate_alignment"] is False
+    assert result["interpretation"] == "conditional_sensitivity_at_identity_ranked_best_point"
     by_order = {row["predicted_axis_order"]: row for row in result["axis_permutations"]}
     assert by_order["zyx"]["matches_within_gate"] == 0
     assert by_order["xyz"]["matches_within_gate"] == 1
