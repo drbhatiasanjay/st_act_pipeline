@@ -95,11 +95,13 @@ def test_complete_report_passes():
         ("import_origins_verified", False, "import origins"),
         ("cuda_available", False, "CUDA device"),
         ("cuda_arch_compatible", False, "compute capability"),
+        ("requested_train_batches", 1, "must equal 512"),
         ("completed_train_batches", 511, "completed training batches"),
         ("average_train_loss", float("nan"), "training loss"),
         ("last_unet_gradient_norm", 0.0, "UNet gradient"),
         ("last_transformer_gradient_norm", float("inf"), "Transformer gradient"),
         ("elapsed_seconds", 3601.0, "wall-clock budget"),
+        ("time_budget_seconds", 7200.0, "must equal 3600"),
         ("deployment_manifest_generated", True, "deployment manifest"),
         ("peak_gpu_memory_allocated_bytes", 0, "allocated GPU memory"),
         ("probe_checkpoint_saved", False, "checkpoint was not saved"),
@@ -127,6 +129,23 @@ def test_opening_any_unselected_validation_sample_fails_boundedness_contract():
     report = _passing_report()
     report["successfully_opened_validation_sample_ids"].append("val-c")
     assert any("validation sample identity" in reason for reason in evaluate_learning_probe_report(report))
+
+
+def test_opened_validation_samples_must_preserve_selected_order():
+    report = _passing_report()
+    report["successfully_opened_validation_sample_ids"] = ["val-b", "val-a"]
+    assert any("validation sample identity" in reason for reason in evaluate_learning_probe_report(report))
+
+
+def test_requested_validation_sample_count_is_pinned():
+    report = _passing_report()
+    report["requested_validation_samples"] = 1
+    report["selected_validation_sample_ids"] = ["val-a"]
+    report["successfully_opened_validation_sample_ids"] = ["val-a"]
+    report["validation_metrics"]["validation_samples_evaluated"] = 1
+    report["validation_metrics"]["validation_sample_cap"] = 1
+    report["validation_metrics"]["validation_samples_total"] = 1
+    assert any("must equal 2" in reason for reason in evaluate_learning_probe_report(report))
 
 
 @pytest.mark.parametrize(
