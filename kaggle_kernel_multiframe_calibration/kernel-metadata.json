@@ -1,0 +1,16 @@
+{
+  "id": "drbhatiasanjay/st-act-gpu-multiframe-calibration",
+  "title": "ST ACT GPU Multiframe Calibration",
+  "code_file": "gpu_multiframe_calibration_kernel.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "enable_tpu": "false",
+  "enable_internet": "true",
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": ["drbhatiasanjay/st-act-src"],
+  "competition_sources": ["biohub-cell-tracking-during-development"],
+  "kernel_sources": ["drbhatiasanjay/st-act-gpu-learning-probe"],
+  "model_sources": []
+}
