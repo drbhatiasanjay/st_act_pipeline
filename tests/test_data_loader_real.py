@@ -71,11 +71,13 @@ class TestAnisotropicZarrLoaderReal:
         # Load with normalization
         vol_normalized = loader.load_timepoint_block(0, normalize=True)
 
-        # If quantile params were found, normalized data should be float32 and in [0, 1]
+        # If quantile params were found, normalized data should be float32 and in [0, 4]
+        # (codomain matches the reference implementation's quantile_normalize(),
+        # clip_max=4.0 -- NOT [0, 1], see REFERENCE_IMPLEMENTATION.md)
         if loader._quantile_normalization_params is not None:
             assert vol_normalized.dtype == np.float32, f"Normalized data should be float32, got {vol_normalized.dtype}"
             assert np.min(vol_normalized) >= 0.0, f"Normalized min should be >= 0, got {np.min(vol_normalized)}"
-            assert np.max(vol_normalized) <= 1.0, f"Normalized max should be <= 1, got {np.max(vol_normalized)}"
+            assert np.max(vol_normalized) <= 4.0, f"Normalized max should be <= 4, got {np.max(vol_normalized)}"
             # Normalized and raw should be different
             assert not np.allclose(vol_raw.astype(np.float32), vol_normalized), \
                 "Normalization should change values"
@@ -162,16 +164,17 @@ class TestAnisotropicZarrLoaderReal:
             assert vol.size > 0, f"Timepoint {t} should have data"
 
     def test_normalized_values_in_expected_range(self, train_data_path):
-        """Test that normalized data values are in expected [0, 1] range."""
+        """Test that normalized data values are in expected [0, 4] range
+        (reference implementation's codomain, clip_max=4.0 -- not [0, 1])."""
         loader = AnisotropicZarrLoader(store_path=train_data_path, simulate=False)
         vol_normalized = loader.load_timepoint_block(0, normalize=True)
 
         if loader._quantile_normalization_params is not None:
-            # Most values should be in [0, 1] with some edge cases
-            valid_range = np.sum((vol_normalized >= 0.0) & (vol_normalized <= 1.0))
+            # All values must be within the [0, 4] clip range by construction
+            valid_range = np.sum((vol_normalized >= 0.0) & (vol_normalized <= 4.0))
             total_voxels = vol_normalized.size
             validity_ratio = valid_range / total_voxels
-            assert validity_ratio > 0.95, f"Most values should be in [0, 1], got {validity_ratio*100:.1f}% valid"
+            assert validity_ratio == 1.0, f"All values must be in [0, 4] (hard-clipped), got {validity_ratio*100:.1f}% valid"
 
     def test_cannot_load_with_simulate_false_nonexistent(self):
         """Test that simulate=False raises error for non-existent path."""
