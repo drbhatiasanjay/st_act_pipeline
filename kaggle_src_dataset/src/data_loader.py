@@ -127,13 +127,15 @@ class AnisotropicZarrLoader:
                 image_stats = attrs['image_statistics']
                 if 'quantiles' in image_stats:
                     quantiles = image_stats['quantiles']
-                    # Use 0.1 and 0.9 quantiles for normalization (10th and 90th percentile)
-                    q_low = quantiles.get('0.1', None)
-                    q_high = quantiles.get('0.9', None)
+                    # 0.1%/99.9% quantiles, matching the reference implementation's
+                    # quantile_normalize() exactly (REFERENCE_IMPLEMENTATION.md) --
+                    # NOT 0.1/0.9 (10th/90th percentile), which was the prior bug here.
+                    q_low = quantiles.get('0.001', None)
+                    q_high = quantiles.get('0.999', None)
 
                     if q_low is not None and q_high is not None:
                         self._quantile_normalization_params = (float(q_low), float(q_high))
-                        logger.info(f"Extracted quantile params: 0.1={q_low}, 0.9={q_high}")
+                        logger.info(f"Extracted quantile params: 0.001={q_low}, 0.999={q_high}")
         except Exception as e:
             logger.debug(f"Could not extract quantile parameters: {str(e)}")
 
@@ -248,13 +250,16 @@ class AnisotropicZarrLoader:
     def _apply_quantile_normalization(self, data: np.ndarray) -> np.ndarray:
         """
         Apply quantile normalization to raw data if normalization parameters are available.
-        Normalizes to [0, 1] range using: (data - q_low) / (q_high - q_low)
+        Matches the reference implementation's quantile_normalize() exactly
+        (REFERENCE_IMPLEMENTATION.md): normalizes to [0, 4] using
+        (data - q_low) / (q_high - q_low + eps), clipped to [0, 4] -- NOT [0, 1].
+        Downstream thresholds must be calibrated against this [0, 4] codomain.
 
         Args:
             data (np.ndarray): Raw data to normalize
 
         Returns:
-            np.ndarray: Normalized data (float32, [0,1] range) or original data if no quantiles
+            np.ndarray: Normalized data (float32, [0,4] range) or original data if no quantiles
         """
         if self._quantile_normalization_params is None:
             return data
@@ -264,10 +269,10 @@ class AnisotropicZarrLoader:
             logger.warning(f"Invalid quantile range: {q_low} >= {q_high}. Skipping normalization.")
             return data
 
-        # Apply quantile normalization
-        normalized = (data.astype(np.float32) - q_low) / (q_high - q_low)
-        # Clamp to [0, 1]
-        normalized = np.clip(normalized, 0.0, 1.0)
+        # Apply quantile normalization (epsilon matches reference's 1e-6 guard)
+        normalized = (data.astype(np.float32) - q_low) / (q_high - q_low + 1e-6)
+        # Clamp to [0, 4] -- NOT [0, 1], matching the reference's clip_max=4.0
+        normalized = np.clip(normalized, 0.0, 4.0)
         return normalized
 
     def load_timepoint_block(self, t: int, normalize: bool = True) -> np.ndarray:
