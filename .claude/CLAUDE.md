@@ -285,6 +285,64 @@ scope, not this file.
      which only returns files written to `/kaggle/working/`, not the execution trace).
      `kaggle datasets files <slug>` / `kaggle datasets metadata` verify what's actually deployed to
      a dataset if the SHA marker itself is ever in doubt.
+- **Patch-generation ordering bug (P0-6, 2026-07-18): any command that touches
+  `training_log_smoke_test.csv` between the pre-generation stash and the final `git diff` step
+  silently re-pollutes it.** During the P0-6 v1→v4 review cycle, the established procedure was
+  "stash the `training_log_smoke_test.csv` pollution, then generate the patch via `git diff`" —
+  but running the repository's diagnostic/smoke-test suite *between* those two steps regenerated
+  that file, and it landed in the first v4 patch attempt as an unauthorized 15th file (the frozen
+  scope for that round was 14 files). Caught only by manually grepping `diff --git` counts in the
+  generated patch before delivery — not by any enforced check. If a future patch round runs any
+  smoke test between stashing and diffing, re-check the file count before shipping the patch; don't
+  assume the stash step alone is sufficient once any test has run afterward.
+- **A fix on the working session's branch does NOT reach a Kaggle worktree or `origin/master`
+  until explicitly committed and merged/pushed — verify propagation, don't assume it.** 2026-08-14:
+  fixed a real normalization bug on the working branch, then ran a real Kaggle GPU probe and a
+  local calibration sweep against the Kaggle worktree (checked out from `origin/master`). Both
+  silently used the OLD, still-buggy code — the fix never left the working branch. Caught only by
+  noticing a stray log line during an unrelated sweep, not by any deliberate check, after a real
+  ~17-minute Kaggle GPU run had already been invalidated. Before trusting any worktree/Kaggle run
+  reflects a same-session fix, diff the specific file against what's actually at the SHA that
+  worktree is checked out to (`git show <sha>:path` or grep the worktree's own copy) — this
+  extends the existing "Deployed code SHA" check (below) from "which SHA is deployed" to "does
+  this session's specific fix exist at that SHA."
+- **`scripts/sync_kaggle_src.py --push` can silently upload correct code with a STALE `GIT_SHA.txt`
+  marker if the just-synced `kaggle_src_dataset/` mirror itself has an uncommitted diff at push
+  time.** The script's own `working_tree_is_clean()` check runs *after* syncing `src/` into
+  `kaggle_src_dataset/`, so that sync's own resulting diff can make the tree "dirty" for the SHA-
+  write step, and the script correctly refuses to write a misleading marker — but still proceeds
+  to upload the (correct) code with the (stale) old marker already on disk. Watch for "Skipped
+  updating `GIT_SHA.txt` (working tree not clean)" in the script's own output; if you see it,
+  commit the resulting `kaggle_src_dataset/` diff (the project's existing "chore: sync
+  `kaggle_src_dataset` mirror after X" commit pattern — several already exist in git log) and
+  re-run `--push` so code and SHA marker upload together, consistently, in the same version.
+- **Manual `nohup <cmd> &` detach does not reliably survive this Windows sandbox's process
+  lifecycle** — a background child spawned this way can be silently reaped once the spawning tool
+  call's own process line ends, even with `nohup`, with no error and no captured exit code. Use
+  the harness's own background-execution mechanism directly on the actual long-running command
+  (not a separate wrapper script that itself manually `nohup`s a child) — this is what actually
+  completed a ~20-minute real inference run without truncation; the manual-nohup variant of the
+  identical workload died silently at the same wall-clock point (~5 min) on two separate attempts.
+  Separately: a background command's own timeout budget can still terminate it once exceeded, and
+  a report of "completed, exit code 0" is not proof of *real* completion — cross-check against the
+  expected final output (e.g., the summary section the script is supposed to print), not just the
+  exit code, before trusting a background job actually finished its work.
+- **`gh`/local `git` and the MCP GitHub connector (`mcp__*_github__*`) have independent
+  authentication** — read operations succeeding on one (or on the MCP connector specifically)
+  doesn't mean write operations (push, PR create/merge) will also succeed. A stale `GITHUB_TOKEN`
+  env var silently overrides `gh`'s own interactive/stored credentials and blocks `gh auth login`
+  outright ("The value of the GITHUB_TOKEN environment variable is being used for authentication")
+  — `unset GITHUB_TOKEN` (or override it inline per-command with a fresh token) before retrying.
+  Check `gh auth status` before starting any workflow that ends in a push, not after the push
+  fails.
+- **`CompetitionDataset` decompresses each timepoint on first access at real, non-trivial cost
+  (~5-8s/timepoint on this machine's CPU)** — a full ~100-timepoint validation fold per sample can
+  exceed a single tool call's wall-clock budget. When writing an ad hoc diagnostic/calibration
+  script against this loader, cap the batch count explicitly and per-sample via **separate small
+  per-sample loaders that break out immediately** once each hits its cap — capping via
+  skip/`continue` inside one shared multi-sample loader still pays the full decompression cost for
+  every skipped item if the underlying pairs are grouped by sample (which they are), silently
+  defeating the cap's entire purpose.
 
 ## Scientific/mathematical claims — verification protocol, read before asserting correctness or bugs
 

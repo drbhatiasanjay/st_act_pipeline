@@ -1,46 +1,55 @@
 {
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\run_pipeline.py": {
-    "mtime": 1783422493.1289885,
-    "ast_hash": "429af74663b058083903dd0c33a123e3",
-    "semantic_hash": "429af74663b058083903dd0c33a123e3"
+    "mtime": 1784017597.493681,
+    "seen": 1786724428.2884734,
+    "ast_hash": "bdf98a281c110e067ac06443c71a497e",
+    "semantic_hash": "bdf98a281c110e067ac06443c71a497e"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\system_diagnostics.py": {
     "mtime": 1783024625.8892264,
+    "seen": 1786724428.2885146,
     "ast_hash": "800102ff365426a0386f5f9a5cb88b59",
     "semantic_hash": "800102ff365426a0386f5f9a5cb88b59"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\data_loader.py": {
-    "mtime": 1783128451.6107316,
-    "ast_hash": "49a8b814074b7a0a711a393c81a44515",
-    "semantic_hash": "49a8b814074b7a0a711a393c81a44515"
+    "mtime": 1786699178.615275,
+    "seen": 1786724428.2884934,
+    "ast_hash": "b1aec14ecfaea0b276b23ad016c2bda7",
+    "semantic_hash": "b1aec14ecfaea0b276b23ad016c2bda7"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\model.py": {
-    "mtime": 1783128451.6240387,
-    "ast_hash": "0f41b67cf4d81d0d0880f1108cd77c7e",
-    "semantic_hash": "0f41b67cf4d81d0d0880f1108cd77c7e"
+    "mtime": 1784286525.8924694,
+    "seen": 1786724428.2884982,
+    "ast_hash": "5ab8302df318846252425f14886d20cd",
+    "semantic_hash": "5ab8302df318846252425f14886d20cd"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\tracker.py": {
-    "mtime": 1783128451.649025,
-    "ast_hash": "ef2825137369516f8543be15a5dd1756",
-    "semantic_hash": "ef2825137369516f8543be15a5dd1756"
+    "mtime": 1783874709.842825,
+    "seen": 1786724428.288508,
+    "ast_hash": "812617eb4465cfb632a959a58ef22b2b",
+    "semantic_hash": "812617eb4465cfb632a959a58ef22b2b"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\httpsst-act-cell-tracking-studio-77.txt": {
     "mtime": 1783025460.8684814,
+    "seen": 1786724428.2886398,
     "ast_hash": "26b261c1e6bebee4ee68b2964fbcccd7",
     "semantic_hash": "26b261c1e6bebee4ee68b2964fbcccd7"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\requirements.txt": {
     "mtime": 1783059589.0865507,
+    "seen": 1786724428.2886424,
     "ast_hash": "fd8345422bd7ea318227cc61aefcf4f1",
     "semantic_hash": "fd8345422bd7ea318227cc61aefcf4f1"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\config\\hyperparams.yaml": {
-    "mtime": 1783083245.5059733,
-    "ast_hash": "bd90ac8b82fffd5a4a50849c8bd7f59a",
-    "semantic_hash": "bd90ac8b82fffd5a4a50849c8bd7f59a"
+    "mtime": 1783874983.4571166,
+    "seen": 1786724428.2886376,
+    "ast_hash": "a903ccbcbc5a5345b6fc83a0671f76ea",
+    "semantic_hash": "a903ccbcbc5a5345b6fc83a0671f76ea"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\config.json": {
     "mtime": 1783035545.9345746,
+    "seen": 1786724428.2884257,
     "ast_hash": "3bfc7081944faa4c8df7c33dee06926a",
     "semantic_hash": "3bfc7081944faa4c8df7c33dee06926a"
   },
@@ -426,123 +435,147 @@
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\compare_runs.py": {
     "mtime": 1783123225.5669098,
+    "seen": 1786724428.2884796,
     "ast_hash": "025b90c327a17b9373e3b93cab5bc384",
     "semantic_hash": "025b90c327a17b9373e3b93cab5bc384"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\sweep_threshold.py": {
-    "mtime": 1783323722.615389,
-    "ast_hash": "ccdb510af7bea5759f24f55b06466f44",
-    "semantic_hash": "ccdb510af7bea5759f24f55b06466f44"
+    "mtime": 1783524629.866366,
+    "seen": 1786724428.288488,
+    "ast_hash": "20e66b6bfba4de0b6a5da73c133b71cc",
+    "semantic_hash": "20e66b6bfba4de0b6a5da73c133b71cc"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\evaluation.py": {
-    "mtime": 1783128451.6171834,
-    "ast_hash": "20b6646a66ae4fd2158ae6af53165d82",
-    "semantic_hash": "20b6646a66ae4fd2158ae6af53165d82"
+    "mtime": 1784286371.90204,
+    "seen": 1786724428.2884965,
+    "ast_hash": "c33841a976c94bc45f5f08cf5b4e5b2d",
+    "semantic_hash": "c33841a976c94bc45f5f08cf5b4e5b2d"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\run_tracker.py": {
-    "mtime": 1783251087.4734418,
+    "mtime": 1783524566.673024,
+    "seen": 1786724428.2885013,
     "ast_hash": "ae568ec15962dc17001bab6876171ed4",
     "semantic_hash": "ae568ec15962dc17001bab6876171ed4"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\submission_exporter.py": {
-    "mtime": 1783128451.6378849,
-    "ast_hash": "3f1a87b6d71f24ee6831fac8342cc51c",
-    "semantic_hash": "3f1a87b6d71f24ee6831fac8342cc51c"
+    "mtime": 1784373570.0572066,
+    "seen": 1786724428.2885036,
+    "ast_hash": "cb5a883cbc7476973757ac03b10739bf",
+    "semantic_hash": "cb5a883cbc7476973757ac03b10739bf"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\submission_schema_comparison.py": {
     "mtime": 1783128451.643454,
+    "seen": 1786724428.2885053,
     "ast_hash": "3058b734403a0080e6a2a812421d1a8c",
     "semantic_hash": "3058b734403a0080e6a2a812421d1a8c"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\tracking_cellmot\\division_metrics.py": {
-    "mtime": 1783082681.571565,
-    "ast_hash": "b8b3e5091d8cb148e3e0d8e26ffb29cc",
-    "semantic_hash": "b8b3e5091d8cb148e3e0d8e26ffb29cc"
+    "mtime": 1784396071.1736352,
+    "seen": 1786724428.2885103,
+    "ast_hash": "746ab50efda08365e66e920f859e87fe",
+    "semantic_hash": "746ab50efda08365e66e920f859e87fe"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\tracking_cellmot\\io.py": {
     "mtime": 1783082681.6426115,
+    "seen": 1786724428.2885113,
     "ast_hash": "fcf67f11fe56323b7108af41a4ada9fa",
     "semantic_hash": "fcf67f11fe56323b7108af41a4ada9fa"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\tracking_cellmot\\metrics.py": {
-    "mtime": 1783082681.499024,
-    "ast_hash": "9f38a61c21953c1a3958989a9f1e66f4",
-    "semantic_hash": "9f38a61c21953c1a3958989a9f1e66f4"
+    "mtime": 1784396071.1804938,
+    "seen": 1786724428.2885122,
+    "ast_hash": "536fe842b67b24663ec99b37e6cd2663",
+    "semantic_hash": "536fe842b67b24663ec99b37e6cd2663"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\tracking_cellmot\\__init__.py": {
-    "mtime": 1783082727.3071165,
-    "ast_hash": "5305c27af066ad0c1c1504516313f0bd",
-    "semantic_hash": "5305c27af066ad0c1c1504516313f0bd"
+    "mtime": 1784286371.90204,
+    "seen": 1786724428.2885091,
+    "ast_hash": "538dd5a9a69a359ed90fc9c2aa2f241d",
+    "semantic_hash": "538dd5a9a69a359ed90fc9c2aa2f241d"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\run_evaluation_tests.py": {
     "mtime": 1783085292.3066063,
+    "seen": 1786724428.2885265,
     "ast_hash": "121703f11e6d04e32b4fdd800181aa0f",
     "semantic_hash": "121703f11e6d04e32b4fdd800181aa0f"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_data_loader_real.py": {
-    "mtime": 1783083319.0643072,
-    "ast_hash": "34e6cdaa3e6746f188da29cd669a1c46",
-    "semantic_hash": "34e6cdaa3e6746f188da29cd669a1c46"
+    "mtime": 1786699287.2494462,
+    "seen": 1786724428.2885277,
+    "ast_hash": "cd11a5c55276c4dea16c17f86e242463",
+    "semantic_hash": "cd11a5c55276c4dea16c17f86e242463"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_e2e_pipeline.py": {
-    "mtime": 1783088829.5898194,
-    "ast_hash": "c7f28ed672c87257e96789a21fa85990",
-    "semantic_hash": "c7f28ed672c87257e96789a21fa85990"
+    "mtime": 1783529582.5851026,
+    "seen": 1786724428.2885296,
+    "ast_hash": "abed74c1cf190bec0eba411c69563152",
+    "semantic_hash": "abed74c1cf190bec0eba411c69563152"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_evaluation_harness.py": {
     "mtime": 1783086788.434508,
+    "seen": 1786724428.2885306,
     "ast_hash": "59c2cd08de25894d2c3f37114e970638",
     "semantic_hash": "59c2cd08de25894d2c3f37114e970638"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_pipeline_integration.py": {
     "mtime": 1783090658.9582725,
+    "seen": 1786724428.2885432,
     "ast_hash": "21cc8bc62dd80fe8ec1b59456fdc023a",
     "semantic_hash": "21cc8bc62dd80fe8ec1b59456fdc023a"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_scoring_baseline.py": {
     "mtime": 1783082771.852307,
+    "seen": 1786724428.288546,
     "ast_hash": "c5965404518b6ec38a5f5a228c8d6966",
     "semantic_hash": "c5965404518b6ec38a5f5a228c8d6966"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_spot_check_submission.py": {
     "mtime": 1783090724.8672168,
+    "seen": 1786724428.2885485,
     "ast_hash": "0442f425436b21a50813dce1f6557868",
     "semantic_hash": "0442f425436b21a50813dce1f6557868"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_submission_exporter.py": {
-    "mtime": 1783088054.7822456,
-    "ast_hash": "f0787df7f375deae8cb34a890f90806e",
-    "semantic_hash": "f0787df7f375deae8cb34a890f90806e"
+    "mtime": 1784373570.0649972,
+    "seen": 1786724428.2885494,
+    "ast_hash": "e61fb23ea35418a0682ca67133945aa2",
+    "semantic_hash": "e61fb23ea35418a0682ca67133945aa2"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_tracker.py": {
-    "mtime": 1783082899.297094,
-    "ast_hash": "e62bdafdc961249d0c19eeb417f41983",
-    "semantic_hash": "e62bdafdc961249d0c19eeb417f41983"
+    "mtime": 1783875293.281212,
+    "seen": 1786724428.288553,
+    "ast_hash": "ad08de3519ec64023a4fa588b4903ddb",
+    "semantic_hash": "ad08de3519ec64023a4fa588b4903ddb"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.pre-commit-config.yaml": {
-    "mtime": 1783128451.5941896,
-    "ast_hash": "5ff2d7032bf3aa9ebe212d19b3d44936",
-    "semantic_hash": "5ff2d7032bf3aa9ebe212d19b3d44936"
+    "mtime": 1783622370.763573,
+    "seen": 1786724428.2886114,
+    "ast_hash": "b186ba53cdf71ada0835dd4400a4fde1",
+    "semantic_hash": "b186ba53cdf71ada0835dd4400a4fde1"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\PRD.md": {
     "mtime": 1783035749.1294315,
+    "seen": 1786724428.2886348,
     "ast_hash": "a15036aa2f193873a0797726bde55b24",
     "semantic_hash": "a15036aa2f193873a0797726bde55b24"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\REFERENCE_IMPLEMENTATION.md": {
     "mtime": 1783096931.4605186,
+    "seen": 1786724428.288636,
     "ast_hash": "279f7cec200ffdd413c62ce6eee8dced",
     "semantic_hash": "279f7cec200ffdd413c62ce6eee8dced"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\trackdiff.md": {
     "mtime": 1783032348.9263813,
+    "seen": 1786724428.2886431,
     "ast_hash": "bd676ee5d8d6ef5eae3dd1f3a49f4b8f",
     "semantic_hash": "bd676ee5d8d6ef5eae3dd1f3a49f4b8f"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude\\CLAUDE.md": {
-    "mtime": 1783125484.3393588,
-    "ast_hash": "1888d84932a2877fc8a163ff09807a85",
-    "semantic_hash": "1888d84932a2877fc8a163ff09807a85"
+    "mtime": 1786722959.8408265,
+    "seen": 1786724428.2885575,
+    "ast_hash": "657f502ff81b8548e7412eda32ff9fd1",
+    "semantic_hash": "657f502ff81b8548e7412eda32ff9fd1"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.memsearch\\memory\\2026-07-03.md": {
     "mtime": 1783059527.8414528,
@@ -561,97 +594,1099 @@
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\PHASE-00-PLAN-SUMMARY.md": {
     "mtime": 1783058254.206116,
+    "seen": 1786724428.2885585,
     "ast_hash": "0f4708fb478656b2f2c0817d17bab333",
     "semantic_hash": "0f4708fb478656b2f2c0817d17bab333"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\PROJECT.md": {
     "mtime": 1783035998.9750795,
+    "seen": 1786724428.2885597,
     "ast_hash": "aa4255c286438bb9dff40bc1e66a4f28",
     "semantic_hash": "aa4255c286438bb9dff40bc1e66a4f28"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\REQUIREMENTS.md": {
     "mtime": 1783125155.2936318,
+    "seen": 1786724428.2885604,
     "ast_hash": "776ce7ddb537bdbf4462c281521d96a0",
     "semantic_hash": "776ce7ddb537bdbf4462c281521d96a0"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\ROADMAP.md": {
-    "mtime": 1783125135.3251076,
-    "ast_hash": "50918519b53278b09358c8c608698246",
-    "semantic_hash": "50918519b53278b09358c8c608698246"
+    "mtime": 1783524566.657196,
+    "seen": 1786724428.2885613,
+    "ast_hash": "9c105e2ddc852c04c8bef2f0696ebea3",
+    "semantic_hash": "9c105e2ddc852c04c8bef2f0696ebea3"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\STATE.md": {
-    "mtime": 1783125267.3092287,
-    "ast_hash": "cc8572567447c42af11a29bbf45f5922",
-    "semantic_hash": "cc8572567447c42af11a29bbf45f5922"
+    "mtime": 1786701558.190622,
+    "seen": 1786724428.2885625,
+    "ast_hash": "c870a1ceed2b687b7db2b715eeb88b9a",
+    "semantic_hash": "c870a1ceed2b687b7db2b715eeb88b9a"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\00-UNBLOCK-VERIFICATION.md": {
     "mtime": 1783124937.4177809,
+    "seen": 1786724428.2885861,
     "ast_hash": "98b4ab594e30965a60b8e7d9cfcd6c36",
     "semantic_hash": "98b4ab594e30965a60b8e7d9cfcd6c36"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\INDEX.md": {
     "mtime": 1783058206.1671999,
+    "seen": 1786724428.2885876,
     "ast_hash": "88fd9e82382623d11792535a25a1f8b7",
     "semantic_hash": "88fd9e82382623d11792535a25a1f8b7"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-00-VENDOR-SCORING-CODE-SUMMARY.md": {
     "mtime": 1783082927.6848032,
+    "seen": 1786724428.2885888,
     "ast_hash": "7f1def92d6996fb778c41e7327209730",
     "semantic_hash": "7f1def92d6996fb778c41e7327209730"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-00-VENDOR-SCORING-CODE.md": {
     "mtime": 1783058799.1087663,
+    "seen": 1786724428.2885897,
     "ast_hash": "bcb659b24184ae26c5bb45b5dedadd64",
     "semantic_hash": "bcb659b24184ae26c5bb45b5dedadd64"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-01-FIX-DATA-LOADER-CONFIG-SUMMARY.md": {
     "mtime": 1783084762.8700893,
+    "seen": 1786724428.2885907,
     "ast_hash": "956d9ccc530b53921674e4a7fc945a11",
     "semantic_hash": "956d9ccc530b53921674e4a7fc945a11"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-01-FIX-DATA-LOADER-CONFIG.md": {
     "mtime": 1783058631.5170672,
+    "seen": 1786724428.2885916,
     "ast_hash": "33e0aef6a85cde7bdb2eab3538438a9e",
     "semantic_hash": "33e0aef6a85cde7bdb2eab3538438a9e"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-02-BUILD-EVAL-HARNESS-SUMMARY.md": {
     "mtime": 1783085939.016291,
+    "seen": 1786724428.2885923,
     "ast_hash": "75cd8dca76f094bc3e77e2da9b745206",
     "semantic_hash": "75cd8dca76f094bc3e77e2da9b745206"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-02-BUILD-EVAL-HARNESS.md": {
     "mtime": 1783086194.4423158,
+    "seen": 1786724428.2885933,
     "ast_hash": "77816d2f5989ad93848cae04579106dc",
     "semantic_hash": "77816d2f5989ad93848cae04579106dc"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-03-IMPLEMENT-SUBMISSION-EXPORTER-SUMMARY.md": {
     "mtime": 1783088160.2605984,
+    "seen": 1786724428.2885947,
     "ast_hash": "6416da4a573bd18818eb481efdb0923c",
     "semantic_hash": "6416da4a573bd18818eb481efdb0923c"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-03-IMPLEMENT-SUBMISSION-EXPORTER.md": {
     "mtime": 1783058126.7024097,
+    "seen": 1786724428.2885957,
     "ast_hash": "22e8174ee08f79aa38f88a8007c06c5a",
     "semantic_hash": "22e8174ee08f79aa38f88a8007c06c5a"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-04-WIRE-PIPELINE-AND-TEST-SUMMARY.md": {
     "mtime": 1783124416.912644,
+    "seen": 1786724428.2885964,
     "ast_hash": "3e03c14e1c02f0856410d85143c05324",
     "semantic_hash": "3e03c14e1c02f0856410d85143c05324"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\00-unblock\\PLAN-04-WIRE-PIPELINE-AND-TEST.md": {
     "mtime": 1783058724.17865,
+    "seen": 1786724428.2885976,
     "ast_hash": "c9bd5ec8897b4176958ba7fe006c558e",
     "semantic_hash": "c9bd5ec8897b4176958ba7fe006c558e"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\01-baseline-parity\\01-CONTEXT.md": {
-    "mtime": 1783234223.56942,
-    "ast_hash": "3feda8bd7f002e2792aeb32fb3534875",
-    "semantic_hash": "3feda8bd7f002e2792aeb32fb3534875"
+    "mtime": 1784206859.7069187,
+    "seen": 1786724428.2885988,
+    "ast_hash": "1a4e478c6bfe4ea7a1cf761756cef147",
+    "semantic_hash": "1a4e478c6bfe4ea7a1cf761756cef147"
   },
   "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\data\\staging\\README.md": {
     "mtime": 1783035788.4511282,
     "ast_hash": "2afd8be3f96b444203d65b991c21ae6e",
     "semantic_hash": "2afd8be3f96b444203d65b991c21ae6e"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\daemon-state.json": {
+    "mtime": 1786686543.94276,
+    "seen": 1786686610.8159168,
+    "ast_hash": "996378123e653e717ad42fa72689520a",
+    "semantic_hash": "996378123e653e717ad42fa72689520a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\harness-active-policy.json": {
+    "mtime": 1784496392.739713,
+    "seen": 1786686610.8159204,
+    "ast_hash": "563270f801c85824c028773fe10e33a4",
+    "semantic_hash": "563270f801c85824c028773fe10e33a4"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\metrics\\backup.json": {
+    "mtime": 1786683543.9189332,
+    "seen": 1786686610.8159225,
+    "ast_hash": "da72a5049c9c890c3f137f87588dcccb",
+    "semantic_hash": "da72a5049c9c890c3f137f87588dcccb"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\metrics\\codebase-map.json": {
+    "mtime": 1786686423.9309077,
+    "seen": 1786686610.815924,
+    "ast_hash": "921d7766ad26f516e082efa7f184bc0b",
+    "semantic_hash": "921d7766ad26f516e082efa7f184bc0b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\metrics\\consolidation.json": {
+    "mtime": 1786684983.9158597,
+    "seen": 1786686610.8159246,
+    "ast_hash": "704eaadffab68e76218e3e2fa26509e5",
+    "semantic_hash": "704eaadffab68e76218e3e2fa26509e5"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\metrics\\harness-loop.json": {
+    "mtime": 1786683543.998998,
+    "seen": 1786686610.8159256,
+    "ast_hash": "6caeb5ac91a93aef95a983380b10457b",
+    "semantic_hash": "6caeb5ac91a93aef95a983380b10457b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\metrics\\performance.json": {
+    "mtime": 1786685763.9349515,
+    "seen": 1786686610.8159266,
+    "ast_hash": "d3b52bc13900d089b7fd954d3821d1e2",
+    "semantic_hash": "d3b52bc13900d089b7fd954d3821d1e2"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\metrics\\security-audit.json": {
+    "mtime": 1786686543.94276,
+    "seen": 1786686610.8159273,
+    "ast_hash": "e73071078ff83e53ccf3445f4b9c28fb",
+    "semantic_hash": "e73071078ff83e53ccf3445f4b9c28fb"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\metrics\\test-gaps.json": {
+    "mtime": 1786685703.916051,
+    "seen": 1786686610.815928,
+    "ast_hash": "1eb956d9bd1bded46c256349d3a144e3",
+    "semantic_hash": "1eb956d9bd1bded46c256349d3a144e3"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude-flow\\neural\\stats.json": {
+    "mtime": 1786686599.7682333,
+    "seen": 1786686610.815929,
+    "ast_hash": "6d571e7e42dba6708dba988a8a2e0fc9",
+    "semantic_hash": "6d571e7e42dba6708dba988a8a2e0fc9"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude\\proven-config.json": {
+    "mtime": 1784496392.7295034,
+    "seen": 1786686610.8159297,
+    "ast_hash": "041e0ec616c2f286390139feeab423b0",
+    "semantic_hash": "041e0ec616c2f286390139feeab423b0"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.claude\\settings.local.json": {
+    "mtime": 1786719928.927189,
+    "seen": 1786724428.2884202,
+    "ast_hash": "019f251aec2df5e51bb055ec91cd1923",
+    "semantic_hash": "019f251aec2df5e51bb055ec91cd1923"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\data_split.json": {
+    "mtime": 1784214901.3721657,
+    "seen": 1786724428.288431,
+    "ast_hash": "7e67de4b25aef5b8e64d90a50e98a5bb",
+    "semantic_hash": "7e67de4b25aef5b8e64d90a50e98a5bb"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\data_splits\\embryo_44b6_validation.json": {
+    "mtime": 1784214882.940296,
+    "seen": 1786724428.2884324,
+    "ast_hash": "82ba7c1eafd09f15a6cd72d1b797e80d",
+    "semantic_hash": "82ba7c1eafd09f15a6cd72d1b797e80d"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\data_splits\\embryo_6bba_validation.json": {
+    "mtime": 1784214882.9422915,
+    "seen": 1786724428.288434,
+    "ast_hash": "461b7ecf6ebcf0f1816ce92fe5945da0",
+    "semantic_hash": "461b7ecf6ebcf0f1816ce92fe5945da0"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\debug_segfault_repro.py": {
+    "mtime": 1784143283.3552518,
+    "seen": 1786724428.288435,
+    "ast_hash": "46969bb11b68838b6756f179c97ab83f",
+    "semantic_hash": "46969bb11b68838b6756f179c97ab83f"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\diagnose_iteration.py": {
+    "mtime": 1784143283.353176,
+    "seen": 1786724428.2884362,
+    "ast_hash": "257a73e2648df15b928489ee1beec865",
+    "semantic_hash": "257a73e2648df15b928489ee1beec865"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\evaluate_checkpoint.py": {
+    "mtime": 1784286525.889711,
+    "seen": 1786724428.2884376,
+    "ast_hash": "ee147ce740825b21ac6a3ca90aaf64f1",
+    "semantic_hash": "ee147ce740825b21ac6a3ca90aaf64f1"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\generate_submission.py": {
+    "mtime": 1784373570.0431275,
+    "seen": 1786724428.2884388,
+    "ast_hash": "f5d21254e2e6ec1120eaee47fa54874b",
+    "semantic_hash": "f5d21254e2e6ec1120eaee47fa54874b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_kernel\\kernel-metadata.json": {
+    "mtime": 1783955310.9545836,
+    "seen": 1786724428.2884402,
+    "ast_hash": "3ee4a8b7ac28e477796d470d5dec434b",
+    "semantic_hash": "3ee4a8b7ac28e477796d470d5dec434b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_kernel\\smoketest.py": {
+    "mtime": 1783524840.674507,
+    "seen": 1786724428.2884414,
+    "ast_hash": "0687cf839332f82e995194d98a6cd7e4",
+    "semantic_hash": "0687cf839332f82e995194d98a6cd7e4"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_kernel\\train_kernel.py": {
+    "mtime": 1784485721.356061,
+    "seen": 1786724428.2884426,
+    "ast_hash": "9acf9d2e0c82c54ed48fe26c26f807bd",
+    "semantic_hash": "9acf9d2e0c82c54ed48fe26c26f807bd"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_kernel_inference\\inference_kernel.py": {
+    "mtime": 1784373570.0455177,
+    "seen": 1786724428.2884436,
+    "ast_hash": "6d20e214e89527f06cb66a922698879d",
+    "semantic_hash": "6d20e214e89527f06cb66a922698879d"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_kernel_inference\\kernel-metadata.json": {
+    "mtime": 1783955373.437498,
+    "seen": 1786724428.2884448,
+    "ast_hash": "87f63db2506fe76a36f6f404d37ee259",
+    "semantic_hash": "87f63db2506fe76a36f6f404d37ee259"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\data_split.json": {
+    "mtime": 1784214901.3721657,
+    "seen": 1786724428.2884462,
+    "ast_hash": "7e67de4b25aef5b8e64d90a50e98a5bb",
+    "semantic_hash": "7e67de4b25aef5b8e64d90a50e98a5bb"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\data_splits\\embryo_44b6_validation.json": {
+    "mtime": 1784214882.940296,
+    "seen": 1786724428.2884471,
+    "ast_hash": "82ba7c1eafd09f15a6cd72d1b797e80d",
+    "semantic_hash": "82ba7c1eafd09f15a6cd72d1b797e80d"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\data_splits\\embryo_6bba_validation.json": {
+    "mtime": 1784214882.9422915,
+    "seen": 1786724428.288448,
+    "ast_hash": "461b7ecf6ebcf0f1816ce92fe5945da0",
+    "semantic_hash": "461b7ecf6ebcf0f1816ce92fe5945da0"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\dataset-metadata.json": {
+    "mtime": 1783622177.6480136,
+    "seen": 1786724428.2884493,
+    "ast_hash": "342eeddf452ee8104b0c19430ea84198",
+    "semantic_hash": "342eeddf452ee8104b0c19430ea84198"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\checkpoint_manifest.py": {
+    "mtime": 1784373570.0557406,
+    "seen": 1786724428.28845,
+    "ast_hash": "17fe125959faf8a6e72062dec38bf532",
+    "semantic_hash": "17fe125959faf8a6e72062dec38bf532"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\data_loader.py": {
+    "mtime": 1783971039.980178,
+    "seen": 1786724428.2884514,
+    "ast_hash": "28ecb196630754cfd5424c1b4fb3c4f1",
+    "semantic_hash": "28ecb196630754cfd5424c1b4fb3c4f1"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\dataset.py": {
+    "mtime": 1784489949.2059906,
+    "seen": 1786724428.2884526,
+    "ast_hash": "d7aa6f5e742f2c165a798e901065a6b8",
+    "semantic_hash": "d7aa6f5e742f2c165a798e901065a6b8"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\deployment_provenance.py": {
+    "mtime": 1784489963.938444,
+    "seen": 1786724428.2884536,
+    "ast_hash": "5c2ab434195a2dade1f9eb3ca882529f",
+    "semantic_hash": "5c2ab434195a2dade1f9eb3ca882529f"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\evaluation.py": {
+    "mtime": 1784286371.90204,
+    "seen": 1786724428.288455,
+    "ast_hash": "c33841a976c94bc45f5f08cf5b4e5b2d",
+    "semantic_hash": "c33841a976c94bc45f5f08cf5b4e5b2d"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\inference.py": {
+    "mtime": 1783849031.6500945,
+    "seen": 1786724428.2884562,
+    "ast_hash": "138d7f6f0d6f28031b055f5e0a26ecb6",
+    "semantic_hash": "138d7f6f0d6f28031b055f5e0a26ecb6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\model.py": {
+    "mtime": 1784286525.8924694,
+    "seen": 1786724428.2884574,
+    "ast_hash": "5ab8302df318846252425f14886d20cd",
+    "semantic_hash": "5ab8302df318846252425f14886d20cd"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\prediction_graph.py": {
+    "mtime": 1784229707.615021,
+    "seen": 1786724428.2884586,
+    "ast_hash": "0b183c3227d5aeccfc3db9e2ba44cd43",
+    "semantic_hash": "0b183c3227d5aeccfc3db9e2ba44cd43"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\run_tracker.py": {
+    "mtime": 1783524566.673024,
+    "seen": 1786724428.2884595,
+    "ast_hash": "ae568ec15962dc17001bab6876171ed4",
+    "semantic_hash": "ae568ec15962dc17001bab6876171ed4"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\split_utils.py": {
+    "mtime": 1784224801.2968862,
+    "seen": 1786724428.2884607,
+    "ast_hash": "102bb9af7df3adea053fc0a2524afae6",
+    "semantic_hash": "102bb9af7df3adea053fc0a2524afae6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\submission_exporter.py": {
+    "mtime": 1784373570.0572066,
+    "seen": 1786724428.2884622,
+    "ast_hash": "cb5a883cbc7476973757ac03b10739bf",
+    "semantic_hash": "cb5a883cbc7476973757ac03b10739bf"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\submission_pipeline.py": {
+    "mtime": 1784373570.0589411,
+    "seen": 1786724428.2884636,
+    "ast_hash": "1da0dc3a39efb62fff433041ee7eff08",
+    "semantic_hash": "1da0dc3a39efb62fff433041ee7eff08"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\submission_schema_comparison.py": {
+    "mtime": 1783128451.643454,
+    "seen": 1786724428.2884648,
+    "ast_hash": "3058b734403a0080e6a2a812421d1a8c",
+    "semantic_hash": "3058b734403a0080e6a2a812421d1a8c"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\targets.py": {
+    "mtime": 1784490819.2994206,
+    "seen": 1786724428.2884657,
+    "ast_hash": "75e97bc5db7bc4fdd0f2e92c61c2d059",
+    "semantic_hash": "75e97bc5db7bc4fdd0f2e92c61c2d059"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\tracker.py": {
+    "mtime": 1783874709.842825,
+    "seen": 1786724428.2884667,
+    "ast_hash": "812617eb4465cfb632a959a58ef22b2b",
+    "semantic_hash": "812617eb4465cfb632a959a58ef22b2b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\tracking_cellmot\\__init__.py": {
+    "mtime": 1784286371.90204,
+    "seen": 1786724428.2884676,
+    "ast_hash": "538dd5a9a69a359ed90fc9c2aa2f241d",
+    "semantic_hash": "538dd5a9a69a359ed90fc9c2aa2f241d"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\tracking_cellmot\\division_metrics.py": {
+    "mtime": 1784396071.1736352,
+    "seen": 1786724428.2884684,
+    "ast_hash": "746ab50efda08365e66e920f859e87fe",
+    "semantic_hash": "746ab50efda08365e66e920f859e87fe"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\tracking_cellmot\\io.py": {
+    "mtime": 1783082681.6426115,
+    "seen": 1786724428.2884696,
+    "ast_hash": "fcf67f11fe56323b7108af41a4ada9fa",
+    "semantic_hash": "fcf67f11fe56323b7108af41a4ada9fa"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\tracking_cellmot\\metrics.py": {
+    "mtime": 1784396071.1804938,
+    "seen": 1786724428.2884705,
+    "ast_hash": "536fe842b67b24663ec99b37e6cd2663",
+    "semantic_hash": "536fe842b67b24663ec99b37e6cd2663"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\src\\train.py": {
+    "mtime": 1784494370.868343,
+    "seen": 1786724428.2884712,
+    "ast_hash": "b95cfa87f070e336ca0d6ac25dad3855",
+    "semantic_hash": "b95cfa87f070e336ca0d6ac25dad3855"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\pyproject.toml": {
+    "mtime": 1783622361.7478743,
+    "seen": 1786724428.2884724,
+    "ast_hash": "b85f11e92fc184d8b9f4a909992fc9a5",
+    "semantic_hash": "b85f11e92fc184d8b9f4a909992fc9a5"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\benchmark_heatmap_results.json": {
+    "mtime": 1783605128.899521,
+    "seen": 1786724428.2884746,
+    "ast_hash": "01c23bc8f7822f249b088da4a7559067",
+    "semantic_hash": "01c23bc8f7822f249b088da4a7559067"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\benchmark_heatmap_targets.py": {
+    "mtime": 1783605479.607936,
+    "seen": 1786724428.2884753,
+    "ast_hash": "83d6a0d36ad170ba1ef8af6572739bb6",
+    "semantic_hash": "83d6a0d36ad170ba1ef8af6572739bb6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\benchmark_normalization.py": {
+    "mtime": 1783576038.303,
+    "seen": 1786724428.2884765,
+    "ast_hash": "f6720a39b680cd41bfac9b434a1f3534",
+    "semantic_hash": "f6720a39b680cd41bfac9b434a1f3534"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\build_checkpoint_manifest.py": {
+    "mtime": 1784373570.0546322,
+    "seen": 1786724428.288477,
+    "ast_hash": "465de9df4f70495f8321c28d1d9d8e98",
+    "semantic_hash": "465de9df4f70495f8321c28d1d9d8e98"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\build_train_val_split.py": {
+    "mtime": 1784214858.1283948,
+    "seen": 1786724428.2884777,
+    "ast_hash": "950a5079d67ff269f152a66310538369",
+    "semantic_hash": "950a5079d67ff269f152a66310538369"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\compare_greedy_vs_ilp.py": {
+    "mtime": 1783605479.607936,
+    "seen": 1786724428.2884786,
+    "ast_hash": "49ffcb7b6c5c6acbb4b719efccaf75c3",
+    "semantic_hash": "49ffcb7b6c5c6acbb4b719efccaf75c3"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\enumerate_dataset.py": {
+    "mtime": 1783576038.3232133,
+    "seen": 1786724428.2884817,
+    "ast_hash": "0c3bbf4474dd724cd02b0d40c5b00536",
+    "semantic_hash": "0c3bbf4474dd724cd02b0d40c5b00536"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\gemini_review.py": {
+    "mtime": 1783955649.9500873,
+    "seen": 1786724428.288483,
+    "ast_hash": "4b679ff55010949870b87a031bff1056",
+    "semantic_hash": "4b679ff55010949870b87a031bff1056"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\kaggle_check_run.py": {
+    "mtime": 1784026402.1858537,
+    "seen": 1786724428.2884839,
+    "ast_hash": "37b8aecc4966ae3ffb627c11d995b044",
+    "semantic_hash": "37b8aecc4966ae3ffb627c11d995b044"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\local_smoke_train.py": {
+    "mtime": 1784225021.00556,
+    "seen": 1786724428.2884848,
+    "ast_hash": "5622ad49bbc53980bee453160924967d",
+    "semantic_hash": "5622ad49bbc53980bee453160924967d"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\research_competitors.py": {
+    "mtime": 1784143283.3564045,
+    "seen": 1786724428.288487,
+    "ast_hash": "ea93b04862744860c5d9bfdb41e6fd63",
+    "semantic_hash": "ea93b04862744860c5d9bfdb41e6fd63"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\sync_kaggle_src.py": {
+    "mtime": 1784215503.5470319,
+    "seen": 1786724428.2884889,
+    "ast_hash": "06ae389cba5b7235fd3e2fd58684c3b7",
+    "semantic_hash": "06ae389cba5b7235fd3e2fd58684c3b7"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\test_dataset.py": {
+    "mtime": 1784208463.5308275,
+    "seen": 1786724428.28849,
+    "ast_hash": "a761c474e01f2abfdc3b1f35286889b6",
+    "semantic_hash": "a761c474e01f2abfdc3b1f35286889b6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\verify.ps1": {
+    "mtime": 1784903687.2136984,
+    "seen": 1786724428.2884915,
+    "ast_hash": "8bf4acf1288d79aed9ad32c51b45a6d8",
+    "semantic_hash": "8bf4acf1288d79aed9ad32c51b45a6d8"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\checkpoint_manifest.py": {
+    "mtime": 1784373570.0557406,
+    "seen": 1786724428.2884922,
+    "ast_hash": "17fe125959faf8a6e72062dec38bf532",
+    "semantic_hash": "17fe125959faf8a6e72062dec38bf532"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\dataset.py": {
+    "mtime": 1784489949.2059906,
+    "seen": 1786724428.2884943,
+    "ast_hash": "d7aa6f5e742f2c165a798e901065a6b8",
+    "semantic_hash": "d7aa6f5e742f2c165a798e901065a6b8"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\deployment_provenance.py": {
+    "mtime": 1784489963.938444,
+    "seen": 1786724428.2884953,
+    "ast_hash": "5c2ab434195a2dade1f9eb3ca882529f",
+    "semantic_hash": "5c2ab434195a2dade1f9eb3ca882529f"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\inference.py": {
+    "mtime": 1783849031.6500945,
+    "seen": 1786724428.2884974,
+    "ast_hash": "138d7f6f0d6f28031b055f5e0a26ecb6",
+    "semantic_hash": "138d7f6f0d6f28031b055f5e0a26ecb6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\prediction_graph.py": {
+    "mtime": 1784229707.615021,
+    "seen": 1786724428.2885003,
+    "ast_hash": "0b183c3227d5aeccfc3db9e2ba44cd43",
+    "semantic_hash": "0b183c3227d5aeccfc3db9e2ba44cd43"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\split_utils.py": {
+    "mtime": 1784224801.2968862,
+    "seen": 1786724428.2885027,
+    "ast_hash": "102bb9af7df3adea053fc0a2524afae6",
+    "semantic_hash": "102bb9af7df3adea053fc0a2524afae6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\submission_pipeline.py": {
+    "mtime": 1784373570.0589411,
+    "seen": 1786724428.2885044,
+    "ast_hash": "1da0dc3a39efb62fff433041ee7eff08",
+    "semantic_hash": "1da0dc3a39efb62fff433041ee7eff08"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\targets.py": {
+    "mtime": 1784490819.2994206,
+    "seen": 1786724428.288507,
+    "ast_hash": "75e97bc5db7bc4fdd0f2e92c61c2d059",
+    "semantic_hash": "75e97bc5db7bc4fdd0f2e92c61c2d059"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\train.py": {
+    "mtime": 1784494370.868343,
+    "seen": 1786724428.2885132,
+    "ast_hash": "b95cfa87f070e336ca0d6ac25dad3855",
+    "semantic_hash": "b95cfa87f070e336ca0d6ac25dad3855"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_different_sample.py": {
+    "mtime": 1784008239.5564466,
+    "seen": 1786724428.2885156,
+    "ast_hash": "c829e5a4996522138ceee4acb2e594a0",
+    "semantic_hash": "c829e5a4996522138ceee4acb2e594a0"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_faulthandler.py": {
+    "mtime": 1784143306.6731808,
+    "seen": 1786724428.2885165,
+    "ast_hash": "c7c5ede92ed69dd295bffcf5166a1b5c",
+    "semantic_hash": "c7c5ede92ed69dd295bffcf5166a1b5c"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_minimal_torch.py": {
+    "mtime": 1784008365.7242696,
+    "seen": 1786724428.288518,
+    "ast_hash": "3e9b07c569d7091e3b7e2717881e6437",
+    "semantic_hash": "3e9b07c569d7091e3b7e2717881e6437"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_small_model.py": {
+    "mtime": 1784008423.9377255,
+    "seen": 1786724428.288519,
+    "ast_hash": "d1473abf9c895a465c7322b25ebdac33",
+    "semantic_hash": "d1473abf9c895a465c7322b25ebdac33"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_train_fixes_verification.py": {
+    "mtime": 1784286525.8954177,
+    "seen": 1786724428.2885196,
+    "ast_hash": "1cdfb5a102c55e74358320b267c6ca1b",
+    "semantic_hash": "1cdfb5a102c55e74358320b267c6ca1b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_train_smoke.py": {
+    "mtime": 1784215582.1103652,
+    "seen": 1786724428.288521,
+    "ast_hash": "c1bc27e6e74a504d41765af3d4ee7285",
+    "semantic_hash": "c1bc27e6e74a504d41765af3d4ee7285"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_train_smoke_simple.py": {
+    "mtime": 1784286525.8964317,
+    "seen": 1786724428.2885222,
+    "ast_hash": "9370a0ecc46c75d7ff01c72e46bed02d",
+    "semantic_hash": "9370a0ecc46c75d7ff01c72e46bed02d"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_with_gc.py": {
+    "mtime": 1784009333.0583994,
+    "seen": 1786724428.2885234,
+    "ast_hash": "42026cde80b297e6f2178c84f715ac18",
+    "semantic_hash": "42026cde80b297e6f2178c84f715ac18"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_zarr_loop.py": {
+    "mtime": 1784008198.1417127,
+    "seen": 1786724428.2885246,
+    "ast_hash": "1b4241a1640a31b5ca49804f32b9af9a",
+    "semantic_hash": "1b4241a1640a31b5ca49804f32b9af9a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\test_zarr_reopen.py": {
+    "mtime": 1784143339.3569012,
+    "seen": 1786724428.2885258,
+    "ast_hash": "225418bd8e2a3a9e1767010a0edfb24b",
+    "semantic_hash": "225418bd8e2a3a9e1767010a0edfb24b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_dataset.py": {
+    "mtime": 1784201133.021937,
+    "seen": 1786724428.2885287,
+    "ast_hash": "5954c8f952893037cdcce0d311b8dd5c",
+    "semantic_hash": "5954c8f952893037cdcce0d311b8dd5c"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_inference.py": {
+    "mtime": 1783876039.0816436,
+    "seen": 1786724428.288532,
+    "ast_hash": "b910bb061d16c63d7a130302e57104a9",
+    "semantic_hash": "b910bb061d16c63d7a130302e57104a9"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_local_smoke_train.py": {
+    "mtime": 1784225045.1593454,
+    "seen": 1786724428.2885332,
+    "ast_hash": "935b32d319354dccf37d6fb0b796fcfd",
+    "semantic_hash": "935b32d319354dccf37d6fb0b796fcfd"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_model.py": {
+    "mtime": 1784485721.3592563,
+    "seen": 1786724428.2885342,
+    "ast_hash": "e7e4ecdbc5ff194fe9b6f9f4e179c0ba",
+    "semantic_hash": "e7e4ecdbc5ff194fe9b6f9f4e179c0ba"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_p03_caller_integration.py": {
+    "mtime": 1784230778.1111856,
+    "seen": 1786724428.2885365,
+    "ast_hash": "1a38733d1b7b5b8cd198c61c0f525cda",
+    "semantic_hash": "1a38733d1b7b5b8cd198c61c0f525cda"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_p04_metric_aggregation.py": {
+    "mtime": 1784485721.3592563,
+    "seen": 1786724428.2885375,
+    "ast_hash": "633eccf47f2d7a5541c8e1c2a58fa4ca",
+    "semantic_hash": "633eccf47f2d7a5541c8e1c2a58fa4ca"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_p05_double_sigmoid_fix.py": {
+    "mtime": 1784373570.061024,
+    "seen": 1786724428.2885387,
+    "ast_hash": "c6d9a03b0c688e6151a2a00d128391a0",
+    "semantic_hash": "c6d9a03b0c688e6151a2a00d128391a0"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_p06_submission_deployment.py": {
+    "mtime": 1784485721.3649764,
+    "seen": 1786724428.2885394,
+    "ast_hash": "7b37cd0008e08c2668688d3d42121074",
+    "semantic_hash": "7b37cd0008e08c2668688d3d42121074"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_p07_training_integrity.py": {
+    "mtime": 1784494381.992585,
+    "seen": 1786724428.2885404,
+    "ast_hash": "ad07086b1c51fda6eb74cd3f5d31df11",
+    "semantic_hash": "ad07086b1c51fda6eb74cd3f5d31df11"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_p07a_metric_parity.py": {
+    "mtime": 1784396071.1804938,
+    "seen": 1786724428.2885416,
+    "ast_hash": "4c2c6bb3ae581be20778c5cea74181f6",
+    "semantic_hash": "4c2c6bb3ae581be20778c5cea74181f6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_p08_gpu_sanity_gate_infrastructure.py": {
+    "mtime": 1784494370.8725305,
+    "seen": 1786724428.2885423,
+    "ast_hash": "5ea9eb89d1eb23dd225f2073e8f160a7",
+    "semantic_hash": "5ea9eb89d1eb23dd225f2073e8f160a7"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_prediction_graph.py": {
+    "mtime": 1784230772.666318,
+    "seen": 1786724428.2885444,
+    "ast_hash": "433a84545c13a8595dd3aa23fbfd1801",
+    "semantic_hash": "433a84545c13a8595dd3aa23fbfd1801"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_run_pipeline_refinement.py": {
+    "mtime": 1784017435.8686764,
+    "seen": 1786724428.2885451,
+    "ast_hash": "7f73117a781ff95dd84eb54b73b9c971",
+    "semantic_hash": "7f73117a781ff95dd84eb54b73b9c971"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_split_utils.py": {
+    "mtime": 1784214980.032773,
+    "seen": 1786724428.288547,
+    "ast_hash": "4ac4fa8a5e2593008dfcb2927c149c3a",
+    "semantic_hash": "4ac4fa8a5e2593008dfcb2927c149c3a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_sync_kaggle_src.py": {
+    "mtime": 1784215465.9777572,
+    "seen": 1786724428.2885506,
+    "ast_hash": "0997535f3debf0ec919c5665372e88ac",
+    "semantic_hash": "0997535f3debf0ec919c5665372e88ac"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_targets.py": {
+    "mtime": 1784083573.7598104,
+    "seen": 1786724428.2885516,
+    "ast_hash": "976bf73fc469da21094eada9cac3a7e1",
+    "semantic_hash": "976bf73fc469da21094eada9cac3a7e1"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_train.py": {
+    "mtime": 1784485721.3649764,
+    "seen": 1786724428.2885542,
+    "ast_hash": "48eda158817c66ba537030a5f0eab80e",
+    "semantic_hash": "48eda158817c66ba537030a5f0eab80e"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\verify_eval_fixed.py": {
+    "mtime": 1784286525.8982012,
+    "seen": 1786724428.2885551,
+    "ast_hash": "6067752937b937fc7d0335b7925ca56a",
+    "semantic_hash": "6067752937b937fc7d0335b7925ca56a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\wheels_offline\\dataset-metadata.json": {
+    "mtime": 1783869279.4481032,
+    "seen": 1786724428.2885563,
+    "ast_hash": "f564e156a53bc0c61c827f737adaa0ef",
+    "semantic_hash": "f564e156a53bc0c61c827f737adaa0ef"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\01-baseline-parity\\01-SUMMARY.md": {
+    "mtime": 1783492104.418127,
+    "seen": 1786724428.2885997,
+    "ast_hash": "338c1be2d9c54c0c26214afd66c2d072",
+    "semantic_hash": "338c1be2d9c54c0c26214afd66c2d072"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\01-PLAN.md": {
+    "mtime": 1783530187.1492512,
+    "seen": 1786724428.288601,
+    "ast_hash": "efc65e125c2acf9d7c4b2d8be666603c",
+    "semantic_hash": "efc65e125c2acf9d7c4b2d8be666603c"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\01-SUMMARY.md": {
+    "mtime": 1783576913.530038,
+    "seen": 1786724428.2886019,
+    "ast_hash": "52d830d21b8bdf22b2bd0acbf0c44847",
+    "semantic_hash": "52d830d21b8bdf22b2bd0acbf0c44847"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\02-CONTEXT.md": {
+    "mtime": 1783527259.5699587,
+    "seen": 1786724428.2886028,
+    "ast_hash": "8eada6641a500ec5424007e01cbf131c",
+    "semantic_hash": "8eada6641a500ec5424007e01cbf131c"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\02-PLAN.md": {
+    "mtime": 1783530047.5863657,
+    "seen": 1786724428.288604,
+    "ast_hash": "4877a8159b13adbb06a655ebb4c84ef6",
+    "semantic_hash": "4877a8159b13adbb06a655ebb4c84ef6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\02-RESEARCH.md": {
+    "mtime": 1784206783.0476582,
+    "seen": 1786724428.2886047,
+    "ast_hash": "181f19a5dd57b32024a1c76a69530661",
+    "semantic_hash": "181f19a5dd57b32024a1c76a69530661"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\02-SUMMARY.md": {
+    "mtime": 1783605427.0693655,
+    "seen": 1786724428.2886057,
+    "ast_hash": "597f6054d2896a318e9a6b3b9d160d60",
+    "semantic_hash": "597f6054d2896a318e9a6b3b9d160d60"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\03-PLAN.md": {
+    "mtime": 1783529988.5106409,
+    "seen": 1786724428.288607,
+    "ast_hash": "c72cffeafcddcc750857e1d4f9118c33",
+    "semantic_hash": "c72cffeafcddcc750857e1d4f9118c33"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\04-PLAN.md": {
+    "mtime": 1783530015.3445888,
+    "seen": 1786724428.2886078,
+    "ast_hash": "65ef2915c15e194ef3bdf50e367c1515",
+    "semantic_hash": "65ef2915c15e194ef3bdf50e367c1515"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\PLAN-INDEX.md": {
+    "mtime": 1784206849.7587788,
+    "seen": 1786724428.288609,
+    "ast_hash": "c623cef47fcf6a17bd18f15094875a71",
+    "semantic_hash": "c623cef47fcf6a17bd18f15094875a71"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\phases\\02-learned-detection\\PLANNING-COMPLETE.md": {
+    "mtime": 1784212649.6950605,
+    "seen": 1786724428.2886097,
+    "ast_hash": "7734747619ed5a22d7bf6c5bc7c8e2b3",
+    "semantic_hash": "7734747619ed5a22d7bf6c5bc7c8e2b3"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\AGENTS.md": {
+    "mtime": 1784903572.5291395,
+    "seen": 1786724428.2886124,
+    "ast_hash": "cf74601f4afb233396f02881978063c4",
+    "semantic_hash": "cf74601f4afb233396f02881978063c4"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\DEFERRED_IMPROVEMENTS.md": {
+    "mtime": 1784215632.433539,
+    "seen": 1786724428.2886133,
+    "ast_hash": "f1255d0e228d00c4cc78be263222ac70",
+    "semantic_hash": "f1255d0e228d00c4cc78be263222ac70"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\KAGGLE_EXECUTION_RUNBOOK_GPU_LEARNING_PROBE_2026-07-20.md": {
+    "mtime": 1784537860.0647006,
+    "seen": 1786724428.2886338,
+    "ast_hash": "75e6c6c1e8950297207bd3a9009d67c6",
+    "semantic_hash": "75e6c6c1e8950297207bd3a9009d67c6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\VSCode_Extn_LLM_Metric.md": {
+    "mtime": 1784826781.939939,
+    "seen": 1786724428.2886367,
+    "ast_hash": "f16dceffdbb775592d299fd55543b8c5",
+    "semantic_hash": "f16dceffdbb775592d299fd55543b8c5"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\gap_analysis_codex.md": {
+    "mtime": 1784826603.767376,
+    "seen": 1786724428.2886388,
+    "ast_hash": "372bff607544c6b2125b6f5c337b760f",
+    "semantic_hash": "372bff607544c6b2125b6f5c337b760f"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_sanity_outputs\\model_summary.txt": {
+    "mtime": 1783858144.2019677,
+    "seen": 1786724428.2886405,
+    "ast_hash": "23f71057fb080b96e8820e6737f3d8c3",
+    "semantic_hash": "23f71057fb080b96e8820e6737f3d8c3"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\kaggle_src_dataset\\GIT_SHA.txt": {
+    "mtime": 1784232310.4446218,
+    "seen": 1786724428.2886412,
+    "ast_hash": "b5102afb98b3253b431678d4ad5f23dd",
+    "semantic_hash": "b5102afb98b3253b431678d4ad5f23dd"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\MANIFEST.json": {
+    "mtime": 1786722133.6378438,
+    "seen": 1786724428.2884278,
+    "ast_hash": "222ee7aa30e23ffdbb1f248cf6a96797",
+    "semantic_hash": "222ee7aa30e23ffdbb1f248cf6a96797"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\MANIFEST.json": {
+    "mtime": 1786723996.9413412,
+    "seen": 1786724428.2884293,
+    "ast_hash": "d68074061b8904fc451ad91f0741eb8a",
+    "semantic_hash": "d68074061b8904fc451ad91f0741eb8a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\diagnose_detection_loss_recipe.py": {
+    "mtime": 1786694129.10255,
+    "seen": 1786724428.2884805,
+    "ast_hash": "b0466d341ac75e8b4d3b7182d4c2b208",
+    "semantic_hash": "b0466d341ac75e8b4d3b7182d4c2b208"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\scripts\\oracle_decomposition.py": {
+    "mtime": 1786687237.2239952,
+    "seen": 1786724428.288486,
+    "ast_hash": "0257f2c15b85ccb9d4384dae8c690ca4",
+    "semantic_hash": "0257f2c15b85ccb9d4384dae8c690ca4"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\src\\oracle_evaluation.py": {
+    "mtime": 1786699424.8472612,
+    "seen": 1786724428.288499,
+    "ast_hash": "6cd9a2e24eff00935736f8626e570166",
+    "semantic_hash": "6cd9a2e24eff00935736f8626e570166"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\tests\\test_oracle_evaluation.py": {
+    "mtime": 1786699503.342117,
+    "seen": 1786724428.2885356,
+    "ast_hash": "036bba27951d3596e892b07117a1e851",
+    "semantic_hash": "036bba27951d3596e892b07117a1e851"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\COMPETITOR_RESEARCH_2026-07-13.md": {
+    "mtime": 1783956405.9465244,
+    "seen": 1786724428.2885637,
+    "ast_hash": "b2017afbefcc92129325a6a941010305",
+    "semantic_hash": "b2017afbefcc92129325a6a941010305"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\FRESH_ARCHITECTURE_PLAN_2026-07-19.md": {
+    "mtime": 1784486522.40064,
+    "seen": 1786724428.2885644,
+    "ast_hash": "92b79956ad1d9696e750d2372521aa01",
+    "semantic_hash": "92b79956ad1d9696e750d2372521aa01"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\GPU_SANITY_GATE_DESIGN_2026-07-18.md": {
+    "mtime": 1784486520.8773592,
+    "seen": 1786724428.2885654,
+    "ast_hash": "14561fc91bd3731664380ea35040ee4a",
+    "semantic_hash": "14561fc91bd3731664380ea35040ee4a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\GPU_SANITY_GATE_DESIGN_2026-07-18_v2.md": {
+    "mtime": 1784486521.0452075,
+    "seen": 1786724428.2885666,
+    "ast_hash": "a8ecfbe9f089fc98f4857c75a12a56e6",
+    "semantic_hash": "a8ecfbe9f089fc98f4857c75a12a56e6"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\GPU_SANITY_GATE_DESIGN_2026-07-18_v3.md": {
+    "mtime": 1784486521.1983757,
+    "seen": 1786724428.2885678,
+    "ast_hash": "221daa7e4c09e7d9d8b3770348a65b10",
+    "semantic_hash": "221daa7e4c09e7d9d8b3770348a65b10"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\GPU_SANITY_GATE_DESIGN_2026-07-18_v4.md": {
+    "mtime": 1784486521.3574226,
+    "seen": 1786724428.2885687,
+    "ast_hash": "9d8f6d4d49eba29baf001d81299c830a",
+    "semantic_hash": "9d8f6d4d49eba29baf001d81299c830a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\ISSUES_AND_FIXES_2026-07-12.md": {
+    "mtime": 1783849525.4745378,
+    "seen": 1786724428.28857,
+    "ast_hash": "7345a4cc086b42e691ccddb581140e9f",
+    "semantic_hash": "7345a4cc086b42e691ccddb581140e9f"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\LOOP_ENGINEERING_APPROACH_2026-07-18.md": {
+    "mtime": 1784486522.654444,
+    "seen": 1786724428.288571,
+    "ast_hash": "e2aa2a248512ac4917d80eb3a0874fd8",
+    "semantic_hash": "e2aa2a248512ac4917d80eb3a0874fd8"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\NOTE_FOR_CLAUDE_2026-07-18.md": {
+    "mtime": 1784486521.5111098,
+    "seen": 1786724428.2885716,
+    "ast_hash": "8df0ccec3d703f3a8d9a8809bbc42357",
+    "semantic_hash": "8df0ccec3d703f3a8d9a8809bbc42357"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\NOTE_FOR_CODEX_2026-07-18.md": {
+    "mtime": 1784486521.662724,
+    "seen": 1786724428.2885797,
+    "ast_hash": "63e16f34ae28a7032817a12c6f0283d1",
+    "semantic_hash": "63e16f34ae28a7032817a12c6f0283d1"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\NOTE_FOR_CODEX_P07_2026-07-19.md": {
+    "mtime": 1784486521.8203826,
+    "seen": 1786724428.288581,
+    "ast_hash": "da56fac784bfb418a271cb81e85716c8",
+    "semantic_hash": "da56fac784bfb418a271cb81e85716c8"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\P07_FROZEN_SPEC_v1_FINAL_CANDIDATE.md": {
+    "mtime": 1784486522.0033,
+    "seen": 1786724428.2885816,
+    "ast_hash": "d65b2dda1ab23a86be61ff48ab59657b",
+    "semantic_hash": "d65b2dda1ab23a86be61ff48ab59657b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\SEGFAULT_INVESTIGATION_2026-07-15.md": {
+    "mtime": 1784140706.3966913,
+    "seen": 1786724428.2885826,
+    "ast_hash": "12dfedb3512cb85292d8167a3d038315",
+    "semantic_hash": "12dfedb3512cb85292d8167a3d038315"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\SESSION_HANDOFF_2026-07-19.md": {
+    "mtime": 1784486522.203815,
+    "seen": 1786724428.2885835,
+    "ast_hash": "9d666871426baa3ea6dd65b89495a861",
+    "semantic_hash": "9d666871426baa3ea6dd65b89495a861"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\TASK_3_4_EVALUATION_RESULTS.md": {
+    "mtime": 1783859428.7210498,
+    "seen": 1786724428.2885842,
+    "ast_hash": "f61675ca40704ffb675a6177d2bda431",
+    "semantic_hash": "f61675ca40704ffb675a6177d2bda431"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\.planning\\archive\\TOOLING_ASSETS_PLAN_2026-07-18.md": {
+    "mtime": 1784486522.8627436,
+    "seen": 1786724428.2885852,
+    "ast_hash": "8ace468a12c36b637217c0d0d5127900",
+    "semantic_hash": "8ace468a12c36b637217c0d0d5127900"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\CLAUDE_HANDOFF.md": {
+    "mtime": 1786722133.5308478,
+    "seen": 1786724428.2886145,
+    "ast_hash": "a8aa78b0ff5fe05af0fdd816a0189f0e",
+    "semantic_hash": "a8aa78b0ff5fe05af0fdd816a0189f0e"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\COMPETITOR_INTELLIGENCE.md": {
+    "mtime": 1786722133.5482154,
+    "seen": 1786724428.2886155,
+    "ast_hash": "993e297c9e89683e457851d124164260",
+    "semantic_hash": "993e297c9e89683e457851d124164260"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\EXPERIMENT_PROTOCOL.md": {
+    "mtime": 1786722133.5634122,
+    "seen": 1786724428.2886162,
+    "ast_hash": "35ac9e7b171977c7159d905318837d72",
+    "semantic_hash": "35ac9e7b171977c7159d905318837d72"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_ARCHITECTURE.md": {
+    "mtime": 1786722133.5801523,
+    "seen": 1786724428.288617,
+    "ast_hash": "5402b29efa3d2d8e26eef97b52ddfb21",
+    "semantic_hash": "5402b29efa3d2d8e26eef97b52ddfb21"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_PRD.md": {
+    "mtime": 1786722133.5954633,
+    "seen": 1786724428.2886176,
+    "ast_hash": "e39d648732325cbc0d9ceb2f984a875f",
+    "semantic_hash": "e39d648732325cbc0d9ceb2f984a875f"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_ROADMAP.md": {
+    "mtime": 1786722133.6088674,
+    "seen": 1786724428.2886188,
+    "ast_hash": "160bc7e7205b40a9e0c2070a9c45f8d3",
+    "semantic_hash": "160bc7e7205b40a9e0c2070a9c45f8d3"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\HYPOTHESIS_REGISTRY.md": {
+    "mtime": 1786722133.6257648,
+    "seen": 1786724428.2886195,
+    "ast_hash": "557ea6faba5712d21b2c5ab43dace035",
+    "semantic_hash": "557ea6faba5712d21b2c5ab43dace035"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\NORTH_STAR.md": {
+    "mtime": 1786722133.6681857,
+    "seen": 1786724428.2886205,
+    "ast_hash": "f3577266e20fe611798841bb98f119dc",
+    "semantic_hash": "f3577266e20fe611798841bb98f119dc"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\README.md": {
+    "mtime": 1786722133.6813154,
+    "seen": 1786724428.2886214,
+    "ast_hash": "404e42d8b6b84bb4db9d32ce70aa6f62",
+    "semantic_hash": "404e42d8b6b84bb4db9d32ce70aa6f62"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\SCIENTIFIC_PROBLEM_MAP.md": {
+    "mtime": 1786722133.6971626,
+    "seen": 1786724428.2886224,
+    "ast_hash": "ddf0bf706c687cc649a6c0e58900e12a",
+    "semantic_hash": "ddf0bf706c687cc649a6c0e58900e12a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\ADVERSARIAL_REVIEW_RECONCILIATION.md": {
+    "mtime": 1786723996.8838973,
+    "seen": 1786724428.2886233,
+    "ast_hash": "5cc9c1f6cda25019aa1a80615e27137d",
+    "semantic_hash": "5cc9c1f6cda25019aa1a80615e27137d"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\CLAUDE_HANDOFF.md": {
+    "mtime": 1786723996.8899584,
+    "seen": 1786724428.2886243,
+    "ast_hash": "002515e542d604bc6d41c6507aa814c9",
+    "semantic_hash": "002515e542d604bc6d41c6507aa814c9"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\COMPETITOR_INTELLIGENCE.md": {
+    "mtime": 1786723996.8984702,
+    "seen": 1786724428.2886252,
+    "ast_hash": "4297e93e8b6833e2da454192012cdc79",
+    "semantic_hash": "4297e93e8b6833e2da454192012cdc79"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\EXPERIMENT_PROTOCOL.md": {
+    "mtime": 1786723996.906339,
+    "seen": 1786724428.2886264,
+    "ast_hash": "76566ca0ed7972f6a1cecb6649ad5d5b",
+    "semantic_hash": "76566ca0ed7972f6a1cecb6649ad5d5b"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_ARCHITECTURE.md": {
+    "mtime": 1786723996.9139347,
+    "seen": 1786724428.2886274,
+    "ast_hash": "12093359a6a24ce4ec176ef21827a672",
+    "semantic_hash": "12093359a6a24ce4ec176ef21827a672"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_PRD.md": {
+    "mtime": 1786723996.9219372,
+    "seen": 1786724428.2886286,
+    "ast_hash": "48a29df3364b8f6f464f24b6cc9cdfe3",
+    "semantic_hash": "48a29df3364b8f6f464f24b6cc9cdfe3"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_ROADMAP.md": {
+    "mtime": 1786723996.926337,
+    "seen": 1786724428.2886293,
+    "ast_hash": "d54bfc2ee8883ea7150d691e1df855ec",
+    "semantic_hash": "d54bfc2ee8883ea7150d691e1df855ec"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\HYPOTHESIS_REGISTRY.md": {
+    "mtime": 1786723996.9323862,
+    "seen": 1786724428.28863,
+    "ast_hash": "dac38fb20d9d6c1833104daccaa6e24c",
+    "semantic_hash": "dac38fb20d9d6c1833104daccaa6e24c"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\NORTH_STAR.md": {
+    "mtime": 1786723996.951525,
+    "seen": 1786724428.2886307,
+    "ast_hash": "7e56abe01ceda973e1774c6e4ba098e4",
+    "semantic_hash": "7e56abe01ceda973e1774c6e4ba098e4"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\README.md": {
+    "mtime": 1786723996.9630535,
+    "seen": 1786724428.288632,
+    "ast_hash": "281e7288b3fe378a39f7c63de01d74b7",
+    "semantic_hash": "281e7288b3fe378a39f7c63de01d74b7"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\SCIENTIFIC_PROBLEM_MAP.md": {
+    "mtime": 1786723996.9701087,
+    "seen": 1786724428.2886326,
+    "ast_hash": "d30934c924009dbafbd9e5140da4064a",
+    "semantic_hash": "d30934c924009dbafbd9e5140da4064a"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_PRD_2026-08-14\\HSOM_BIOKaggle_PRD_2026-08-14\\META_LEARNING.md": {
+    "mtime": 1786722133.6520355,
+    "seen": 1786724428.2886438,
+    "ast_hash": "9a9dd61fbbb13a2a71114e68ba1bb691",
+    "semantic_hash": "9a9dd61fbbb13a2a71114e68ba1bb691"
+  },
+  "C:\\Users\\hemas\\Downloads\\st_act_pipeline\\HSOM_BIOKaggle_v1.1_2026-08-14\\HSOM_BIOKaggle_v1.1_2026-08-14\\META_LEARNING.md": {
+    "mtime": 1786723996.9448419,
+    "seen": 1786724428.2886446,
+    "ast_hash": "1226a5a413e4de6d806be88becec968f",
+    "semantic_hash": "1226a5a413e4de6d806be88becec968f"
   }
 }

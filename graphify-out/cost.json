@@ -11,8 +11,20 @@
       "input_tokens": 155094,
       "output_tokens": 6388,
       "files": 131
+    },
+    {
+      "date": "2026-08-14T05:50:10.843704+00:00",
+      "input_tokens": 621680,
+      "output_tokens": 17930,
+      "files": 186
+    },
+    {
+      "date": "2026-08-14T16:21:08.908621+00:00",
+      "input_tokens": 164116,
+      "output_tokens": 6705,
+      "files": 50
     }
   ],
-  "total_input_tokens": 168644,
-  "total_output_tokens": 8160
+  "total_input_tokens": 954440,
+  "total_output_tokens": 32795
 }
