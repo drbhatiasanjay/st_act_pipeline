@@ -53,6 +53,34 @@ in `../st_act_pipeline_kaggle_exec/`).
 
 ---
 
+## Real training run COMPLETE (2026-08-14 16:11 UTC → 2026-08-15 ~00:29 UTC, 20483s / 5.69h)
+
+Kernel `drbhatiasanjay/st-act-gpu-smoke-test` (misleadingly titled, actually runs the real
+`train_kernel.py`), deployed SHA `bc989ed` (includes the normalization fix, confirmed matching
+in the real checkpoint manifest — not just assumed). 5000/12392 train pairs, 1 epoch, full
+71-sample validation fold (no cap, unlike the bounded probe's 2 samples).
+
+**Result: `val_score=0.001986` — the first non-zero real validation score this project has ever
+gotten** (both prior probe runs scored exactly 0.0). `is_structural_zero=False`,
+`predicted_nodes_total=554366`/`predicted_edges_total=388859` across all 71 samples, zero
+fallback failures, no traceback, `health_status="healthy"`. Still a very low score relative to
+the 0.763 baseline — expected, this is 5000/12392 pairs of ONE epoch, not a full uncapped run —
+but it's real, non-degenerate signal, consistent with (not contradicting) everything found
+earlier today.
+
+Real timing breakdown matters for future runs: `training_log.csv`'s `epoch_wall_clock_seconds`
+(7086.8s) is train-phase only; the real total (`training_progress.json`'s `elapsed_seconds`,
+20483.1s) includes the full 71-sample validation pass, which took ~3.7h on its own — validation
+is NOT cheap just because it doesn't backprop. Budget for this in any future run's ETA.
+
+All three real Kaggle runs (2 probes + this training run) now logged in `kaggle_runs.db` via
+`scripts/run_registry.py` (`list` / `compare` / `show` subcommands) for structured comparison —
+built today specifically because this comparison had no structured home before.
+
+**Next decision:** whether to commit to a longer/uncapped real training run given this first
+non-zero (if tiny) result, or investigate further before spending more GPU budget. Not yet
+decided — surface to user.
+
 ## Active investigation plan
 
 Full context and reasoning: `C:\Users\hemas\.claude\plans\adaptive-soaring-cook.md` (plan-mode
