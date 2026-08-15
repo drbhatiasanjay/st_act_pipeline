@@ -190,6 +190,98 @@ def ingest_probe_report(
     print(f"Ingested {run_id} from {report_path}")
 
 
+def ingest_training_run(
+    run_id: str, kernel_slug: str, training_log_csv: Path, progress_json: Path,
+    manifest_json: Path | None = None, kernel_version: int | None = None,
+    run_type: str = "training", notes: str = "", db_path: Path = DB_PATH,
+) -> None:
+    """Ingest a real train_kernel.py run from its training_log.csv (last row),
+    training_progress.json (real total wall-clock, includes validation -- the
+    CSV's epoch_wall_clock_seconds is train-phase only, do not confuse the
+    two), and optionally checkpoint_manifest.json for split/provenance detail."""
+    import csv as csv_module
+
+    with open(training_log_csv, newline="", encoding="utf-8") as f:
+        csv_rows = list(csv_module.DictReader(f))
+    if not csv_rows:
+        raise ValueError(f"{training_log_csv} has no data rows")
+    last = csv_rows[-1]
+
+    progress = json.loads(progress_json.read_text(encoding="utf-8"))
+
+    manifest = {}
+    if manifest_json and manifest_json.exists():
+        manifest = json.loads(manifest_json.read_text(encoding="utf-8"))
+
+    def _f(v):
+        return float(v) if v not in (None, "") else None
+
+    def _i(v):
+        return int(float(v)) if v not in (None, "") else None
+
+    row = {
+        "run_id": run_id,
+        "kernel_slug": kernel_slug,
+        "kernel_version": kernel_version,
+        "run_type": run_type,
+        "logged_at": datetime.now(UTC).isoformat(),
+        "deployed_sha": progress.get("deployed_sha") or manifest.get("training_code_sha"),
+        "gpu_name": None,
+        "device_type": None,
+        "cuda_available": None,
+        "config_json": json.dumps({"learning_rate": last.get("learning_rate")}),
+        "requested_train_batches": _i(last.get("num_batches")),
+        "completed_train_batches": _i(last.get("num_batches")),
+        "num_epochs": _i(progress.get("num_epochs_budget")) or _i(last.get("epoch")),
+        "train_dataset_pair_count": None,
+        "validation_samples_total": manifest.get("validation_samples_total"),
+        "validation_samples_evaluated": manifest.get("validation_samples_evaluated"),
+        "full_fold_validation_performed": int(bool(manifest.get("validation_is_full_fold"))),
+        "verdict": "COMPLETE",
+        "average_train_loss": _f(last.get("train_loss")),
+        "last_train_loss": _f(progress.get("train_loss")),
+        "max_sigmoid_final": None,
+        "max_sigmoid_min": None,
+        "max_sigmoid_max": None,
+        "last_unet_gradient_norm": None,
+        "last_transformer_gradient_norm": None,
+        "val_edge_jaccard": _f(last.get("val_edge_jaccard")),
+        "val_adjusted_edge_jaccard": _f(last.get("val_adjusted_edge_jaccard")),
+        "val_division_jaccard": _f(last.get("val_division_jaccard")),
+        "val_score": _f(last.get("val_score")),
+        "predicted_nodes_total": _i(last.get("predicted_nodes_total")),
+        "predicted_edges_total": _i(last.get("predicted_edges_total")),
+        "gt_nodes_total": None,
+        "is_structural_zero": int(str(last.get("is_structural_zero")).lower() == "true"),
+        "learning_signal_observed": None,
+        # elapsed_seconds is the REAL total (train + full validation) from the
+        # progress heartbeat; training_log.csv's epoch_wall_clock_seconds is
+        # train-phase-only and would understate total cost if used here.
+        "elapsed_seconds": _f(progress.get("elapsed_seconds")),
+        "training_elapsed_seconds": _f(last.get("epoch_wall_clock_seconds")),
+        "seconds_per_batch": (
+            _f(last.get("epoch_wall_clock_seconds")) / _i(last.get("num_batches"))
+            if last.get("epoch_wall_clock_seconds") and last.get("num_batches")
+            else None
+        ),
+        "peak_gpu_memory_allocated_bytes": None,
+        "peak_gpu_memory_reserved_bytes": None,
+        "train_fallback_counts_json": json.dumps({
+            "heatmap_failures": last.get("heatmap_failures"),
+            "edge_target_failures": last.get("edge_target_failures"),
+            "edge_loss_failures": last.get("edge_loss_failures"),
+            "eval_failures": last.get("eval_failures"),
+        }),
+        "post_validation_fallback_counts_json": "{}",
+        "notes": notes,
+        "raw_report_path": str(training_log_csv.resolve()),
+    }
+    conn = get_conn(db_path)
+    _upsert(conn, row)
+    conn.close()
+    print(f"Ingested {run_id} from {training_log_csv} + {progress_json}")
+
+
 def list_runs(db_path: Path = DB_PATH) -> None:
     conn = get_conn(db_path)
     rows = conn.execute(
@@ -269,6 +361,16 @@ def main():
     p_ingest.add_argument("--run-type", default="probe")
     p_ingest.add_argument("--notes", default="")
 
+    p_train = sub.add_parser("ingest-training-run")
+    p_train.add_argument("--run-id", required=True)
+    p_train.add_argument("--kernel-slug", required=True)
+    p_train.add_argument("--training-log-csv", required=True, type=Path)
+    p_train.add_argument("--progress-json", required=True, type=Path)
+    p_train.add_argument("--manifest-json", type=Path, default=None)
+    p_train.add_argument("--kernel-version", type=int, default=None)
+    p_train.add_argument("--run-type", default="training")
+    p_train.add_argument("--notes", default="")
+
     sub.add_parser("list")
 
     p_show = sub.add_parser("show")
@@ -285,6 +387,11 @@ def main():
         ingest_probe_report(
             args.report_path, args.run_id, args.kernel_slug, args.kernel_version,
             args.run_type, args.notes,
+        )
+    elif args.command == "ingest-training-run":
+        ingest_training_run(
+            args.run_id, args.kernel_slug, args.training_log_csv, args.progress_json,
+            args.manifest_json, args.kernel_version, args.run_type, args.notes,
         )
     elif args.command == "list":
         list_runs()
