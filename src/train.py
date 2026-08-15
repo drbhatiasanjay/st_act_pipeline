@@ -464,6 +464,11 @@ class TrainingLoop:
         self.last_transformer_gradient_snapshot: float | None = None
         self.last_epoch_wall_clock_seconds = 0.0
         self.last_epoch_num_batches = 0
+        self.last_epoch_max_sigmoid_min: float | None = None
+        self.last_epoch_max_sigmoid_max: float | None = None
+        self.last_epoch_max_sigmoid_final: float | None = None
+        self.last_epoch_peak_gpu_memory_allocated_bytes: int | None = None
+        self.last_epoch_peak_gpu_memory_reserved_bytes: int | None = None
 
         # Cache of parsed .geff graphs, keyed by path -- a single training
         # batch calls IndexedRXGraph.from_geff() on the SAME sample's .geff
@@ -566,6 +571,13 @@ class TrainingLoop:
             "predicted_nodes_total": val_metrics.get("predicted_nodes_total", 0),
             "predicted_edges_total": val_metrics.get("predicted_edges_total", 0),
             "health_status": health_status,
+            "gpu_name": torch.cuda.get_device_name(self.device) if self.device.type == 'cuda' else None,
+            "cuda_available": torch.cuda.is_available(),
+            "max_sigmoid_min": self.last_epoch_max_sigmoid_min,
+            "max_sigmoid_max": self.last_epoch_max_sigmoid_max,
+            "max_sigmoid_final": self.last_epoch_max_sigmoid_final,
+            "peak_gpu_memory_allocated_bytes": self.last_epoch_peak_gpu_memory_allocated_bytes,
+            "peak_gpu_memory_reserved_bytes": self.last_epoch_peak_gpu_memory_reserved_bytes,
         }
         try:
             tmp_path = self.progress_file.with_suffix(".tmp")
@@ -797,6 +809,10 @@ class TrainingLoop:
         self.last_transformer_gradient_snapshot = None
 
         max_batches = self.hyperparams.get('max_batches_per_epoch')
+
+        epoch_max_sigmoid_min: float | None = None
+        epoch_max_sigmoid_max: float | None = None
+        epoch_max_sigmoid_final: float | None = None
 
         for batch_idx, batch in enumerate(self.train_loader):
             if max_batches is not None and batch_idx >= max_batches:
@@ -1098,6 +1114,9 @@ class TrainingLoop:
                 # run or plateaus, not a one-off before/after snapshot.
                 with torch.no_grad():
                     max_sigmoid = torch.sigmoid(logits).max().item()
+                epoch_max_sigmoid_final = max_sigmoid
+                epoch_max_sigmoid_min = max_sigmoid if epoch_max_sigmoid_min is None else min(epoch_max_sigmoid_min, max_sigmoid)
+                epoch_max_sigmoid_max = max_sigmoid if epoch_max_sigmoid_max is None else max(epoch_max_sigmoid_max, max_sigmoid)
                 logger.info(
                     f"Batch {batch_idx + 1}/{effective_total}, "
                     f"Loss: {total_loss_item.item():.6f}, "
@@ -1112,6 +1131,9 @@ class TrainingLoop:
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         self.last_epoch_wall_clock_seconds = time.time() - epoch_start_time
         self.last_epoch_num_batches = num_batches
+        self.last_epoch_max_sigmoid_min = epoch_max_sigmoid_min
+        self.last_epoch_max_sigmoid_max = epoch_max_sigmoid_max
+        self.last_epoch_max_sigmoid_final = epoch_max_sigmoid_final
 
         # Log fallback counts
         for key, count in self.epoch_fallback_counts.items():
@@ -1625,6 +1647,16 @@ class TrainingLoop:
             logger.info(f"Epoch {epoch + 1}/{num_epochs}")
             logger.info(f"{'='*60}")
 
+            # Peak GPU memory is measured across the whole epoch (training +
+            # validation), matching gpu_learning_probe.py's scope (reset once
+            # before training, read once after validate_epoch() completes) --
+            # NOT train-phase-only, which would undercount and be
+            # incomparable to probe rows in kaggle_runs.db. Validation does
+            # real tensor-heavy graph-building/scoring work and can plausibly
+            # be the actual peak, not just training.
+            if self.device.type == 'cuda':
+                torch.cuda.reset_peak_memory_stats(self.device)
+
             # Training
             train_loss = self.train_epoch()
 
@@ -1641,6 +1673,10 @@ class TrainingLoop:
 
             # Validation
             val_metrics = self.validate_epoch()
+
+            if self.device.type == 'cuda':
+                self.last_epoch_peak_gpu_memory_allocated_bytes = torch.cuda.max_memory_allocated(self.device)
+                self.last_epoch_peak_gpu_memory_reserved_bytes = torch.cuda.max_memory_reserved(self.device)
 
             # Log epoch
             self._log_epoch(epoch + 1, train_loss, val_metrics)
